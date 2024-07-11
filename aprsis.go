@@ -33,6 +33,7 @@ func NewAprsIs(cfg Config, logger *Logger) (*AprsIs, error) {
 		id:        cfg.AprsIs.Options["call-sign"],
 		conn:      nil,
 		connected: false,
+		cfg:       cfg,
 	}
 
 	err := a.Connect()
