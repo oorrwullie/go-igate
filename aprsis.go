@@ -117,6 +117,8 @@ func (a *AprsIs) Connect() error {
 		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
 	}
 
+	a.conn = conn
+
 	return nil
 }
 
