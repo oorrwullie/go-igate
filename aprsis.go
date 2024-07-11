@@ -112,7 +112,7 @@ func (a *AprsIs) Connect() error {
 		return fmt.Errorf("could not read server response: %v", err)
 	}
 
-	if resp[:4] != "OK 1" {
+	if strings.HasPrefix(resp, fmt.Sprintf("# logresp %s verified", a.cfg.AprsIs.Options["call-sign"])) {
 		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
 	}
 
