@@ -94,7 +94,7 @@ func (i *IGate) startSDR() error {
 		return fmt.Errorf("Error reading rtl_fm stdout: %s", err.Error())
 	}
 
-	err := cmd.Start()
+	err = cmd.Start()
 	if err != nil {
 		return fmt.Errorf("Error starting rtl_fm: %v", err)
 	}
