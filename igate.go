@@ -89,14 +89,14 @@ func (i *IGate) startSDR() error {
 	args = append(args, "-")
 	cmd := exec.Command("rtl_fm", args...)
 
-	err := cmd.Start()
-	if err != nil {
-		return fmt.Errorf("Error starting rtl_fm: %v", err)
-	}
-
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("Error reading rtl_fm stdout: %s", err.Error())
+	}
+
+	err := cmd.Start()
+	if err != nil {
+		return fmt.Errorf("Error starting rtl_fm: %v", err)
 	}
 
 	scanner := bufio.NewScanner(out)
