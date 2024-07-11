@@ -1,0 +1,27 @@
+sdr:
+  exec: "rtl_fm"
+  frequency: "144.390M"
+  gain: "49.6"
+  ppm-error: "0"
+  squelch-level: "0"
+  sample-rate: "22050"
+  additional-flags: ""
+
+multimon:
+  path: "multimon-ng"
+  additional-flags: ""
+
+beacon:
+  enabled: false
+  call-sign: ""
+  interval: 30m
+  comment: "Powered by gophers!"
+
+aprsis:
+  id: "b67ac5d5-3612-4618-88a9-a63d36a1777c"
+  options:
+    enabled: false
+    server: "noam.aprs2.net:14580"
+    call-sign: ""
+    passcode: ""
+    filter: ""
