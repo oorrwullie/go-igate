@@ -174,23 +174,29 @@ func (i *IGate) startMultimon() error {
 		}()
 
 		scanner := bufio.NewScanner(multimonOut)
-		i.Logger.Info("Got created scanner. Time to scan some stuffs")
-		for scanner.Scan() {
-			line := scanner.Text()
-			i.Logger.Info("Got here. Processing a line: ", line)
+		for {
+			if scanner.Scan() {
 
-			if len(line) < minPacketSize {
-				i.Logger.Error("Packet too short: ", line)
-				continue
+				line := scanner.Text()
+				i.Logger.Info("Got here. Processing a line: ", line)
+
+				if len(line) < minPacketSize {
+					i.Logger.Error("Packet too short: ", line)
+					continue
+				}
+
+				packet, err := i.Aprsis.ParsePacket(line)
+				if err != nil {
+					i.Logger.Error(err, "Could not parse APRS packet")
+					continue
+				}
+
+				i.Aprsis.Upload(packet)
+			} else {
+				i.Logger.Error("multimon-ng pooped the bed :-(")
+				break
+
 			}
-
-			packet, err := i.Aprsis.ParsePacket(line)
-			if err != nil {
-				i.Logger.Error(err, "Could not parse APRS packet")
-				continue
-			}
-
-			i.Aprsis.Upload(packet)
 		}
 
 		if err := scanner.Err(); err != nil {
