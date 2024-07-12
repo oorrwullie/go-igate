@@ -14,7 +14,7 @@ type (
 		sdrChan chan []byte
 		msgChan chan string
 		Stop    chan bool
-		aprsis  *AprsIs
+		Aprsis  *AprsIs
 		Logger  *Logger
 	}
 )
@@ -42,7 +42,7 @@ func NewIGate() (*IGate, error) {
 		sdrChan: make(chan []byte),
 		msgChan: make(chan string),
 		Stop:    make(chan bool),
-		aprsis:  aprsis,
+		Aprsis:  aprsis,
 		Logger:  logger,
 	}
 
@@ -107,6 +107,16 @@ func (i *IGate) startSDR() error {
 		}
 	}()
 
+	go func() {
+		for {
+			select {
+			case <-i.Stop:
+				cmd.Process.Kill()
+				return
+			}
+		}
+	}()
+
 	return nil
 }
 
@@ -140,30 +150,34 @@ func (i *IGate) startMultimon() error {
 	}
 
 	go func() {
+		for {
+			select {
+			case <-i.Stop:
+				cmd.Process.Kill()
+				return
+			}
+		}
+	}()
+
+	go func() {
 		for data := range i.sdrChan {
 			_, err := multimonIn.Write(data)
 			if err != nil {
 				fmt.Printf("Error writing to multimon-ng: %v", err)
 			}
+
+			scanner := bufio.NewScanner(multimonOut)
+
+			for scanner.Scan() {
+				i.msgChan <- scanner.Text()
+			}
+
+			if err := scanner.Err(); err != nil {
+				i.Logger.Error("Error reading from multimon-ng: ", err)
+			}
 		}
 		multimonIn.Close()
 	}()
-
-	scanner := bufio.NewScanner(multimonOut)
-	for scanner.Scan() {
-		i.msgChan <- scanner.Text()
-	}
-
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("Error reading from multimon-ng: %v", err)
-	}
-
-	close(i.msgChan)
-
-	err = cmd.Wait()
-	if err != nil {
-		return fmt.Errorf("Error waiting for multimon-ng: %v", err)
-	}
 
 	return nil
 }
@@ -178,13 +192,13 @@ func (i *IGate) listenForMessages() error {
 				continue
 			}
 
-			packet, err := i.aprsis.ParsePacket(msg)
+			packet, err := i.Aprsis.ParsePacket(msg)
 			if err != nil {
 				i.Logger.Error(err, "Could not parse APRS packet")
 				continue
 			}
 
-			i.aprsis.Upload(packet)
+			i.Aprsis.Upload(packet)
 
 		}
 	}
@@ -215,7 +229,7 @@ func (i *IGate) startBeacon() error {
 				b := fmt.Sprintf("%s>BEACON: %s", i.cfg.Beacon.Call, i.cfg.Beacon.Comment)
 
 				i.Logger.Info(b)
-				i.aprsis.conn.PrintfLine(b)
+				i.Aprsis.conn.PrintfLine(b)
 			case <-i.Stop:
 				ticker.Stop()
 				return

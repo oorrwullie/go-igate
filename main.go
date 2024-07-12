@@ -26,6 +26,7 @@ func main() {
 		igate.Logger.Debug(fmt.Sprintf("Signal (%s) caught, terminating processes.", signal))
 
 		igate.Stop <- true
+		igate.Aprsis.Disconnect()
 
 		os.Exit(0)
 	}()
