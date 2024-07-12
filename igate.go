@@ -175,8 +175,10 @@ func (i *IGate) startMultimon() error {
 		scanner := bufio.NewScanner(multimonOut)
 
 		for scanner.Scan() {
+			i.Logger.Info("Got here")
 			line := scanner.Text()
 			if len(line) < minPacketSize {
+				i.Logger.Error("Packet too short: ", line)
 				continue
 			}
 
