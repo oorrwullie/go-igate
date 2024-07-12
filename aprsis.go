@@ -145,7 +145,6 @@ func (a *AprsIs) Upload(p aprs.Packet) error {
 }
 
 func (a *AprsIs) ParsePacket(raw string) (aprs.Packet, error) {
-	fmt.Printf("parsing packet: %s\n", raw)
 	raw = strings.TrimPrefix(raw, "APRS: ")
 
 	return aprs.ParsePacket(raw)

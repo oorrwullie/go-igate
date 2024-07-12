@@ -12,10 +12,45 @@ type Logger struct {
 	file   *logrus.Logger
 }
 
+type ColorFormatter struct {
+	logrus.Formatter
+}
+
+const (
+	reset   = "\033[0m"
+	red     = "\033[31m"
+	green   = "\033[32m"
+	yellow  = "\033[33m"
+	blue    = "\033[34m"
+	magenta = "\033[35m"
+	cyan    = "\033[36m"
+	white   = "\033[37m"
+)
+
+func (f *ColorFormatter) Format(entry *logrus.Entry) ([]byte, error) {
+	var levelColor string
+	switch entry.Level {
+	case logrus.DebugLevel, logrus.TraceLevel:
+		levelColor = blue
+	case logrus.InfoLevel:
+		levelColor = green
+	case logrus.WarnLevel:
+		levelColor = yellow
+	case logrus.ErrorLevel, logrus.FatalLevel, logrus.PanicLevel:
+		levelColor = red
+	default:
+		levelColor = white
+	}
+
+	message := fmt.Sprintf("%s[%s] %s%s\n", levelColor, entry.Level, entry.Message, reset)
+	return []byte(message), nil
+}
+
 func NewLogger() (*Logger, error) {
 	stdout := logrus.New()
 	stdout.SetOutput(os.Stdout)
 	stdout.SetLevel(logrus.DebugLevel)
+	stdout.SetFormatter(&ColorFormatter{})
 
 	fileLog := logrus.New()
 
@@ -30,6 +65,7 @@ func NewLogger() (*Logger, error) {
 
 	fileLog.SetOutput(file)
 	fileLog.SetLevel(logrus.DebugLevel)
+	fileLog.SetFormatter(&ColorFormatter{})
 
 	return &Logger{
 		stdout: stdout,

@@ -65,9 +65,9 @@ func (i *IGate) Run() error {
 		return fmt.Errorf("Error starting beacon: %v", err)
 	}
 
-	err = i.listenForMessages()
+	<-i.Stop
 
-	return err
+	return nil
 }
 
 func (i *IGate) startSDR() error {
@@ -103,7 +103,6 @@ func (i *IGate) startSDR() error {
 
 	go func() {
 		for scanner.Scan() {
-			fmt.Println("New SDR signal")
 			i.sdrChan <- scanner.Bytes()
 		}
 	}()
@@ -166,10 +165,9 @@ func (i *IGate) startMultimon() error {
 
 		go func() {
 			for data := range i.sdrChan {
-				fmt.Println("multimon signal")
 				_, err := multimonIn.Write(data)
 				if err != nil {
-					fmt.Printf("Error writing to multimon-ng: %v", err)
+					i.Logger.Error("Error writing to multimon-ng: ", err)
 				}
 			}
 		}()
@@ -203,29 +201,6 @@ func (i *IGate) startMultimon() error {
 	return nil
 }
 
-func (i *IGate) listenForMessages() error {
-	for {
-		select {
-		case <-i.Stop:
-			return nil
-		case msg := <-i.msgChan:
-			fmt.Printf("New message: %s\n", msg)
-			if len(msg) < minPacketSize {
-				continue
-			}
-
-			packet, err := i.Aprsis.ParsePacket(msg)
-			if err != nil {
-				i.Logger.Error(err, "Could not parse APRS packet")
-				continue
-			}
-
-			i.Aprsis.Upload(packet)
-
-		}
-	}
-}
-
 func (i *IGate) startBeacon() error {
 	if i.cfg.Beacon.Interval < (time.Duration(10) * time.Minute) {
 		return fmt.Errorf("interval cannot be < 10m")
@@ -240,7 +215,7 @@ func (i *IGate) startBeacon() error {
 		return nil
 	}
 
-	fmt.Printf("Starting beacon every %s\n", i.cfg.Beacon.Interval)
+	i.Logger.Info("Starting beacon every ", i.cfg.Beacon.Interval)
 
 	ticker := time.NewTicker(i.cfg.Beacon.Interval)
 
