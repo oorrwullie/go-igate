@@ -103,6 +103,7 @@ func (i *IGate) startSDR() error {
 
 	go func() {
 		for scanner.Scan() {
+			fmt.Println("New SDR signal")
 			i.sdrChan <- scanner.Bytes()
 		}
 	}()
@@ -161,6 +162,7 @@ func (i *IGate) startMultimon() error {
 
 	go func() {
 		for data := range i.sdrChan {
+			fmt.Println("multimon signal")
 			_, err := multimonIn.Write(data)
 			if err != nil {
 				fmt.Printf("Error writing to multimon-ng: %v", err)
@@ -188,6 +190,7 @@ func (i *IGate) listenForMessages() error {
 		case <-i.Stop:
 			return nil
 		case msg := <-i.msgChan:
+			fmt.Printf("New message: %s\n", msg)
 			if len(msg) < minPacketSize {
 				continue
 			}
