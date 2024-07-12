@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 )
 
 func main() {
@@ -28,7 +29,7 @@ func main() {
 		igate.Stop <- true
 		igate.Aprsis.Disconnect()
 
-		time,Sleep(2*time.Second)
+		time.Sleep(2 * time.Second)
 
 		os.Exit(0)
 	}()

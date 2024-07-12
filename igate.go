@@ -122,63 +122,72 @@ func (i *IGate) startSDR() error {
 }
 
 func (i *IGate) startMultimon() error {
-	requiredArgs := []string{
-		"-a",
-		"AFSK1200",
-		"-A",
-		"-t",
-		"raw",
-	}
-
-	userArgs := strings.Fields(i.cfg.Multimon.AdditionalFlags)
-	args := append(requiredArgs, userArgs...)
-	args = append(args, "-")
-	cmd := exec.Command("multimon-ng", args...)
-
-	multimonIn, err := cmd.StdinPipe()
-	if err != nil {
-		return fmt.Errorf("Error opening multimon-ng stdin: %v", err)
-	}
-
-	multimonOut, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("Error opening multimon-ng stdout: %v", err)
-	}
-
-	err = cmd.Start()
-	if err != nil {
-		return fmt.Errorf("Error starting multimon-ng: %v", err)
-	}
-
 	go func() {
-		for {
-			select {
-			case <-i.Stop:
-				cmd.Process.Kill()
-				return
-			}
+		requiredArgs := []string{
+			"-a",
+			"AFSK1200",
+			"-A",
+			"-t",
+			"raw",
 		}
-	}()
 
-	go func() {
-		for data := range i.sdrChan {
-			fmt.Println("multimon signal")
-			_, err := multimonIn.Write(data)
-			if err != nil {
-				fmt.Printf("Error writing to multimon-ng: %v", err)
-			}
+		userArgs := strings.Fields(i.cfg.Multimon.AdditionalFlags)
+		args := append(requiredArgs, userArgs...)
+		args = append(args, "-")
+		cmd := exec.Command("multimon-ng", args...)
 
-			scanner := bufio.NewScanner(multimonOut)
-
-			for scanner.Scan() {
-				i.msgChan <- scanner.Text()
-			}
-
-			if err := scanner.Err(); err != nil {
-				i.Logger.Error("Error reading from multimon-ng: ", err)
-			}
+		multimonIn, err := cmd.StdinPipe()
+		if err != nil {
+			i.Logger.Error("Error opening multimon-ng stdin: %v", err)
+			return
 		}
-		multimonIn.Close()
+
+		multimonOut, err := cmd.StdoutPipe()
+		if err != nil {
+			i.Logger.Error("Error opening multimon-ng stdout: %v", err)
+			return
+		}
+
+		err = cmd.Start()
+		if err != nil {
+			i.Logger.Error("Error starting multimon-ng: %v", err)
+			return
+		}
+
+		go func() {
+			for {
+				select {
+				case <-i.Stop:
+					cmd.Process.Kill()
+					return
+				}
+			}
+		}()
+
+		go func() {
+			for data := range i.sdrChan {
+				fmt.Println("multimon signal")
+				_, err := multimonIn.Write(data)
+				if err != nil {
+					fmt.Printf("Error writing to multimon-ng: %v", err)
+				}
+			}
+		}()
+
+		scanner := bufio.NewScanner(multimonOut)
+
+		for scanner.Scan() {
+			line := scanner.Text()
+			i.msgChan <- line
+		}
+
+		if err := scanner.Err(); err != nil {
+			i.Logger.Error("Error reading from multimon-ng: ", err)
+		}
+
+		if err := cmd.Wait(); err != nil {
+			i.Logger.Error("Error waiting for multimon-ng: ", err)
+		}
 	}()
 
 	return nil
