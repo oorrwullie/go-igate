@@ -158,6 +158,7 @@ func (i *IGate) startMultimon() error {
 				select {
 				case <-i.Stop:
 					cmd.Process.Kill()
+					i.Logger.Info("Stopping multimon-ng process")
 					return
 				}
 			}
@@ -169,14 +170,16 @@ func (i *IGate) startMultimon() error {
 				if err != nil {
 					i.Logger.Error("Error writing to multimon-ng: ", err)
 				}
+
+				i.Logger.Debug("Multimon in written")
 			}
 		}()
 
 		scanner := bufio.NewScanner(multimonOut)
-
 		for scanner.Scan() {
-			i.Logger.Info("Got here")
 			line := scanner.Text()
+			i.Logger.Info("Got here. Processing a line: ", line)
+
 			if len(line) < minPacketSize {
 				i.Logger.Error("Packet too short: ", line)
 				continue
