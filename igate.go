@@ -138,19 +138,19 @@ func (i *IGate) startMultimon() error {
 
 		multimonIn, err := cmd.StdinPipe()
 		if err != nil {
-			i.Logger.Error("Error opening multimon-ng stdin: %v", err)
+			i.Logger.Error("Error opening multimon-ng stdin:", err)
 			return
 		}
 
 		multimonOut, err := cmd.StdoutPipe()
 		if err != nil {
-			i.Logger.Error("Error opening multimon-ng stdout: %v", err)
+			i.Logger.Error("Error opening multimon-ng stdout: ", err)
 			return
 		}
 
 		err = cmd.Start()
 		if err != nil {
-			i.Logger.Error("Error starting multimon-ng: %v", err)
+			i.Logger.Error("Error starting multimon-ng: ", err)
 			return
 		}
 
@@ -178,7 +178,17 @@ func (i *IGate) startMultimon() error {
 
 		for scanner.Scan() {
 			line := scanner.Text()
-			i.msgChan <- line
+			if len(line) < minPacketSize {
+				continue
+			}
+
+			packet, err := i.Aprsis.ParsePacket(line)
+			if err != nil {
+				i.Logger.Error(err, "Could not parse APRS packet")
+				continue
+			}
+
+			i.Aprsis.Upload(packet)
 		}
 
 		if err := scanner.Err(); err != nil {
