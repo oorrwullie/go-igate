@@ -28,6 +28,8 @@ func main() {
 		igate.Stop <- true
 		igate.Aprsis.Disconnect()
 
+		time,Sleep(2*time.Second)
+
 		os.Exit(0)
 	}()
 
