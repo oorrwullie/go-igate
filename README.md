@@ -4,7 +4,7 @@ This project is a rewrite of [Ionosphere](https://github.com/cceremuga/ionospher
 
 ## Requirements
 
-To run Ionosphere, the following are required.
+To run Go-iGate, the following are required.
 
 * An RTL-SDR compatible device.
 * [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr)
