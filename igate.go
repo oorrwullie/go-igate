@@ -170,12 +170,11 @@ func (i *IGate) startMultimon() error {
 				if err != nil {
 					i.Logger.Error("Error writing to multimon-ng: ", err)
 				}
-
-				i.Logger.Debug("Multimon in written")
 			}
 		}()
 
 		scanner := bufio.NewScanner(multimonOut)
+		i.Logger.Info("Got created scanner. Time to scan some stuffs")
 		for scanner.Scan() {
 			line := scanner.Text()
 			i.Logger.Info("Got here. Processing a line: ", line)
