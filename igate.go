@@ -100,11 +100,24 @@ func (i *IGate) startSDR() error {
 		return fmt.Errorf("Error starting rtl_fm: %v", err)
 	}
 
-	scanner := bufio.NewScanner(out)
-
 	go func() {
-		for scanner.Scan() {
-			i.sdrChan <- scanner.Bytes()
+		buf := make([]byte, 4096)
+
+		for {
+			n, err := out.Read(buf)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				i.Logger.Error("Error reading rtl_fm stdout:", err)
+				return
+			}
+
+			if n > 0 {
+				data := make([]byte, n)
+				copy(data, buf[:n])
+				i.sdrChan <- data
+			}
 		}
 	}()
 
