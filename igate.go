@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"time"
@@ -164,17 +165,17 @@ func (i *IGate) startMultimon() error {
 			}
 		}()
 
-		go func() {
+		go func(in io.WriteCloser) {
 			for data := range i.sdrChan {
-				_, err := multimonIn.Write(data)
+				_, err := in.Write(data)
 				if err != nil {
 					i.Logger.Error("Error writing to multimon-ng: ", err)
 				}
 			}
-		}()
+		}(multimonIn)
 
-		go func() {
-			scanner := bufio.NewScanner(multimonOut)
+		go func(out io.ReadCloser) {
+			scanner := bufio.NewScanner(out)
 			for scanner.Scan() {
 
 				line := scanner.Text()
@@ -198,7 +199,7 @@ func (i *IGate) startMultimon() error {
 				i.Logger.Error("Error reading from multimon-ng: ", err)
 			}
 
-		}()
+		}(multimonOut)
 	}()
 
 	return nil
