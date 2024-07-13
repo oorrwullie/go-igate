@@ -85,6 +85,11 @@ func (i *IGate) startSDR() error {
 		i.cfg.Sdr.PpmError,
 	}
 
+	if i.cfg.Sdr.Device != "" && i.cfg.Sdr.Device != "0" {
+		i.Logger.Info("Using device ", i.cfg.Sdr.Device)
+		requiredArgs = append(requiredArgs, "-d", i.cfg.Sdr.Device)
+	}
+
 	userArgs := strings.Fields(i.cfg.Sdr.AdditionalFlags)
 	args := append(requiredArgs, userArgs...)
 	args = append(args, "-")
