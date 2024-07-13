@@ -1,0 +1,15 @@
+[Unit]
+Description=i-Gate APRS
+
+[Service]
+StandardOutput=append:/var/log/aprs.log
+WorkingDirectory={{WORKING_DIRECTORY}}
+Group=www-data
+ExecStart={{EXEC_START}}
+Type=simple
+TimeoutStopSec=10
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
