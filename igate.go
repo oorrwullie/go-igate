@@ -11,12 +11,12 @@ import (
 
 type (
 	IGate struct {
-		cfg     Config
-		sdrChan chan []byte
-		msgChan chan string
-		Stop    chan bool
-		Aprsis  *AprsIs
-		Logger  *Logger
+		cfg          Config
+		multimonChan chan []byte
+		aprsisChan   chan string
+		Stop         chan bool
+		Aprsis       *AprsIs
+		Logger       *Logger
 	}
 )
 
@@ -39,12 +39,12 @@ func NewIGate() (*IGate, error) {
 	}
 
 	ig := &IGate{
-		cfg:     cfg,
-		sdrChan: make(chan []byte),
-		msgChan: make(chan string),
-		Stop:    make(chan bool),
-		Aprsis:  aprsis,
-		Logger:  logger,
+		cfg:          cfg,
+		multimonChan: make(chan []byte),
+		aprsisChan:   make(chan string),
+		Stop:         make(chan bool),
+		Aprsis:       aprsis,
+		Logger:       logger,
 	}
 
 	return ig, nil
@@ -66,7 +66,7 @@ func (i *IGate) Run() error {
 		return fmt.Errorf("Error starting beacon: %v", err)
 	}
 
-	<-i.Stop
+	i.listenForMessages()
 
 	return nil
 }
@@ -121,7 +121,7 @@ func (i *IGate) startSDR() error {
 			if n > 0 {
 				data := make([]byte, n)
 				copy(data, buf[:n])
-				i.sdrChan <- data
+				i.multimonChan <- data
 			}
 		}
 	}()
@@ -154,13 +154,13 @@ func (i *IGate) startMultimon() error {
 		args = append(args, "-")
 		cmd := exec.Command("multimon-ng", args...)
 
-		multimonIn, err := cmd.StdinPipe()
+		inPipe, err := cmd.StdinPipe()
 		if err != nil {
 			i.Logger.Error("Error opening multimon-ng stdin:", err)
 			return
 		}
 
-		multimonOut, err := cmd.StdoutPipe()
+		outPipe, err := cmd.StdoutPipe()
 		if err != nil {
 			i.Logger.Error("Error opening multimon-ng stdout: ", err)
 			return
@@ -184,42 +184,55 @@ func (i *IGate) startMultimon() error {
 		}()
 
 		go func(in io.WriteCloser) {
-			for data := range i.sdrChan {
+			defer in.Close()
+
+			for data := range i.multimonChan {
 				_, err := in.Write(data)
 				if err != nil {
 					i.Logger.Error("Error writing to multimon-ng: ", err)
 				}
 			}
-		}(multimonIn)
+		}(inPipe)
 
 		go func(out io.ReadCloser) {
 			scanner := bufio.NewScanner(out)
 			for scanner.Scan() {
 
-				line := scanner.Text()
-
-				if len(line) < minPacketSize {
-					i.Logger.Error("Packet too short: ", line)
-					continue
-				}
-
-				packet, err := i.Aprsis.ParsePacket(line)
-				if err != nil {
-					i.Logger.Error(err, "Could not parse APRS packet")
-					continue
-				}
-
-				i.Aprsis.Upload(packet)
+				msg := scanner.Text()
+				i.aprsisChan <- msg
 			}
 
 			if err := scanner.Err(); err != nil {
 				i.Logger.Error("Error reading from multimon-ng: ", err)
 			}
 
-		}(multimonOut)
+		}(outPipe)
 	}()
 
 	return nil
+}
+
+func (i *IGate) listenForMessages() {
+	for {
+		select {
+		case <-i.Stop:
+			return
+		case msg := <-i.aprsisChan:
+			if len(msg) < minPacketSize {
+				i.Logger.Error("Packet too short: ", msg)
+				continue
+			}
+
+			packet, err := i.Aprsis.ParsePacket(msg)
+			if err != nil {
+				i.Logger.Error(err, "Could not parse APRS packet")
+				continue
+			}
+
+			i.Aprsis.Upload(packet)
+
+		}
+	}
 }
 
 func (i *IGate) startBeacon() error {
