@@ -197,7 +197,6 @@ func (i *IGate) startMultimon() error {
 			for scanner.Scan() {
 
 				line := scanner.Text()
-				i.Logger.Info("Multimon-ng output: ", line)
 
 				if len(line) < minPacketSize {
 					i.Logger.Error("Packet too short: ", line)
