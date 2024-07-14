@@ -199,7 +199,7 @@ func (i *IGate) startMultimon() error {
 			for scanner.Scan() {
 
 				msg := scanner.Text()
-				i.Logger.Info("Multimon-ng output: ", msg)
+				i.Logger.Info("packet received: ", msg)
 
 				i.aprsisChan <- msg
 			}
