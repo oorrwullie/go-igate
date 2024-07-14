@@ -9,6 +9,7 @@ require (
 )
 
 require (
+	github.com/go-test/deep v1.1.1 // indirect
 	github.com/pd0mz/go-maidenhead v1.0.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect
 )
