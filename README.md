@@ -1,31 +1,67 @@
+# go-gate APRS Gateway
+
 Receive, decode, log, upload [APRS](http://www.aprs.org/) packets using low cost [RTL-SDR](http://osmocom.org/projects/sdr/wiki/rtl-sdr) devices.
 
 This project is a rewrite of [Ionosphere](https://github.com/cceremuga/ionosphere) with a number of bug fixes and simplifications.
 
-## Requirements
+## Description
 
+Using this software you can receive APRS packets from the airwaves, decode them, log them to a file and upload them to the APRS-IS network.
+
+The software is written in Go and uses the [RTL-SDR](http://osmocom.org/projects/sdr/wiki/rtl-sdr) library to receive the packets. The packets are then packets are then passed to 
+[multimon-ng](https://github.com/EliasOenal/multimon-ng) for decoding. The decoded packets are then uploaded to the APRS-IS network.
+
+## Features
+
+- Receive APRS packets from the airwaves.
+- Decode APRS packets.
+- Log APRS packets to a file.
+- Upload APRS packets to the APRS-IS network.
+- Configurable RTL-SDR device.
+
+## Getting Started
+First you need to install the dependencies. Make sure you are running the latest version of Go or at least the version specified in the go.mod file.
+
+### Dependencies
 To run Go-iGate, the following are required.
 
 * An RTL-SDR compatible device.
 * [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr)
 * [multimon-ng](https://github.com/EliasOenal/multimon-ng)
+ 
+- Go version go1.22.5
 
 ## Usage
+### Installing with make
 
-* Make sure all software in the Requirements section is installed.
-* Ensure your RTL-SDR device is connected.
-* Edit `config/config.yml` to match your needs.
-  * If configured for automatic beaconing, you may edit the `comment` element to include a latitude, longitude, and symbol.
-  * You may find additional documentation on the [APRS protocol](http://www.aprs.net/vm/DOS/PROTOCOL.HTM) and [symbols](http://www.aprs.org/symbols.html) useful for custom comment formats.
+#### Build the application
+`make build`
 
-## Security and Privacy
+#### Run the application
+`make run`
 
-**The Automatic Packet Reporting System (APRS) is never private and never secure.** As an amateur radio mode, it is designed solely for experimental use by licensed operators to publicly communicate positions and messages. Encryption on amateur radio frequencies is forbidden in most localities. As such, **connections to APRS-IS are also unsecured and only intended for licensed amateur radio operators.**
+### Installing the service with make
+`make install-service`
+
+### Running the application for testing
+
+```bash
+go run main.go
+```
 
 ## Contributing
 
-You are welcome to contribute by submitting pull requests on GitHub if you would like. Feature / enhancement requests may be submitted via GitHub issues.
+Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
+
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ## License
 
-MIT license, see `LICENSE.md` for more information.
+Distributed under the MIT License. See `LICENSE` for more information.
+
+## Contact
+Project Link: [https://github.com/oorrwullie/go-igate](https://github.com/oorrwullie/go-igate)
