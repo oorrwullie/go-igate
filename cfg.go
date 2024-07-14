@@ -12,7 +12,7 @@ type Config struct {
 	Sdr struct {
 		Path            string
 		Frequency       string
-		Device		string
+		Device          string
 		Gain            string
 		PpmError        string `yaml:"ppm-error"`
 		SquelchLevel    string `yaml:"squelch-level"`
