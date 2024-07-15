@@ -259,7 +259,7 @@ func (i *IGate) startBeacon() error {
 		for {
 			select {
 			case <-ticker.C:
-				b := fmt.Sprintf("%s>BEACON: %s", i.cfg.Beacon.Call, i.cfg.Beacon.Comment)
+				b := fmt.Sprintf("%s>BEACON:%s", i.cfg.Beacon.Call, i.cfg.Beacon.Comment)
 
 				i.Logger.Info(b)
 				i.Aprsis.conn.PrintfLine(b)
