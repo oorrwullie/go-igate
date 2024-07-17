@@ -298,7 +298,6 @@ func (i *IGate) startTx() error {
 	if err != nil {
 		return fmt.Errorf("failed to open serial port: %v", err)
 	}
-	defer port.Close()
 
 	go func() {
 		for {
