@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/tarm/serial"
 )
 
 type (
@@ -14,6 +16,7 @@ type (
 		cfg          Config
 		multimonChan chan []byte
 		aprsisChan   chan string
+		txChan       chan string
 		Stop         chan bool
 		Aprsis       *AprsIs
 		Logger       *Logger
@@ -42,6 +45,7 @@ func NewIGate() (*IGate, error) {
 		cfg:          cfg,
 		multimonChan: make(chan []byte),
 		aprsisChan:   make(chan string),
+		txChan:       make(chan string),
 		Stop:         make(chan bool),
 		Aprsis:       aprsis,
 		Logger:       logger,
@@ -64,6 +68,11 @@ func (i *IGate) Run() error {
 	err = i.startBeacon()
 	if err != nil {
 		return fmt.Errorf("Error starting beacon: %v", err)
+	}
+
+	err = i.startTx()
+	if err != nil {
+		return fmt.Errorf("Error starting TX: %v", err)
 	}
 
 	i.listenForMessages()
@@ -260,12 +269,55 @@ func (i *IGate) startBeacon() error {
 			select {
 			case <-ticker.C:
 				b := fmt.Sprintf("%s>BEACON:%s", i.cfg.Beacon.Call, i.cfg.Beacon.Comment)
-
+				i.txChan <- b
 				i.Logger.Info(b)
 				i.Aprsis.conn.PrintfLine(b)
 			case <-i.Stop:
 				ticker.Stop()
 				return
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (i *IGate) startTx() error {
+	dataPort, err := detectDataPort()
+	if err != nil {
+		return fmt.Errorf("Error detecting data port: %v", err)
+	}
+
+	c := &serial.Config{
+		Name:        dataPort,
+		Baud:        9600,
+		ReadTimeout: time.Second * 5,
+	}
+
+	port, err := serial.OpenPort(c)
+	if err != nil {
+		return fmt.Errorf("failed to open serial port: %v", err)
+	}
+	defer port.Close()
+
+	go func() {
+		for {
+			select {
+			case <-i.Stop:
+				port.Close()
+
+				return
+			case msg := <-i.txChan:
+				_, err = port.Write([]byte(msg))
+				if err != nil {
+					i.Logger.Error("failed to write to serial port: ", err)
+				}
+
+				i.Logger.Info("APRS message transmitted: ", msg)
+
+				if err != nil {
+					i.Logger.Error("Error transmitting APRS message: ", err)
+				}
 			}
 		}
 	}()
