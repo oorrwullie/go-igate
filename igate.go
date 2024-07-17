@@ -290,7 +290,7 @@ func (i *IGate) startTx() error {
 
 	c := &serial.Config{
 		Name:        dataPort,
-		Baud:        9600,
+		Baud:        1200,
 		ReadTimeout: time.Second * 5,
 	}
 
