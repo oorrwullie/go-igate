@@ -242,6 +242,7 @@ func (i *IGate) listenForMessages() {
 
 			i.Aprsis.Upload(packet)
 
+			i.txChan <- msg
 		}
 	}
 }
@@ -269,7 +270,6 @@ func (i *IGate) startBeacon() error {
 			select {
 			case <-ticker.C:
 				b := fmt.Sprintf("%s>BEACON:%s", i.cfg.Beacon.Call, i.cfg.Beacon.Comment)
-				i.txChan <- b
 				i.Logger.Info(b)
 				i.Aprsis.conn.PrintfLine(b)
 			case <-i.Stop:
