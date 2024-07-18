@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/oorrwullie/go-igate/internal/cache"
 	"github.com/tarm/serial"
 )
 
@@ -20,6 +21,7 @@ type (
 		Stop         chan bool
 		Aprsis       *AprsIs
 		Logger       *Logger
+		cache        *cache.Cache
 	}
 )
 
@@ -49,6 +51,7 @@ func NewIGate() (*IGate, error) {
 		Stop:         make(chan bool),
 		Aprsis:       aprsis,
 		Logger:       logger,
+		cache:        cache.NewCache(1000, 10000, ".cache.json"),
 	}
 
 	return ig, nil
@@ -70,12 +73,14 @@ func (i *IGate) Run() error {
 		return fmt.Errorf("Error starting beacon: %v", err)
 	}
 
-	err = i.startTx()
-	if err != nil {
-		return fmt.Errorf("Error starting TX: %v", err)
+	if EnableTx {
+		err = i.startTx()
+		if err != nil {
+			return fmt.Errorf("Error starting TX: %v", err)
+		}
 	}
 
-	i.listenForMessages()
+	i.listenForAprsMessages()
 
 	return nil
 }
@@ -206,11 +211,12 @@ func (i *IGate) startMultimon() error {
 		go func(out io.ReadCloser) {
 			scanner := bufio.NewScanner(out)
 			for scanner.Scan() {
-
 				msg := scanner.Text()
-				i.Logger.Info("packet received: ", msg)
+				if exists := i.cache.Set(msg, time.Now()); !exists {
+					i.Logger.Info("packet received: ", msg)
 
-				i.aprsisChan <- msg
+					i.aprsisChan <- msg
+				}
 			}
 
 			if err := scanner.Err(); err != nil {
@@ -223,7 +229,7 @@ func (i *IGate) startMultimon() error {
 	return nil
 }
 
-func (i *IGate) listenForMessages() {
+func (i *IGate) listenForAprsMessages() {
 	for {
 		select {
 		case <-i.Stop:
@@ -247,7 +253,9 @@ func (i *IGate) listenForMessages() {
 				packet.Dst.Call = packet.Src.Call
 				packet.Src.Call = i.cfg.Beacon.Call
 
-				i.txChan <- packet.Raw
+				if EnableTx {
+					i.txChan <- packet.Raw
+				}
 			}
 		}
 	}

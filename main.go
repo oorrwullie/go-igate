@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -9,7 +10,17 @@ import (
 	"time"
 )
 
+var EnableTx bool
+
 func main() {
+	enableTxFlag := flag.Bool("enableTx", false, "Enable TX support")
+	flag.Parse()
+
+	if *enableTxFlag {
+		EnableTx = true
+		fmt.Println("TX support enabled.")
+	}
+
 	igate, err := NewIGate()
 	if err != nil {
 		log.Fatal(err)

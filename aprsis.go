@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/textproto"
 	"strings"
+	"time"
 
 	"github.com/pd0mz/go-aprs"
 )
@@ -14,6 +15,14 @@ type AprsIs struct {
 	conn      *textproto.Conn
 	connected bool
 	cfg       Config
+}
+
+type Packet struct {
+	Src       string
+	Dst       string
+	Path      string
+	Payload   string
+	Timestamp time.Time
 }
 
 func NewAprsIs(cfg Config, logger *Logger) (*AprsIs, error) {
