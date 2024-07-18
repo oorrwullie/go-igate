@@ -240,9 +240,15 @@ func (i *IGate) listenForMessages() {
 				continue
 			}
 
-			i.Aprsis.Upload(packet)
+			if packet.Src.Call != i.cfg.Beacon.Call {
 
-			i.txChan <- msg
+				i.Aprsis.Upload(packet)
+
+				packet.Dst.Call = packet.Src.Call
+				packet.Src.Call = i.cfg.Beacon.Call
+
+				i.txChan <- packet.Raw
+			}
 		}
 	}
 }
