@@ -313,8 +313,8 @@ func (i *IGate) startTx() error {
 
 				return
 			case msg := <-i.txChan:
-				fmtMsg := fmt.Sprintf("%v\r\n", msg)
-				_, err = port.Write([]byte(fmtMsg))
+				// fmtMsg := fmt.Sprintf("%v\r\n", msg)
+				_, err = port.Write([]byte(msg))
 				if err != nil {
 					i.Logger.Error("failed to write to serial port: ", err)
 				}
