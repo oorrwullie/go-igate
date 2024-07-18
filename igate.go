@@ -300,21 +300,19 @@ func (i *IGate) startTx() error {
 		ReadTimeout: time.Second * 5,
 	}
 
-	port, err := serial.OpenPort(c)
-	if err != nil {
-		return fmt.Errorf("failed to open serial port: %v", err)
-	}
-
 	go func() {
 		for {
 			select {
 			case <-i.Stop:
-				port.Close()
-
 				return
 			case msg := <-i.txChan:
-				// fmtMsg := fmt.Sprintf("%v\r\n", msg)
-				_, err = port.Write([]byte(msg))
+				port, err := serial.OpenPort(c)
+				if err != nil {
+					i.Logger.Error("failed to open serial port: ", err)
+				}
+
+				fmtMsg := fmt.Sprintf("%v\r\n", msg)
+				_, err = port.Write([]byte(fmtMsg))
 				if err != nil {
 					i.Logger.Error("failed to write to serial port: ", err)
 				}
@@ -324,6 +322,8 @@ func (i *IGate) startTx() error {
 				if err != nil {
 					i.Logger.Error("Error transmitting APRS message: ", err)
 				}
+
+				port.Close()
 			}
 		}
 	}()
