@@ -4,7 +4,6 @@ go 1.22.4
 
 require (
 	github.com/go-test/deep v1.1.1
-	github.com/google/gousb v1.1.3
 	github.com/pd0mz/go-aprs v0.0.0-20190904192146-34d6aa54791a
 	github.com/sirupsen/logrus v1.9.3
 	github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07
