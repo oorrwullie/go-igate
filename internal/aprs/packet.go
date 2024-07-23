@@ -57,12 +57,14 @@ func ParsePacket(p string) (*Packet, error) {
 }
 
 func (p *Packet) Type() PacketType {
-	if len(p.Payload) < 3 {
+	if len(p.Payload) == 0 {
 		return Unknown
 	}
 
+	fmt.Printf("Type char: %v\n", p.Payload[0])
+
 	switch p.Payload[0] {
-	case '!', '+', '/', '@':
+	case '!', '=', '/', '@':
 		return PositionReport
 	case '>':
 		return StatusReport
