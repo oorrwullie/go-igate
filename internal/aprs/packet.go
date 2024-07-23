@@ -133,3 +133,12 @@ func (t PacketType) ForwardToAprsIs() bool {
 		return false
 	}
 }
+
+func (t PacketType) NeedsAck() bool {
+	switch t {
+	case Message:
+		return true
+	default:
+		return false
+	}
+}

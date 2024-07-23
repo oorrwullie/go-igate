@@ -243,7 +243,7 @@ func (i *IGate) listenForAprsMessages() {
 					continue
 				}
 
-				if i.enableTx {
+				if i.enableTx && packet.Type().NeedsAck() {
 					ackMsg, err := packet.AckString()
 					if err != nil {
 						i.Logger.Error("Error creating APRS acknowledgement: ", err)
