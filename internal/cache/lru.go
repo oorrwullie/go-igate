@@ -111,6 +111,7 @@ func NewCache(capacity int, bloomFilterSize uint, filePath string) *Cache {
 	}
 
 	cache.loadFromFile()
+	fmt.Println("Loaded cache")
 
 	return cache
 }
@@ -278,8 +279,10 @@ func (c *Cache) loadFromFile() error {
 	fmt.Println("loadFromFile post-lock")
 
 	for k, v := range data {
+		fmt.Printf("Cache key: %s value: %s\n", k, v)
 		c.Set(k, v)
 	}
 
+	fmt.Println("Everything set.")
 	return nil
 }
