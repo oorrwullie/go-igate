@@ -61,15 +61,21 @@ func (p *Packet) Type() PacketType {
 		return Unknown
 	}
 
+	typeChar := p.Payload[0]
+
+	if strings.ContainsRune("!=/@", rune(typeChar)) || (typeChar == ':' && len(p.Payload) > 1 && strings.ContainsRune("!'#/)", rune(p.Payload[1]))) {
+		return PositionReport
+	}
+
+	if typeChar == ':' && len(p.Payload) > 9 && p.Payload[9] == ':' {
+		return Message
+	}
+
 	fmt.Printf("Type char: %v\n", p.Payload[0])
 
 	switch p.Payload[0] {
-	case '!', '=', '/', '@':
-		return PositionReport
 	case '>':
 		return StatusReport
-	case ':':
-		return Message
 	case 'T':
 		return Telemetry
 	case '_':
