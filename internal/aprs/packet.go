@@ -71,8 +71,6 @@ func (p *Packet) Type() PacketType {
 		return Message
 	}
 
-	fmt.Printf("Type char: %v\n", p.Payload[0])
-
 	switch p.Payload[0] {
 	case '>':
 		return StatusReport
