@@ -27,7 +27,6 @@ type LRU struct {
 	capacity int
 	head     *node
 	tail     *node
-	mu       sync.Mutex
 }
 
 type node struct {
@@ -117,9 +116,6 @@ func NewCache(capacity int, bloomFilterSize uint, filePath string) *Cache {
 }
 
 func (l *LRU) get(key string) (interface{}, bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	if node, exists := l.cache[key]; exists {
 		l.moveToFront(node)
 		return node.val, exists
@@ -129,9 +125,6 @@ func (l *LRU) get(key string) (interface{}, bool) {
 }
 
 func (l *LRU) set(key string, val interface{}) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	if node, exists := l.cache[key]; exists {
 		node.val = val
 		l.moveToFront(node)
