@@ -236,7 +236,9 @@ func (i *IGate) listenForAprsMessages() {
 				continue
 			}
 
+			fmt.Printf("APRS packet type: %v\n", packet.Type().String())
 			if !packet.IsAckMessage() && packet.Type().ForwardToAprsIs() {
+				fmt.Println("It should be sending the packet to APRS-IS")
 				err = i.Aprsis.Upload(msg)
 				if err != nil {
 					i.Logger.Error("Error uploading APRS packet: ", err)
