@@ -63,7 +63,7 @@ func (p *Packet) Type() PacketType {
 
 	typeChar := p.Payload[0]
 
-	if strings.ContainsRune("!=/@", rune(typeChar)) || (typeChar == ':' && len(p.Payload) > 1 && strings.ContainsRune("!'#/)", rune(p.Payload[1]))) {
+	if strings.ContainsRune("!=/@`", rune(typeChar)) || (typeChar == ':' && len(p.Payload) > 1 && strings.ContainsRune("!'#/)", rune(p.Payload[1]))) {
 		return PositionReport
 	}
 
