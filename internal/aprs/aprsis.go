@@ -127,6 +127,8 @@ func (a *AprsIs) Upload(msg string) error {
 		}
 	}
 
+	msg = strings.TrimPrefix(msg, "APRS: ")
+
 	err := a.Conn.PrintfLine("%s", msg)
 
 	return err
