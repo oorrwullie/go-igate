@@ -273,16 +273,10 @@ func (c *Cache) loadFromFile() error {
 		}
 	}
 
-	fmt.Println("loadFromFile pre-lock")
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	fmt.Println("loadFromFile post-lock")
-
 	for k, v := range data {
 		fmt.Printf("Cache key: %s value: %s\n", k, v)
 		c.Set(k, v)
 	}
 
-	fmt.Println("Everything set.")
 	return nil
 }
