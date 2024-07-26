@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/oorrwullie/go-igate/internal/transmitter"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,15 +16,9 @@ import (
 )
 
 func main() {
-	var enableTx bool
-
+	var tx *transmitter.Transmitter
 	enableTxFlag := flag.Bool("enableTx", false, "Enable TX support")
 	flag.Parse()
-
-	if *enableTxFlag {
-		enableTx = true
-		fmt.Println("TX support enabled.")
-	}
 
 	logger, err := log.New()
 	if err != nil {
@@ -31,7 +26,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	igate, err := setupIGate(enableTx, logger)
+	if *enableTxFlag {
+		tx = setupTransmitter(logger)
+		fmt.Println("TX support enabled.")
+	}
+
+	igate, err := setupIGate(tx, logger)
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
@@ -64,7 +64,7 @@ func main() {
 	}
 }
 
-func setupIGate(enableTx bool, logger *log.Logger) (*igate.IGate, error) {
+func setupIGate(tx *transmitter.Transmitter, logger *log.Logger) (*igate.IGate, error) {
 	cfg, err := config.GetConfig()
 	if err != nil {
 		return nil, err
@@ -75,11 +75,26 @@ func setupIGate(enableTx bool, logger *log.Logger) (*igate.IGate, error) {
 		return nil, err
 	}
 
-	ig, err := igate.New(cfg, enableTx, aprsis, logger)
+	ig, err := igate.New(cfg, aprsis, tx, logger)
 	if err != nil {
 		return nil, err
 	}
 
 	return ig, nil
 
+}
+
+func setupTransmitter(logger *log.Logger) *transmitter.Transmitter {
+	t := &transmitter.Transmitter{
+		TxChan: make(chan string),
+		Stop:   make(chan bool),
+		Logger: logger,
+	}
+
+	err := t.StartTx()
+	if err != nil {
+		logger.Error("Error starting transmitter: ", err)
+	}
+
+	return t
 }

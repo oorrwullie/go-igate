@@ -3,6 +3,7 @@ package igate
 import (
 	"bufio"
 	"fmt"
+	"github.com/oorrwullie/go-igate/internal/transmitter"
 	"io"
 	"os/exec"
 	"strings"
@@ -12,7 +13,6 @@ import (
 	"github.com/oorrwullie/go-igate/internal/cache"
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/tarm/serial"
 )
 
 type (
@@ -20,28 +20,26 @@ type (
 		cfg          config.Config
 		multimonChan chan []byte
 		aprsisChan   chan string
-		txChan       chan string
+		tx           *transmitter.Transmitter
 		Stop         chan bool
 		Aprsis       *aprs.AprsIs
 		Logger       *log.Logger
 		cache        *cache.Cache
-		enableTx     bool
 	}
 )
 
 const minPacketSize = 35
 
-func New(cfg config.Config, enableTx bool, aprsis *aprs.AprsIs, logger *log.Logger) (*IGate, error) {
+func New(cfg config.Config, aprsis *aprs.AprsIs, tx *transmitter.Transmitter, logger *log.Logger) (*IGate, error) {
 	ig := &IGate{
 		cfg:          cfg,
 		multimonChan: make(chan []byte),
 		aprsisChan:   make(chan string),
-		txChan:       make(chan string),
+		tx:           tx,
 		Stop:         make(chan bool),
 		Aprsis:       aprsis,
 		Logger:       logger,
 		cache:        cache.NewCache(1000, 10000, ".cache.json"),
-		enableTx:     enableTx,
 	}
 
 	return ig, nil
@@ -63,10 +61,10 @@ func (i *IGate) Run() error {
 		return fmt.Errorf("Error starting beacon: %v", err)
 	}
 
-	if i.enableTx {
-		err = i.startTx()
+	if i.tx != nil {
+		err = i.tx.StartTx()
 		if err != nil {
-			return fmt.Errorf("Error starting TX: %v", err)
+			return fmt.Errorf("Error starting transmitter: %v", err)
 		}
 	}
 
@@ -243,14 +241,14 @@ func (i *IGate) listenForAprsMessages() {
 					continue
 				}
 
-				if i.enableTx && packet.Type().NeedsAck() {
+				if i.tx != nil && packet.Type().NeedsAck() {
 					ackMsg, err := packet.AckString()
 					if err != nil {
-						i.Logger.Error("Error creating APRS acknowledgement: ", err)
+						i.Logger.Error("Error creating APRS acknowledgement message: ", err)
 						continue
 					}
 
-					i.txChan <- ackMsg
+					i.tx.Transmit(ackMsg)
 				}
 			}
 		}
@@ -283,51 +281,9 @@ func (i *IGate) startBeacon() error {
 				i.Logger.Info(b)
 				i.Aprsis.Conn.PrintfLine(b)
 			case <-i.Stop:
+				i.tx.StopTx()
 				ticker.Stop()
 				return
-			}
-		}
-	}()
-
-	return nil
-}
-
-func (i *IGate) startTx() error {
-	dataPort, err := config.DetectDataPort()
-	if err != nil {
-		return fmt.Errorf("Error detecting data port: %v", err)
-	}
-
-	c := &serial.Config{
-		Name:        dataPort,
-		Baud:        1200,
-		ReadTimeout: time.Second * 5,
-	}
-
-	go func() {
-		for {
-			select {
-			case <-i.Stop:
-				return
-			case msg := <-i.txChan:
-				port, err := serial.OpenPort(c)
-				if err != nil {
-					i.Logger.Error("failed to open serial port: ", err)
-				}
-
-				fmtMsg := fmt.Sprintf("%v\r\n", msg)
-				_, err = port.Write([]byte(fmtMsg))
-				if err != nil {
-					i.Logger.Error("failed to write to serial port: ", err)
-				}
-
-				i.Logger.Info("APRS message transmitted: ", msg)
-
-				if err != nil {
-					i.Logger.Error("Error transmitting APRS message: ", err)
-				}
-
-				port.Close()
 			}
 		}
 	}()
