@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"fmt"
@@ -8,7 +8,14 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-type Config struct {
+type (
+	Config struct {
+		Sdr      Sdr      `yaml:"sdr"`
+		Multimon Multimon `yaml:"multimon"`
+		Beacon   Beacon   `yaml:"beacon"`
+		AprsIs   AprsIs   `yaml:"aprsis"`
+	}
+
 	Sdr struct {
 		Path            string
 		Frequency       string
@@ -18,22 +25,25 @@ type Config struct {
 		SquelchLevel    string `yaml:"squelch-level"`
 		SampleRate      string `yaml:"sample-rate"`
 		AdditionalFlags string `yaml:"additional-flags"`
-	} `yaml:"sdr"`
+	}
+
 	Multimon struct {
 		Path            string
 		AdditionalFlags string `yaml:"additional-flags"`
-	} `yaml:"multimon"`
+	}
+
 	Beacon struct {
 		Enabled  bool
 		Call     string `yaml:"call-sign"`
 		Interval time.Duration
 		Comment  string
-	} `yaml:"beacon"`
+	}
+
 	AprsIs struct {
 		Id      string            `yaml:"id"`
 		Options map[string]string `yaml:"options"`
-	} `yaml:"aprsis"`
-}
+	}
+)
 
 func GetConfig() (Config, error) {
 	var cfg Config

@@ -1,4 +1,4 @@
-package main
+package igate
 
 import (
 	"bufio"
@@ -7,44 +7,41 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/oorrwullie/go-igate/internal/aprs"
+	"github.com/oorrwullie/go-igate/internal/cache"
+	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/tarm/serial"
 )
 
 type (
 	IGate struct {
-		cfg          Config
+		cfg          config.Config
 		multimonChan chan []byte
 		aprsisChan   chan string
+		txChan       chan string
 		Stop         chan bool
-		Aprsis       *AprsIs
-		Logger       *Logger
+		Aprsis       *aprs.AprsIs
+		Logger       *log.Logger
+		cache        *cache.Cache
+		enableTx     bool
 	}
 )
 
 const minPacketSize = 35
 
-func NewIGate() (*IGate, error) {
-	cfg, err := GetConfig()
-	if err != nil {
-		return nil, fmt.Errorf("Error loading config: %v", err)
-	}
-
-	logger, err := NewLogger()
-	if err != nil {
-		return nil, err
-	}
-
-	aprsis, err := NewAprsIs(cfg, logger)
-	if err != nil {
-		return nil, err
-	}
-
+func New(cfg config.Config, enableTx bool, aprsis *aprs.AprsIs, logger *log.Logger) (*IGate, error) {
 	ig := &IGate{
 		cfg:          cfg,
 		multimonChan: make(chan []byte),
 		aprsisChan:   make(chan string),
+		txChan:       make(chan string),
 		Stop:         make(chan bool),
 		Aprsis:       aprsis,
 		Logger:       logger,
+		cache:        cache.NewCache(1000, 10000, ".cache.json"),
+		enableTx:     enableTx,
 	}
 
 	return ig, nil
@@ -66,7 +63,14 @@ func (i *IGate) Run() error {
 		return fmt.Errorf("Error starting beacon: %v", err)
 	}
 
-	i.listenForMessages()
+	if i.enableTx {
+		err = i.startTx()
+		if err != nil {
+			return fmt.Errorf("Error starting TX: %v", err)
+		}
+	}
+
+	i.listenForAprsMessages()
 
 	return nil
 }
@@ -197,11 +201,12 @@ func (i *IGate) startMultimon() error {
 		go func(out io.ReadCloser) {
 			scanner := bufio.NewScanner(out)
 			for scanner.Scan() {
-
 				msg := scanner.Text()
-				i.Logger.Info("packet received: ", msg)
+				if exists := i.cache.Set(msg, time.Now()); !exists {
+					i.Logger.Info("packet received: ", msg)
 
-				i.aprsisChan <- msg
+					i.aprsisChan <- msg
+				}
 			}
 
 			if err := scanner.Err(); err != nil {
@@ -214,7 +219,7 @@ func (i *IGate) startMultimon() error {
 	return nil
 }
 
-func (i *IGate) listenForMessages() {
+func (i *IGate) listenForAprsMessages() {
 	for {
 		select {
 		case <-i.Stop:
@@ -225,14 +230,29 @@ func (i *IGate) listenForMessages() {
 				continue
 			}
 
-			packet, err := i.Aprsis.ParsePacket(msg)
+			packet, err := aprs.ParsePacket(msg)
 			if err != nil {
-				i.Logger.Error(err, "Could not parse APRS packet")
+				i.Logger.Error(err, "Could not parse APRS packet: ", msg)
 				continue
 			}
 
-			i.Aprsis.Upload(packet)
+			if !packet.IsAckMessage() && packet.Type().ForwardToAprsIs() {
+				err = i.Aprsis.Upload(msg)
+				if err != nil {
+					i.Logger.Error("Error uploading APRS packet: ", err)
+					continue
+				}
 
+				if i.enableTx && packet.Type().NeedsAck() {
+					ackMsg, err := packet.AckString()
+					if err != nil {
+						i.Logger.Error("Error creating APRS acknowledgement: ", err)
+						continue
+					}
+
+					i.txChan <- ackMsg
+				}
+			}
 		}
 	}
 }
@@ -260,12 +280,54 @@ func (i *IGate) startBeacon() error {
 			select {
 			case <-ticker.C:
 				b := fmt.Sprintf("%s>BEACON:%s", i.cfg.Beacon.Call, i.cfg.Beacon.Comment)
-
 				i.Logger.Info(b)
-				i.Aprsis.conn.PrintfLine(b)
+				i.Aprsis.Conn.PrintfLine(b)
 			case <-i.Stop:
 				ticker.Stop()
 				return
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (i *IGate) startTx() error {
+	dataPort, err := config.DetectDataPort()
+	if err != nil {
+		return fmt.Errorf("Error detecting data port: %v", err)
+	}
+
+	c := &serial.Config{
+		Name:        dataPort,
+		Baud:        1200,
+		ReadTimeout: time.Second * 5,
+	}
+
+	go func() {
+		for {
+			select {
+			case <-i.Stop:
+				return
+			case msg := <-i.txChan:
+				port, err := serial.OpenPort(c)
+				if err != nil {
+					i.Logger.Error("failed to open serial port: ", err)
+				}
+
+				fmtMsg := fmt.Sprintf("%v\r\n", msg)
+				_, err = port.Write([]byte(fmtMsg))
+				if err != nil {
+					i.Logger.Error("failed to write to serial port: ", err)
+				}
+
+				i.Logger.Info("APRS message transmitted: ", msg)
+
+				if err != nil {
+					i.Logger.Error("Error transmitting APRS message: ", err)
+				}
+
+				port.Close()
 			}
 		}
 	}()

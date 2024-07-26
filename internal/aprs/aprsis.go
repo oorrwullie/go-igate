@@ -1,4 +1,4 @@
-package main
+package aprs
 
 import (
 	"fmt"
@@ -6,32 +6,34 @@ import (
 	"net/textproto"
 	"strings"
 
-	"github.com/pd0mz/go-aprs"
+	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/go-igate/internal/log"
 )
 
 type AprsIs struct {
 	id        string
-	conn      *textproto.Conn
+	Conn      *textproto.Conn
 	connected bool
-	cfg       Config
+	cfg       config.AprsIs
+	logger    *log.Logger
 }
 
-func NewAprsIs(cfg Config, logger *Logger) (*AprsIs, error) {
-	if cfg.AprsIs.Options["server"] == "" {
+func NewAprsIs(cfg config.AprsIs, logger *log.Logger) (*AprsIs, error) {
+	if cfg.Options["server"] == "" {
 		return nil, fmt.Errorf("no server specified")
 	}
 
-	if cfg.AprsIs.Options["call-sign"] == "" {
+	if cfg.Options["call-sign"] == "" {
 		return nil, fmt.Errorf("no callsign specified")
 	}
 
-	if cfg.AprsIs.Options["passcode"] == "" {
+	if cfg.Options["passcode"] == "" {
 		return nil, fmt.Errorf("no passcode specified")
 	}
 
 	a := &AprsIs{
-		id:        cfg.AprsIs.Options["call-sign"],
-		conn:      nil,
+		id:        cfg.Options["call-sign"],
+		Conn:      nil,
 		connected: false,
 		cfg:       cfg,
 	}
@@ -41,37 +43,23 @@ func NewAprsIs(cfg Config, logger *Logger) (*AprsIs, error) {
 		return nil, err
 	}
 
-	logger.Debug(fmt.Sprintf("Connected to APRS-IS: %s", cfg.AprsIs.Options["server"]))
+	logger.Debug(fmt.Sprintf("Connected to APRS-IS: %s", cfg.Options["server"]))
 
 	go func() {
 		for {
-			msg, err := a.conn.ReadLine()
+			msg, err := a.Conn.ReadLine()
 			if err != nil {
 				logger.Error(err, "Error reading from APRS-IS")
 				if err == io.EOF {
 					logger.Info("Reconnecting to APRS-IS server")
-					a.conn, err = textproto.Dial("tcp", cfg.AprsIs.Options["server"])
+					a.Disconnect()
+					err = a.Connect()
 					if err != nil {
 						logger.Error(err, "Could not reconnect to APRS-IS server.")
-						a.conn.Close()
+						a.Disconnect()
 					}
 					break
 				} else if !isReadReceipt(msg) {
-					p, err := a.ParsePacket(msg)
-					if err != nil {
-						logger.Error(err, "Could not parse packet from APRS-IS server.")
-						continue
-					}
-
-					msg = fmt.Sprintf(
-						"%s -> %s (%f, %f) %s",
-						p.Src.Call,
-						p.Dst.Call,
-						p.Position.Latitude,
-						p.Position.Longitude,
-						p.Comment,
-					)
-
 					logger.Info(
 						fmt.Sprintf(
 							"%s %s",
@@ -93,16 +81,16 @@ func (a *AprsIs) Connect() error {
 		return nil
 	}
 
-	conn, err := textproto.Dial("tcp", a.cfg.AprsIs.Options["server"])
+	conn, err := textproto.Dial("tcp", a.cfg.Options["server"])
 	if err != nil {
 		return fmt.Errorf("could not connect to APRS-IS: %v", err)
 	}
 
 	err = conn.PrintfLine(
 		"user %s pass %s vers Go-iGate 0.0.1 filter %s",
-		a.cfg.AprsIs.Options["call-sign"],
-		a.cfg.AprsIs.Options["passcode"],
-		a.cfg.AprsIs.Options["filter"],
+		a.cfg.Options["call-sign"],
+		a.cfg.Options["passcode"],
+		a.cfg.Options["filter"],
 	)
 	if err != nil {
 		return err
@@ -113,11 +101,11 @@ func (a *AprsIs) Connect() error {
 		return fmt.Errorf("could not read server response: %v", err)
 	}
 
-	if strings.HasPrefix(resp, fmt.Sprintf("# logresp %s verified", a.cfg.AprsIs.Options["call-sign"])) {
+	if strings.HasPrefix(resp, fmt.Sprintf("# logresp %s verified", a.cfg.Options["call-sign"])) {
 		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
 	}
 
-	a.conn = conn
+	a.Conn = conn
 
 	return nil
 }
@@ -127,11 +115,11 @@ func (a *AprsIs) Disconnect() {
 		return
 	}
 
-	a.conn.Close()
+	a.Conn.Close()
 	a.connected = false
 }
 
-func (a *AprsIs) Upload(p aprs.Packet) error {
+func (a *AprsIs) Upload(msg string) error {
 	if !a.connected {
 		err := a.Connect()
 		if err != nil {
@@ -139,15 +127,11 @@ func (a *AprsIs) Upload(p aprs.Packet) error {
 		}
 	}
 
-	err := a.conn.PrintfLine("%s", p.Raw)
+	msg = strings.TrimPrefix(msg, "APRS: ")
+
+	err := a.Conn.PrintfLine("%s", msg)
 
 	return err
-}
-
-func (a *AprsIs) ParsePacket(raw string) (aprs.Packet, error) {
-	raw = strings.TrimPrefix(raw, "APRS: ")
-
-	return aprs.ParsePacket(raw)
 }
 
 func isReadReceipt(message string) bool {

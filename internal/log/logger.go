@@ -1,4 +1,4 @@
-package main
+package log
 
 import (
 	"fmt"
@@ -45,7 +45,7 @@ func (f *ColorFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 	return []byte(message), nil
 }
 
-func NewLogger() (*Logger, error) {
+func New() (*Logger, error) {
 	stdout := logrus.New()
 	stdout.SetOutput(os.Stdout)
 	stdout.SetLevel(logrus.DebugLevel)
