@@ -66,12 +66,14 @@ func DetectDataPort() (string, error) {
 		commandOutput = string(out)
 		lines := strings.Split(commandOutput, "\n")
 
-		for _, line := range lines {
+		for i, line := range lines {
+			var nextLine string
 			if strings.Contains(line, productID) {
 				productMatch = true
+				nextLine = lines[i+1]
 			}
 
-			if productMatch && strings.Contains(line, vendorID) {
+			if productMatch && (strings.Contains(nextLine, vendorID) || strings.Contains(nextLine, vendorID)) {
 				vendorMatch = true
 			} else {
 				productMatch = false
