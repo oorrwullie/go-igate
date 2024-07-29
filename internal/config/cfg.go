@@ -10,10 +10,15 @@ import (
 
 type (
 	Config struct {
-		Sdr      Sdr      `yaml:"sdr"`
-		Multimon Multimon `yaml:"multimon"`
-		Beacon   Beacon   `yaml:"beacon"`
-		AprsIs   AprsIs   `yaml:"aprsis"`
+		Sdr              Sdr      `yaml:"sdr"`
+		Multimon         Multimon `yaml:"multimon"`
+		Beacon           Beacon   `yaml:"beacon"`
+		AprsIs           AprsIs   `yaml:"aprsis"`
+		TxEnable         bool     `yaml:"enable-tx"`
+		IgateEnable      bool     `yaml:"enable-igate"`
+		DigipeaterEnable bool     `yaml:"enable-digipeater"`
+		CacheSize        int      `yaml:"cache-size"`
+		StationCallsign  string   `yaml:"station-callsign"`
 	}
 
 	Sdr struct {
@@ -34,7 +39,6 @@ type (
 
 	Beacon struct {
 		Enabled  bool
-		Call     string `yaml:"call-sign"`
 		Interval time.Duration
 		Comment  string
 	}
