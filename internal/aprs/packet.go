@@ -2,6 +2,7 @@ package aprs
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -120,6 +121,48 @@ func (p *Packet) IsAckMessage() bool {
 	}
 
 	return false
+}
+
+// Check whether the packet should be retransmitted by the digipeater and if so, modifies the path.
+func (p *Packet) CheckForRetransmit(stationCallsign string) (bool, error) {
+	alreadyProcessed := false
+
+	for i, component := range p.Path {
+		if strings.HasPrefix(component, stationCallsign) {
+			if strings.Contains(component, "*") {
+				// already processed
+				return false, nil
+			}
+
+			p.Path[i] = fmt.Sprintf("%s*", stationCallsign)
+			alreadyProcessed = true
+		}
+
+		if strings.HasPrefix(component, "WIDE") && strings.Contains(component, "-") {
+			parts := strings.Split(component, "-")
+
+			if len(parts) == 2 {
+				hopCount, err := strconv.Atoi(parts[1])
+				if err != nil {
+					return false, err
+				}
+
+				if hopCount <= 0 {
+					// The packet has no more hops to give
+					return false, nil
+				}
+
+				// It still has a hop to give so we need to decrement the hop count
+				p.Path[i] = fmt.Sprintf("%s-%d", parts[0], hopCount-1)
+			}
+		}
+	}
+
+	if !alreadyProcessed {
+		p.Path = append([]string{fmt.Sprintf("%s*", stationCallsign)}, p.Path...)
+	}
+
+	return true, nil
 }
 
 func (t PacketType) String() string {
