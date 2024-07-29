@@ -11,6 +11,7 @@ import (
 )
 
 type AprsIs struct {
+	Callsign  string
 	id        string
 	Conn      *textproto.Conn
 	connected bool
@@ -18,12 +19,12 @@ type AprsIs struct {
 	logger    *log.Logger
 }
 
-func NewAprsIs(cfg config.AprsIs, logger *log.Logger) (*AprsIs, error) {
+func New(cfg config.AprsIs, callSign string, logger *log.Logger) (*AprsIs, error) {
 	if cfg.Options["server"] == "" {
 		return nil, fmt.Errorf("no server specified")
 	}
 
-	if cfg.Options["call-sign"] == "" {
+	if callSign == "" {
 		return nil, fmt.Errorf("no callsign specified")
 	}
 
@@ -32,7 +33,7 @@ func NewAprsIs(cfg config.AprsIs, logger *log.Logger) (*AprsIs, error) {
 	}
 
 	a := &AprsIs{
-		id:        cfg.Options["call-sign"],
+		id:        callSign,
 		Conn:      nil,
 		connected: false,
 		cfg:       cfg,

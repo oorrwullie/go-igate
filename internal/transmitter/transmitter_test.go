@@ -2,9 +2,10 @@ package transmitter
 
 import (
 	"fmt"
-	"github.com/oorrwullie/go-igate/internal/log"
 	"os"
 	"testing"
+
+	"github.com/oorrwullie/go-igate/internal/log"
 )
 
 func TestTransmitter_Transmit(t1 *testing.T) {
@@ -56,15 +57,15 @@ func TestTransmitter_Transmit(t1 *testing.T) {
 		t1.Run(tt.name, func(t1 *testing.T) {
 			t := &Transmitter{
 				TxChan: tt.fields.TxChan,
-				Stop:   tt.fields.Stop,
-				Logger: tt.fields.Logger,
+				stop:   tt.fields.Stop,
+				logger: tt.fields.Logger,
 			}
 			go func() {
 				if got := <-tt.fields.TxChan; got != tt.want {
 					t1.Errorf("Transmitter.Transmit() = %v, want %v", got, tt.want)
 				}
 			}()
-			t.Transmit(tt.args.msg)
+			t.Tx(tt.args.msg)
 		})
 	}
 }

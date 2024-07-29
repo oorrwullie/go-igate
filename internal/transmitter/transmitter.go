@@ -66,20 +66,16 @@ func (t *Transmitter) Stop() {
 func (t *Transmitter) Tx(msg string) error {
 	port, err := serial.OpenPort(t.serialConfig)
 	if err != nil {
-		return fmt.Errorf("failed to open serial port: ", err)
+		return fmt.Errorf("failed to open serial port: %s", err)
 	}
 
 	fmtMsg := fmt.Sprintf("%v\r\n", msg)
 	_, err = port.Write([]byte(fmtMsg))
 	if err != nil {
-		return fmt.Errorf("failed to write to serial port: ", err)
+		return fmt.Errorf("Error transmitting APRS message: %s", err)
 	}
 
 	t.logger.Info("APRS message transmitted: ", msg)
-
-	if err != nil {
-		return fmt.Errorf("Error transmitting APRS message: ", err)
-	}
 
 	port.Close()
 

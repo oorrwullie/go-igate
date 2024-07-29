@@ -10,15 +10,19 @@ import (
 
 type (
 	Config struct {
-		Sdr              Sdr      `yaml:"sdr"`
-		Multimon         Multimon `yaml:"multimon"`
-		Beacon           Beacon   `yaml:"beacon"`
-		AprsIs           AprsIs   `yaml:"aprsis"`
-		TxEnable         bool     `yaml:"enable-tx"`
-		IgateEnable      bool     `yaml:"enable-igate"`
-		DigipeaterEnable bool     `yaml:"enable-digipeater"`
-		CacheSize        int      `yaml:"cache-size"`
-		StationCallsign  string   `yaml:"station-callsign"`
+		Sdr               Sdr         `yaml:"sdr"`
+		Multimon          Multimon    `yaml:"multimon"`
+		Transmitter       Transmitter `yaml:"transmitter"`
+		IGate             IGate       `yaml:"igate"`
+		DigipeaterEnabled bool        `yaml:"enable-digipeater"`
+		CacheSize         int         `yaml:"cache-size"`
+		StationCallsign   string      `yaml:"station-callsign"`
+	}
+
+	IGate struct {
+		Enabled bool   `yaml:"enabled"`
+		Aprsis  AprsIs `yaml:"aprsis"`
+		Beacon  Beacon `yaml:"beacon"`
 	}
 
 	Sdr struct {
@@ -46,6 +50,12 @@ type (
 	AprsIs struct {
 		Id      string            `yaml:"id"`
 		Options map[string]string `yaml:"options"`
+	}
+
+	Transmitter struct {
+		Enabled     bool   `yaml:"enabled"`
+		BaudRate    int    `yaml:"baud-rate"`
+		ReadTimeout string `yaml:"read-timeout"`
 	}
 )
 

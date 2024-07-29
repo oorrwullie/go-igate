@@ -10,7 +10,7 @@ type Digipeater struct {
 	Logger      *log.Logger
 }
 
-func NewDigipeater(tx *transmitter.Transmitter, logger *log.Logger) *Digipeater {
+func New(tx *transmitter.Transmitter, logger *log.Logger) *Digipeater {
 	return &Digipeater{
 		Transmitter: tx,
 		Logger:      logger,
@@ -19,22 +19,15 @@ func NewDigipeater(tx *transmitter.Transmitter, logger *log.Logger) *Digipeater 
 
 func (d *Digipeater) Start() error {
 	d.Logger.Info("Starting digipeater...")
-	err := d.Transmitter.StartTx()
-	if err != nil {
-		d.Logger.Error("Failed to start transmitter: ", err)
-		return err
-	}
 	return nil
 }
 
 func (d *Digipeater) Stop() {
 	d.Logger.Info("Stopping digipeater...")
-	d.Transmitter.StopTx()
 }
 
 func (d *Digipeater) HandleMessage(msg string) {
 	d.Logger.Info("Handling message: ", msg)
 	// Implement digigate rules here
-	d.Transmitter.Transmit(msg)
 	d.Logger.Info("Message retransmitted: ", msg)
 }
