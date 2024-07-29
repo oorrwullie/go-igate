@@ -1,24 +1,24 @@
-package digigate
+package digipeater
 
 import (
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
-type Digigate struct {
+type Digipeater struct {
 	Transmitter *transmitter.Transmitter
 	Logger      *log.Logger
 }
 
-func NewDigigate(tx *transmitter.Transmitter, logger *log.Logger) *Digigate {
-	return &Digigate{
+func NewDigipeater(tx *transmitter.Transmitter, logger *log.Logger) *Digipeater {
+	return &Digipeater{
 		Transmitter: tx,
 		Logger:      logger,
 	}
 }
 
-func (d *Digigate) Start() error {
-	d.Logger.Info("Starting digigate...")
+func (d *Digipeater) Start() error {
+	d.Logger.Info("Starting digipeater...")
 	err := d.Transmitter.StartTx()
 	if err != nil {
 		d.Logger.Error("Failed to start transmitter: ", err)
@@ -27,12 +27,12 @@ func (d *Digigate) Start() error {
 	return nil
 }
 
-func (d *Digigate) Stop() {
-	d.Logger.Info("Stopping digigate...")
+func (d *Digipeater) Stop() {
+	d.Logger.Info("Stopping digipeater...")
 	d.Transmitter.StopTx()
 }
 
-func (d *Digigate) HandleMessage(msg string) {
+func (d *Digipeater) HandleMessage(msg string) {
 	d.Logger.Info("Handling message: ", msg)
 	// Implement digigate rules here
 	d.Transmitter.Transmit(msg)
