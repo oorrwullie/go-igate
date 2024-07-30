@@ -48,8 +48,10 @@ type (
 	}
 
 	AprsIs struct {
-		Id      string            `yaml:"id"`
-		Options map[string]string `yaml:"options"`
+		Enabled  bool
+		Server   string
+		Passcode string
+		Filter   string
 	}
 
 	Transmitter struct {
