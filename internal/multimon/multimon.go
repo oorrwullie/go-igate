@@ -70,7 +70,7 @@ func (m *Multimon) Start() error {
 			defer in.Close()
 
 			for data := range m.inputChan {
-				fmt.Printf("multimon-ng input channel: %v\n", data)
+				fmt.Printf("multimon-ng input channel message received")
 				_, err := in.Write(data)
 				if err != nil {
 					m.logger.Error("Error writing to multimon-ng: ", err)

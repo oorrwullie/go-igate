@@ -77,7 +77,7 @@ func (s *Sdr) Start() error {
 				data := make([]byte, n)
 				copy(data, buf[:n])
 				s.outputChan <- data
-				fmt.Printf("message sent to sdr output channel: %v\n", data)
+				fmt.Println("Message sent to sdr output channel")
 			}
 		}
 	}()
