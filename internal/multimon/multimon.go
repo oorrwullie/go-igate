@@ -70,7 +70,7 @@ func (m *Multimon) Start() error {
 			defer in.Close()
 
 			for data := range m.inputChan {
-				fmt.Printf("multimon-ng input channel message received")
+				fmt.Println("multimon-ng input channel message received")
 				_, err := in.Write(data)
 				if err != nil {
 					m.logger.Error("Error writing to multimon-ng: ", err)
@@ -86,7 +86,9 @@ func (m *Multimon) Start() error {
 					m.logger.Info("packet received: ", msg)
 
 					m.outputChan <- msg
-					fmt.Printf("message sent to multimon output channle: %v/n", msg)
+					fmt.Printf("message sent to multimon output channel: %v/n", msg)
+				} else {
+					m.logger.Info("Duplicate packet received: ", msg)
 				}
 			}
 
