@@ -22,6 +22,7 @@ type Multimon struct {
 	Cmd        *exec.Cmd
 }
 
+// New creates a new multimon-ng instance
 func New(cfg config.Multimon, inputChan chan []byte, outputChan chan string, cache *cache.Cache, logger *log.Logger) *Multimon {
 	requiredArgs := []string{
 		"-a",
@@ -46,7 +47,9 @@ func New(cfg config.Multimon, inputChan chan []byte, outputChan chan string, cac
 	}
 }
 
+// Start starts the multimon-ng process and reads from the input and writes to the output channel
 func (m *Multimon) Start() error {
+	// Start the multimon-ng process
 	go func() {
 		inPipe, err := m.Cmd.StdinPipe()
 		if err != nil {
@@ -66,6 +69,7 @@ func (m *Multimon) Start() error {
 			return
 		}
 
+		// Start goroutines to read from the input channel and write to the output channel
 		go func(in io.WriteCloser) {
 			defer in.Close()
 
@@ -78,6 +82,9 @@ func (m *Multimon) Start() error {
 			}
 		}(inPipe)
 
+		// This is reading from the output of multimon-ng and writing to the output channel
+		// This is where the APRS packets are read from multimon-ng
+		// and sent to the output channel
 		go func(out io.ReadCloser) {
 			scanner := bufio.NewScanner(out)
 			for scanner.Scan() {

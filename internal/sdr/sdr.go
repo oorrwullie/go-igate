@@ -63,24 +63,29 @@ func (s *Sdr) Start() error {
 	go func() {
 		buf := make([]byte, 4096)
 
-		for {
-			n, err := out.Read(buf)
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				s.logger.Error("Error reading rtl_fm stdout:", err)
-				return
-			}
-
-			if n > 0 {
-				data := make([]byte, n)
-				copy(data, buf[:n])
-				s.outputChan <- data
-				fmt.Println("Message sent to sdr output channel")
-			}
-		}
+		s.pipeRtlFM(out, buf)
 	}()
 
 	return nil
+}
+
+// Read from the rtl_fm stdout and send to the output channel
+func (s *Sdr) pipeRtlFM(out io.ReadCloser, buf []byte) {
+	for {
+		n, err := out.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			s.logger.Error("Error reading rtl_fm stdout:", err)
+			return
+		}
+
+		if n > 0 {
+			data := make([]byte, n)
+			copy(data, buf[:n])
+			s.outputChan <- data
+			fmt.Println("Message sent to sdr output channel")
+		}
+	}
 }
