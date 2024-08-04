@@ -109,6 +109,7 @@ func (a *AprsIs) Connect() error {
 		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
 	}
 
+	a.logger.Info("Connected to APRS-IS server")
 	a.connected = true
 	a.Conn = conn
 
