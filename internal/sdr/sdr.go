@@ -85,7 +85,6 @@ func (s *Sdr) pipeRtlFM(out io.ReadCloser, buf []byte) {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 			s.outputChan <- data
-			fmt.Println("Message sent to sdr output channel")
 		}
 	}
 }
