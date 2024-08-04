@@ -19,7 +19,7 @@ type AprsIs struct {
 	logger    *log.Logger
 }
 
-func New(cfg config.AprsIs, callSign string, logger *log.Logger) (*AprsIs, error) {
+func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger) (*AprsIs, error) {
 	if cfg.Server == "" {
 		return nil, fmt.Errorf("no server specified")
 	}
@@ -59,6 +59,9 @@ func New(cfg config.AprsIs, callSign string, logger *log.Logger) (*AprsIs, error
 						logger.Error(err, "Could not reconnect to APRS-IS server.")
 						a.Disconnect()
 					}
+					b := fmt.Sprintf("%s>BEACON:%s", callSign, comment)
+					logger.Info(b)
+					a.Conn.PrintfLine(b)
 					break
 				} else if !isReadReceipt(msg) {
 					logger.Info(
@@ -106,6 +109,7 @@ func (a *AprsIs) Connect() error {
 		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
 	}
 
+	a.connected = true
 	a.Conn = conn
 
 	return nil

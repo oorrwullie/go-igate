@@ -25,7 +25,7 @@ type (
 const minPacketSize = 35
 
 func New(cfg config.IGate, inputChan chan string, enableTx bool, txChan chan string, callSign string, logger *log.Logger) (*IGate, error) {
-	aprsis, err := aprs.New(cfg.Aprsis, callSign, logger)
+	aprsis, err := aprs.New(cfg.Aprsis, callSign, cfg.Beacon.Comment, logger)
 	if err != nil {
 		return nil, fmt.Errorf("Error creating APRS client: %v", err)
 	}
