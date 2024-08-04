@@ -67,7 +67,6 @@ func (i *IGate) listenForMessages() {
 		case <-i.stop:
 			return
 		case msg := <-i.inputChan:
-			fmt.Printf("igate received message from multimon: %v\n", msg)
 			if len(msg) < minPacketSize {
 				i.logger.Error("Packet too short: ", msg)
 				continue

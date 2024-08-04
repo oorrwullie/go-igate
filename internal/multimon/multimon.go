@@ -2,7 +2,6 @@ package multimon
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -92,7 +91,6 @@ func (m *Multimon) Start() error {
 					m.logger.Info("packet received: ", msg)
 
 					m.outputChan <- msg
-					fmt.Printf("message sent to multimon output channel: %v/n", msg)
 				} else {
 					m.logger.Info("Duplicate packet received: ", msg)
 				}
