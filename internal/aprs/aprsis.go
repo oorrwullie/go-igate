@@ -33,7 +33,7 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 	}
 
 	a := &AprsIs{
-		id:        callSign,
+		Callsign:  callSign,
 		Conn:      nil,
 		connected: false,
 		cfg:       cfg,
