@@ -118,6 +118,11 @@ func (i *IGate) startBeacon() error {
 
 	ticker := time.NewTicker(i.cfg.Beacon.Interval)
 
+	// Send initial beacon
+	b := fmt.Sprintf("%s>BEACON:%s", i.callSign, i.cfg.Beacon.Comment)
+	i.logger.Info(b)
+	i.Aprsis.Conn.PrintfLine(b)
+
 	go func() {
 		for {
 			select {
