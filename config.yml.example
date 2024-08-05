@@ -1,6 +1,12 @@
 # Description: Configuration file for go-igate
 # License: MIT
 # Notes: This file is written in YAML format. For more information on YAML, see https://yaml.org/
+
+
+# call-sign of the DigiGate (your call sign including SSID) - e.g. "N0CALL-10"
+station-callsign: ""
+# size of in-memory cache for keeping track of received packets
+cache-size: 1000
 sdr:
   # RTL-SDR binary
   exec: "rtl_fm"
@@ -17,34 +23,32 @@ sdr:
   # sample rate of rtl-sdr - 22050 for APRS
   sample-rate: "22050"
   additional-flags: ""
-
 multimon:
   # multimon-ng binary
   path: "multimon-ng"
   additional-flags: ""
-
-beacon:
-  # beacon message
-  # enable to send beacon messages
-  enabled: false
-  # call-sign of beacon (your call sign including SSID) - e.g. "N0CALL-10"
-  call-sign: ""
-  # interval of beacon messages - e.g. "30m"
-  interval: 30m
-  # comment of beacon messages which should include the position of the station
-  comment: "Powered by gophers!"
-
-aprsis:
-  # id should be a UUID
-  id: "b67ac5d5-3612-4618-88a9-a63d36a1777c"
-  # options for APRS-IS server
-  options:
+transmitter:
+  # enabled: set to true to enable tx functionality
+  enabled: true
+  # baud rate of serial connection to the radio
+  baud-rate: 1200
+  # time to wait for serial connection to the radio
+  read-timeout: "5s"
+igate:
+  # enabled: set to true to enable DigiGate to act as an iGate.
+  enabled: true
+  beacon:
+    # enable to send beacon messages
+    enabled: false
+    # interval of beacon messages - e.g. "30m"
+    interval: 30m
+    # comment of beacon messages which should include the position of the station
+    comment: "Powered by gophers!"
+  aprsis:
     # enable to connect to APRS-IS server for iGate
     enabled: false
     # server to connect to (noam.aprs2.net:14580 for North America)
     server: "noam.aprs2.net:14580"
-    # call-sign of iGate (your call sign including SSID) - e.g. "N0CALL-10"
-    call-sign: ""
     #passcode of iGate can be obtained from https://apps.magicbug.co.uk/passcode/ (do so with your SSID - eg. N0CALL-10)
     passcode: ""
     # filter for APRS-IS server - e.g. "m/50" for 50 miles radius

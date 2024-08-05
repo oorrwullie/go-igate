@@ -2,54 +2,56 @@ package transmitter
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/tarm/serial"
-	"time"
 )
 
 type Transmitter struct {
-	TxChan chan string
-	Stop   chan bool
-	Logger *log.Logger
+	TxChan       chan string
+	stop         chan bool
+	logger       *log.Logger
+	serialConfig *serial.Config
 }
 
-func (t *Transmitter) StartTx() error {
+func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
 	dataPort, err := config.DetectDataPort()
 	if err != nil {
-		return fmt.Errorf("Error detecting data port: %v", err)
+		return nil, fmt.Errorf("Error detecting data port: %v", err)
 	}
 
-	c := &serial.Config{
+	timeout, err := time.ParseDuration(cfg.ReadTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid read timeout: %v", err)
+	}
+
+	serialConfig := &serial.Config{
 		Name:        dataPort,
-		Baud:        1200,
-		ReadTimeout: time.Second * 5,
+		Baud:        cfg.BaudRate,
+		ReadTimeout: timeout,
 	}
 
+	return &Transmitter{
+		TxChan:       make(chan string),
+		stop:         make(chan bool),
+		logger:       logger,
+		serialConfig: serialConfig,
+	}, nil
+}
+
+func (t *Transmitter) Start() error {
 	go func() {
 		for {
 			select {
-			case <-t.Stop:
+			case <-t.stop:
 				return
 			case msg := <-t.TxChan:
-				port, err := serial.OpenPort(c)
+				err := t.Tx(msg)
 				if err != nil {
-					t.Logger.Error("failed to open serial port: ", err)
+					t.logger.Error("Error transmitting APRS message: ", err)
 				}
-
-				fmtMsg := fmt.Sprintf("%v\r\n", msg)
-				_, err = port.Write([]byte(fmtMsg))
-				if err != nil {
-					t.Logger.Error("failed to write to serial port: ", err)
-				}
-
-				t.Logger.Info("APRS message transmitted: ", msg)
-
-				if err != nil {
-					t.Logger.Error("Error transmitting APRS message: ", err)
-				}
-
-				port.Close()
 			}
 		}
 	}()
@@ -57,10 +59,25 @@ func (t *Transmitter) StartTx() error {
 	return nil
 }
 
-func (t *Transmitter) StopTx() {
-	t.Stop <- true
+func (t *Transmitter) Stop() {
+	t.stop <- true
 }
 
-func (t *Transmitter) Transmit(msg string) {
-	t.TxChan <- msg
+func (t *Transmitter) Tx(msg string) error {
+	port, err := serial.OpenPort(t.serialConfig)
+	if err != nil {
+		return fmt.Errorf("failed to open serial port: %s", err)
+	}
+
+	fmtMsg := fmt.Sprintf("%v\r\n", msg)
+	_, err = port.Write([]byte(fmtMsg))
+	if err != nil {
+		return fmt.Errorf("Error transmitting APRS message: %s", err)
+	}
+
+	t.logger.Info("APRS message transmitted: ", msg)
+
+	port.Close()
+
+	return nil
 }

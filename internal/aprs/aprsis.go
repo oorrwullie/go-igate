@@ -11,6 +11,7 @@ import (
 )
 
 type AprsIs struct {
+	Callsign  string
 	id        string
 	Conn      *textproto.Conn
 	connected bool
@@ -18,21 +19,21 @@ type AprsIs struct {
 	logger    *log.Logger
 }
 
-func NewAprsIs(cfg config.AprsIs, logger *log.Logger) (*AprsIs, error) {
-	if cfg.Options["server"] == "" {
+func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger) (*AprsIs, error) {
+	if cfg.Server == "" {
 		return nil, fmt.Errorf("no server specified")
 	}
 
-	if cfg.Options["call-sign"] == "" {
+	if callSign == "" {
 		return nil, fmt.Errorf("no callsign specified")
 	}
 
-	if cfg.Options["passcode"] == "" {
+	if cfg.Passcode == "" {
 		return nil, fmt.Errorf("no passcode specified")
 	}
 
 	a := &AprsIs{
-		id:        cfg.Options["call-sign"],
+		Callsign:  callSign,
 		Conn:      nil,
 		connected: false,
 		cfg:       cfg,
@@ -43,7 +44,7 @@ func NewAprsIs(cfg config.AprsIs, logger *log.Logger) (*AprsIs, error) {
 		return nil, err
 	}
 
-	logger.Debug(fmt.Sprintf("Connected to APRS-IS: %s", cfg.Options["server"]))
+	logger.Debug(fmt.Sprintf("Connected to APRS-IS: %s", cfg.Server))
 
 	go func() {
 		for {
@@ -81,16 +82,16 @@ func (a *AprsIs) Connect() error {
 		return nil
 	}
 
-	conn, err := textproto.Dial("tcp", a.cfg.Options["server"])
+	conn, err := textproto.Dial("tcp", a.cfg.Server)
 	if err != nil {
 		return fmt.Errorf("could not connect to APRS-IS: %v", err)
 	}
 
 	err = conn.PrintfLine(
-		"user %s pass %s vers Go-iGate 0.0.1 filter %s",
-		a.cfg.Options["call-sign"],
-		a.cfg.Options["passcode"],
-		a.cfg.Options["filter"],
+		"user %s pass %s vers DigiGate 0.0.1 filter %s",
+		a.Callsign,
+		a.cfg.Passcode,
+		a.cfg.Filter,
 	)
 	if err != nil {
 		return err
@@ -101,10 +102,12 @@ func (a *AprsIs) Connect() error {
 		return fmt.Errorf("could not read server response: %v", err)
 	}
 
-	if strings.HasPrefix(resp, fmt.Sprintf("# logresp %s verified", a.cfg.Options["call-sign"])) {
+	if strings.HasPrefix(resp, fmt.Sprintf("# logresp %s verified", a.Callsign)) {
 		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
 	}
 
+	fmt.Println("Connected to APRS-IS server")
+	a.connected = true
 	a.Conn = conn
 
 	return nil

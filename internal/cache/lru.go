@@ -96,7 +96,7 @@ func fnvHash(data []byte) uint32 {
 	return h.Sum32()
 }
 
-func NewCache(capacity int, bloomFilterSize uint, filePath string) *Cache {
+func NewCache(capacity int, filePath string) *Cache {
 	lru := &LRU{
 		cache:    make(map[string]*node),
 		capacity: capacity,
@@ -106,7 +106,7 @@ func NewCache(capacity int, bloomFilterSize uint, filePath string) *Cache {
 		capacity: capacity,
 		cache:    make(map[string]interface{}),
 		lru:      lru,
-		bloom:    NewBloomFilter(bloomFilterSize),
+		bloom:    NewBloomFilter(uint(capacity * 10)),
 		filePath: filePath,
 	}
 
