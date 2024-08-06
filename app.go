@@ -78,7 +78,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	}
 
 	if cfg.DigipeaterEnabled {
-		dp := digipeater.New(tx.TxChan, cfg.StationCallsign, logger)
+		dp = digipeater.New(tx.TxChan, cfg.StationCallsign, logger)
 	}
 
 	dg := &DigiGate{
