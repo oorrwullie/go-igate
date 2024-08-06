@@ -4,10 +4,11 @@ import (
 	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/oorrwullie/go-igate/internal/pubsub"
+	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
 type Digipeater struct {
-	txChan    chan string
+	tx        *transmitter.Tx
 	InputChan <-chan string
 	callsign  string
 	logger    *log.Logger
@@ -16,9 +17,9 @@ type Digipeater struct {
 
 const minPacketSize = 35
 
-func New(txChan chan string, ps *pubsub.PubSub, callsign string, logger *log.Logger) *Digipeater {
+func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, logger *log.Logger) *Digipeater {
 	return &Digipeater{
-		txChan:    txChan,
+		tx:        tx,
 		InputChan: ps.Subscribe(),
 		callsign:  callsign,
 		logger:    logger,
@@ -64,7 +65,7 @@ func (d *Digipeater) HandleMessage(msg string) {
 	}
 
 	if needsToBeTransmitted {
-		d.txChan <- msg
+		d.tx.Send(msg)
 		d.logger.Info("Message retransmitted: ", msg)
 	}
 }

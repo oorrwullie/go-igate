@@ -8,6 +8,7 @@ import (
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/oorrwullie/go-igate/internal/pubsub"
+	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
 type (
@@ -16,7 +17,7 @@ type (
 		callSign  string
 		inputChan <-chan string
 		enableTx  bool
-		txChan    chan string
+		tx        *transmitter.Tx
 		logger    *log.Logger
 		Aprsis    *aprs.AprsIs
 		stop      chan bool
@@ -25,7 +26,7 @@ type (
 
 const minPacketSize = 35
 
-func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, txChan chan string, callSign string, logger *log.Logger) (*IGate, error) {
+func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx, callSign string, logger *log.Logger) (*IGate, error) {
 	aprsis, err := aprs.New(cfg.Aprsis, callSign, cfg.Beacon.Comment, logger)
 	if err != nil {
 		return nil, fmt.Errorf("Error creating APRS client: %v", err)
@@ -38,7 +39,7 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, txChan chan string,
 		callSign:  callSign,
 		inputChan: inputChan,
 		enableTx:  enableTx,
-		txChan:    txChan,
+		tx:        tx,
 		logger:    logger,
 		stop:      make(chan bool),
 		Aprsis:    aprsis,
@@ -96,7 +97,7 @@ func (i *IGate) listenForMessages() {
 						continue
 					}
 
-					i.txChan <- ackMsg
+					i.tx.Send(ackMsg)
 				}
 			}
 		}

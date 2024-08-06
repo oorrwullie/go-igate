@@ -50,7 +50,14 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		return nil, err
 	}
 
-	sdr = sdrpackage.New(cfg.Sdr, sdrOutputChan, logger)
+	if cfg.Transmitter.Enabled {
+		tx, err = transmitter.New(cfg.Transmitter, logger)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating transmitter: %v", err)
+		}
+	}
+
+	sdr = sdrpackage.New(cfg.Sdr, sdrOutputChan, tx.Tx, logger)
 	err = sdr.Start()
 	if err != nil {
 		return nil, fmt.Errorf("Error starting SDR: %v", err)
@@ -64,22 +71,15 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		return nil, fmt.Errorf("Error starting multimon: %v", err)
 	}
 
-	if cfg.Transmitter.Enabled {
-		tx, err = transmitter.New(cfg.Transmitter, logger)
-		if err != nil {
-			return nil, fmt.Errorf("Error creating transmitter: %v", err)
-		}
-	}
-
 	if cfg.IGate.Enabled {
-		ig, err = igate.New(cfg.IGate, ps, cfg.Transmitter.Enabled, tx.TxChan, cfg.StationCallsign, logger)
+		ig, err = igate.New(cfg.IGate, ps, cfg.Transmitter.Enabled, tx.Tx, cfg.StationCallsign, logger)
 		if err != nil {
 			return nil, fmt.Errorf("Error creating IGate client: %v", err)
 		}
 	}
 
 	if cfg.DigipeaterEnabled {
-		dp = digipeater.New(tx.TxChan, ps, cfg.StationCallsign, logger)
+		dp = digipeater.New(tx.Tx, ps, cfg.StationCallsign, logger)
 	}
 
 	dg := &DigiGate{

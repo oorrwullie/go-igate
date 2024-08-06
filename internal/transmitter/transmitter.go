@@ -2,6 +2,7 @@ package transmitter
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/oorrwullie/go-igate/internal/config"
@@ -10,10 +11,15 @@ import (
 )
 
 type Transmitter struct {
-	TxChan       chan string
+	Tx           *Tx
 	stop         chan bool
 	logger       *log.Logger
 	serialConfig *serial.Config
+}
+
+type Tx struct {
+	Chan chan string
+	mu   sync.Mutex
 }
 
 func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
@@ -33,8 +39,13 @@ func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
 		ReadTimeout: timeout,
 	}
 
+	tx := &Tx{
+		Chan: make(chan string, 1),
+		mu:   sync.Mutex{},
+	}
+
 	return &Transmitter{
-		TxChan:       make(chan string),
+		Tx:           tx,
 		stop:         make(chan bool),
 		logger:       logger,
 		serialConfig: serialConfig,
@@ -47,8 +58,8 @@ func (t *Transmitter) Start() error {
 			select {
 			case <-t.stop:
 				return
-			case msg := <-t.TxChan:
-				err := t.Tx(msg)
+			case msg := <-t.Tx.Chan:
+				err := t.Transmit(msg)
 				if err != nil {
 					t.logger.Error("Error transmitting APRS message: ", err)
 				}
@@ -63,7 +74,7 @@ func (t *Transmitter) Stop() {
 	t.stop <- true
 }
 
-func (t *Transmitter) Tx(msg string) error {
+func (t *Transmitter) Transmit(msg string) error {
 	port, err := serial.OpenPort(t.serialConfig)
 	if err != nil {
 		return fmt.Errorf("failed to open serial port: %s", err)
@@ -80,4 +91,20 @@ func (t *Transmitter) Tx(msg string) error {
 	port.Close()
 
 	return nil
+}
+
+func (t *Tx) Send(msg string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.Chan <- msg
+
+	time.Sleep(time.Millisecond * 1500)
+}
+
+func (t *Tx) RxBackoff() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	time.Sleep(time.Millisecond * 1500)
 }
