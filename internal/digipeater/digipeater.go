@@ -3,11 +3,12 @@ package digipeater
 import (
 	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/oorrwullie/go-igate/internal/pubsub"
 )
 
 type Digipeater struct {
 	txChan    chan string
-	InputChan chan string
+	InputChan <-chan string
 	callsign  string
 	logger    *log.Logger
 	stop      chan bool
@@ -15,10 +16,10 @@ type Digipeater struct {
 
 const minPacketSize = 35
 
-func New(txChan chan string, callsign string, logger *log.Logger) *Digipeater {
+func New(txChan chan string, ps *pubsub.PubSub, callsign string, logger *log.Logger) *Digipeater {
 	return &Digipeater{
 		txChan:    txChan,
-		InputChan: make(chan string),
+		InputChan: ps.Subscribe(),
 		callsign:  callsign,
 		logger:    logger,
 		stop:      make(chan bool),

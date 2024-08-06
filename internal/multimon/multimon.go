@@ -10,19 +10,20 @@ import (
 	"github.com/oorrwullie/go-igate/internal/cache"
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/oorrwullie/go-igate/internal/pubsub"
 )
 
 type Multimon struct {
-	cache      *cache.Cache
-	cfg        config.Multimon
-	logger     *log.Logger
-	inputChan  chan []byte
-	outputChan chan string
-	Cmd        *exec.Cmd
+	cache     *cache.Cache
+	cfg       config.Multimon
+	logger    *log.Logger
+	inputChan chan []byte
+	pubsub    *pubsub.PubSub
+	Cmd       *exec.Cmd
 }
 
 // New creates a new multimon-ng instance
-func New(cfg config.Multimon, inputChan chan []byte, outputChan chan string, cache *cache.Cache, logger *log.Logger) *Multimon {
+func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *cache.Cache, logger *log.Logger) *Multimon {
 	requiredArgs := []string{
 		"-a",
 		"AFSK1200",
@@ -37,12 +38,12 @@ func New(cfg config.Multimon, inputChan chan []byte, outputChan chan string, cac
 	cmd := exec.Command("multimon-ng", args...)
 
 	return &Multimon{
-		cache:      cache,
-		cfg:        cfg,
-		logger:     logger,
-		inputChan:  inputChan,
-		outputChan: outputChan,
-		Cmd:        cmd,
+		cache:     cache,
+		cfg:       cfg,
+		logger:    logger,
+		inputChan: inputChan,
+		pubsub:    ps,
+		Cmd:       cmd,
 	}
 }
 
@@ -90,7 +91,7 @@ func (m *Multimon) Start() error {
 				if exists := m.cache.Set(msg, time.Now()); !exists {
 					m.logger.Info("packet received: ", msg)
 
-					m.outputChan <- msg
+					m.pubsub.Publish(msg)
 				} else {
 					m.logger.Info("Duplicate packet received: ", msg)
 				}
