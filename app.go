@@ -5,6 +5,7 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/cache"
 	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/go-igate/internal/digipeater"
 	"github.com/oorrwullie/go-igate/internal/igate"
 	"github.com/oorrwullie/go-igate/internal/log"
 	multimonpackage "github.com/oorrwullie/go-igate/internal/multimon"
@@ -24,6 +25,7 @@ type (
 		transmitter        *transmitter.Transmitter
 		stop               chan bool
 		igate              *igate.IGate
+		digipeater         *digipeater.Digipeater
 		logger             *log.Logger
 		cache              *cache.Cache
 	}
@@ -35,6 +37,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	var (
 		tx                 *transmitter.Transmitter
 		ig                 *igate.IGate
+		dp                 *digipeater.Digipeater
 		sdr                *sdrpackage.Sdr
 		sdrOutputChan      = make(chan []byte)
 		multimon           *multimonpackage.Multimon
@@ -74,6 +77,10 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		}
 	}
 
+	if cfg.DigipeaterEnabled {
+		dp := digipeater.New(tx.TxChan, cfg.StationCallsign, logger)
+	}
+
 	dg := &DigiGate{
 		cfg:                cfg,
 		sdrOutputChan:      sdrOutputChan,
@@ -85,6 +92,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		cache:              appCache,
 		multimon:           multimon,
 		sdr:                sdr,
+		digipeater:         dp,
 	}
 
 	return dg, nil
@@ -118,6 +126,11 @@ func (d *DigiGate) Run() error {
 					d.igate.Stop()
 				}
 
+				if d.cfg.DigipeaterEnabled {
+					d.logger.Info("Stopping digipeater")
+					d.digipeater.Stop()
+				}
+
 				return
 			}
 		}
@@ -128,6 +141,12 @@ func (d *DigiGate) Run() error {
 	if d.cfg.IGate.Enabled {
 		g.Go(func() error {
 			return d.igate.Run()
+		})
+	}
+
+	if d.cfg.DigipeaterEnabled {
+		g.Go(func() error {
+			return d.digipeater.Run()
 		})
 	}
 
