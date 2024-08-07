@@ -80,7 +80,13 @@ func (t *Transmitter) Transmit(msg string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open serial port: %s", err)
 	}
-	defer port.Close()
+
+	defer func() {
+		err := port.Close()
+		if err != nil {
+			t.logger.Error("Error closing serial port: ", err)
+		}
+	}()
 
 	fmtMsg := fmt.Sprintf("%v\r\n", msg)
 	_, err = port.Write([]byte(fmtMsg))
