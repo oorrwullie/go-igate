@@ -8,7 +8,6 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
 type Sdr struct {
@@ -16,10 +15,9 @@ type Sdr struct {
 	logger     *log.Logger
 	outputChan chan []byte
 	Cmd        *exec.Cmd
-	tx         *transmitter.Tx
 }
 
-func New(cfg config.Sdr, outputChan chan []byte, tx *transmitter.Tx, logger *log.Logger) *Sdr {
+func New(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) *Sdr {
 	requiredArgs := []string{
 		"-f",
 		cfg.Frequency,
@@ -48,7 +46,6 @@ func New(cfg config.Sdr, outputChan chan []byte, tx *transmitter.Tx, logger *log
 		logger:     logger,
 		outputChan: outputChan,
 		Cmd:        cmd,
-		tx:         tx,
 	}
 }
 
@@ -87,11 +84,6 @@ func (s *Sdr) pipeRtlFM(out io.ReadCloser, buf []byte) {
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
-
-			if s.tx != nil && data[n-1] != '\n' {
-				fmt.Println("initiating tx backoff")
-				go s.tx.RxBackoff()
-			}
 
 			s.outputChan <- data
 		}

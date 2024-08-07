@@ -2,6 +2,7 @@ package multimon
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/oorrwullie/go-igate/internal/pubsub"
+	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
 type Multimon struct {
@@ -20,10 +22,11 @@ type Multimon struct {
 	inputChan chan []byte
 	pubsub    *pubsub.PubSub
 	Cmd       *exec.Cmd
+	tx        *transmitter.Tx
 }
 
 // New creates a new multimon-ng instance
-func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *cache.Cache, logger *log.Logger) *Multimon {
+func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *cache.Cache, tx *transmitter.Tx, logger *log.Logger) *Multimon {
 	requiredArgs := []string{
 		"-a",
 		"AFSK1200",
@@ -44,6 +47,7 @@ func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *c
 		inputChan: inputChan,
 		pubsub:    ps,
 		Cmd:       cmd,
+		tx:        tx,
 	}
 }
 
@@ -91,6 +95,10 @@ func (m *Multimon) Start() error {
 				if exists := m.cache.Set(msg, time.Now()); !exists {
 					m.logger.Info("packet received: ", msg)
 
+					if m.tx != nil {
+						fmt.Println("initiating tx backoff...")
+						go m.tx.RxBackoff()
+					}
 					m.pubsub.Publish(msg)
 				} else {
 					m.logger.Info("Duplicate packet received: ", msg)

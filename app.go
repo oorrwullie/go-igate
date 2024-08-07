@@ -57,7 +57,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		}
 	}
 
-	sdr = sdrpackage.New(cfg.Sdr, sdrOutputChan, tx.Tx, logger)
+	sdr = sdrpackage.New(cfg.Sdr, sdrOutputChan, logger)
 	err = sdr.Start()
 	if err != nil {
 		return nil, fmt.Errorf("Error starting SDR: %v", err)
@@ -65,7 +65,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 
 	appCache := cache.NewCache(cfg.CacheSize, ".cache.json")
 
-	multimon = multimonpackage.New(cfg.Multimon, sdrOutputChan, ps, appCache, logger)
+	multimon = multimonpackage.New(cfg.Multimon, sdrOutputChan, ps, appCache, tx.Tx, logger)
 	err = multimon.Start()
 	if err != nil {
 		return nil, fmt.Errorf("Error starting multimon: %v", err)
