@@ -2,8 +2,9 @@ package digipeater
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
-	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/oorrwullie/go-igate/internal/pubsub"
 	"github.com/oorrwullie/go-igate/internal/transmitter"
@@ -54,21 +55,64 @@ func (d *Digipeater) HandleMessage(msg string) {
 		return
 	}
 
-	packet, err := aprs.ParsePacket(msg)
+	txMsg, err := d.fmtForTx(msg)
 	if err != nil {
-		d.logger.Error(err, "Could not parse APRS packet: ", msg)
+		d.logger.Error("Failed to parse message: ", err)
 		return
 	}
 
-	needsToBeTransmitted, err := packet.CheckForRetransmit(d.callsign)
-	if err != nil {
-		d.logger.Error("Error checking for retransmit: ", err)
-		return
+	d.tx.Send(txMsg)
+}
+
+func (d *Digipeater) fmtForTx(msg string) (string, error) {
+	parts := strings.Split(msg, ">")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("Invalid packet format")
 	}
 
-	if needsToBeTransmitted {
-		d.tx.Send(msg)
-		fmt.Printf("digipeater sent message to tx: %v\n", msg)
-		d.logger.Info("Message retransmitted: ", msg)
+	source := parts[0]
+	rest := parts[1]
+
+	pathAndData := strings.SplitN(rest, ":", 2)
+	if len(pathAndData) != 2 {
+		return "", fmt.Errorf("Invalid packet format")
 	}
+
+	path := pathAndData[0]
+	data := pathAndData[1]
+
+	pathComponents := strings.Split(path, ",")
+
+	updated := false
+	for i, component := range pathComponents {
+		if strings.HasPrefix(component, "WIDE") && !strings.Contains(component, "*") {
+			wideParts := strings.Split(component, "-")
+			if len(wideParts) == 2 {
+				count, err := strconv.Atoi(wideParts[1])
+				if err != nil || count <= 0 {
+					continue
+				}
+
+				count--
+
+				if count == 0 {
+					pathComponents[i] = d.callsign + "*"
+				} else {
+					pathComponents[i] = d.callsign + "*," + wideParts[0] + "-" + strconv.Itoa(count)
+				}
+
+				updated = true
+				break
+			}
+		}
+	}
+
+	if !updated {
+		return "", fmt.Errorf("Packet has already been fully retransmitted or no valid WIDE component found")
+	}
+
+	newPath := strings.Join(pathComponents, ",")
+
+	newPacket := fmt.Sprintf("%s>%s:%s", source, newPath, data)
+	return newPacket, nil
 }
