@@ -80,6 +80,7 @@ func (t *Transmitter) Transmit(msg string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open serial port: %s", err)
 	}
+	defer port.Close()
 
 	fmtMsg := fmt.Sprintf("%v\r\n", msg)
 	_, err = port.Write([]byte(fmtMsg))
@@ -88,8 +89,6 @@ func (t *Transmitter) Transmit(msg string) error {
 	}
 
 	t.logger.Info("APRS message transmitted: ", msg)
-
-	port.Close()
 
 	return nil
 }
@@ -108,6 +107,6 @@ func (t *Tx) RxBackoff() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	time.Sleep(time.Millisecond * 1500)
+	time.Sleep(time.Millisecond * 3500)
 	fmt.Printf("tx backoff finished")
 }
