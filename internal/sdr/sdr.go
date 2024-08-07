@@ -88,7 +88,7 @@ func (s *Sdr) pipeRtlFM(out io.ReadCloser, buf []byte) {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 
-			if s.tx != nil {
+			if s.tx != nil && data[n-1] != '\n' {
 				fmt.Println("initiating tx backoff")
 				go s.tx.RxBackoff()
 			}
