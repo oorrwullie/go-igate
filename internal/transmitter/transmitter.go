@@ -59,7 +59,7 @@ func (t *Transmitter) Start() error {
 			case <-t.stop:
 				return
 			case msg := <-t.Tx.Chan:
-				fmt.Printf("tx" received message: %v\n", msg)
+				fmt.Printf("tx received message: %v\n", msg)
 				err := t.Transmit(msg)
 				if err != nil {
 					t.logger.Error("Error transmitting APRS message: ", err)
