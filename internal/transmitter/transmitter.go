@@ -59,6 +59,7 @@ func (t *Transmitter) Start() error {
 			case <-t.stop:
 				return
 			case msg := <-t.Tx.Chan:
+				fmt.Printf("tx" received message: %v\n", msg)
 				err := t.Transmit(msg)
 				if err != nil {
 					t.logger.Error("Error transmitting APRS message: ", err)
@@ -98,6 +99,7 @@ func (t *Tx) Send(msg string) {
 	defer t.mu.Unlock()
 
 	t.Chan <- msg
+	fmt.Printf("Tx sent message to tx: %v\n", msg)
 
 	time.Sleep(time.Millisecond * 1500)
 }
@@ -107,4 +109,5 @@ func (t *Tx) RxBackoff() {
 	defer t.mu.Unlock()
 
 	time.Sleep(time.Millisecond * 1500)
+	fmt.Printf("tx backoff finished")
 }

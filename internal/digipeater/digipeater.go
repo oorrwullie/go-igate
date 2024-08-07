@@ -1,6 +1,8 @@
 package digipeater
 
 import (
+	"fmt"
+
 	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/oorrwullie/go-igate/internal/pubsub"
@@ -66,6 +68,7 @@ func (d *Digipeater) HandleMessage(msg string) {
 
 	if needsToBeTransmitted {
 		d.tx.Send(msg)
+		fmt.Printf("digipeater sent message to tx: %v\n", msg)
 		d.logger.Info("Message retransmitted: ", msg)
 	}
 }
