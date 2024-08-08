@@ -1,6 +1,7 @@
 package aprs
 
 import (
+	"crypto/sha1"
 	"fmt"
 	"strconv"
 	"strings"
@@ -95,22 +96,30 @@ func (p *Packet) Type() PacketType {
 }
 
 // AckString returns a string representation of the packet for sending an acknowledgement
-func (p *Packet) AckString() (string, error) {
-	if len(p.Payload) < 4 || p.Payload[len(p.Payload)-4] != '{' {
-		return "", fmt.Errorf("No valid ack number found in the message")
-	}
+func (p *Packet) AckString(stationCallsign string) string {
+	ackNumber := p.generateAckNumber()
 
-	ackNumber := p.Payload[len(p.Payload)-3:]
-
-	ack := fmt.Sprintf(
-		"%s>APRS,%s::%s:ack%s",
-		p.Dst,
-		strings.Join(p.Path, ","),
+	return fmt.Sprintf(
+		"%s>APRS:%s:ack%s",
+		stationCallsign,
 		p.Src,
 		ackNumber,
 	)
+}
 
-	return ack, nil
+func (p *Packet) generateAckNumber() string {
+	packetString := fmt.Sprintf(
+		"%s>%s:%s",
+		p.Dst,
+		strings.Join(p.Path, ","),
+		p.Src,
+	)
+
+	hash := sha1.New()
+	hash.Write([]byte(packetString))
+	hashSum := hash.Sum(nil)
+
+	return fmt.Sprintf("%03d", int(hashSum[0])%1000)
 }
 
 func (p *Packet) IsAckMessage() bool {

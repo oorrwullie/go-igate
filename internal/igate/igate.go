@@ -90,12 +90,8 @@ func (i *IGate) listenForMessages() {
 					continue
 				}
 
-				if i.enableTx && packet.Type().NeedsAck() {
-					ackMsg, err := packet.AckString()
-					if err != nil {
-						i.logger.Error("Error creating APRS acknowledgement message: ", err)
-						continue
-					}
+				if i.enableTx {
+					ackMsg := packet.AckString(i.callSign)
 
 					i.tx.Send(ackMsg)
 				}
