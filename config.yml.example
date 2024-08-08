@@ -7,6 +7,8 @@
 station-callsign: ""
 # size of in-memory cache for keeping track of received packets
 cache-size: 1000
+#set to true if you want to use the digipeater
+enable-digipeater: true
 sdr:
   # RTL-SDR binary
   exec: "rtl_fm"

@@ -5,9 +5,11 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/cache"
 	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/go-igate/internal/digipeater"
 	"github.com/oorrwullie/go-igate/internal/igate"
 	"github.com/oorrwullie/go-igate/internal/log"
 	multimonpackage "github.com/oorrwullie/go-igate/internal/multimon"
+	"github.com/oorrwullie/go-igate/internal/pubsub"
 	sdrpackage "github.com/oorrwullie/go-igate/internal/sdr"
 	"github.com/oorrwullie/go-igate/internal/transmitter"
 
@@ -16,16 +18,17 @@ import (
 
 type (
 	DigiGate struct {
-		cfg                config.Config
-		sdr                *sdrpackage.Sdr
-		sdrOutputChan      chan []byte
-		multimon           *multimonpackage.Multimon
-		multimonOutputChan chan string
-		transmitter        *transmitter.Transmitter
-		stop               chan bool
-		igate              *igate.IGate
-		logger             *log.Logger
-		cache              *cache.Cache
+		cfg           config.Config
+		sdr           *sdrpackage.Sdr
+		sdrOutputChan chan []byte
+		multimon      *multimonpackage.Multimon
+		transmitter   *transmitter.Transmitter
+		stop          chan bool
+		igate         *igate.IGate
+		digipeater    *digipeater.Digipeater
+		logger        *log.Logger
+		cache         *cache.Cache
+		pubsub        *pubsub.PubSub
 	}
 )
 
@@ -33,17 +36,25 @@ const minPacketSize = 35
 
 func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	var (
-		tx                 *transmitter.Transmitter
-		ig                 *igate.IGate
-		sdr                *sdrpackage.Sdr
-		sdrOutputChan      = make(chan []byte)
-		multimon           *multimonpackage.Multimon
-		multimonOutputChan = make(chan string)
+		tx            *transmitter.Transmitter
+		ig            *igate.IGate
+		dp            *digipeater.Digipeater
+		sdr           *sdrpackage.Sdr
+		sdrOutputChan = make(chan []byte)
+		multimon      *multimonpackage.Multimon
+		ps            = pubsub.New()
 	)
 
 	cfg, err := config.GetConfig()
 	if err != nil {
 		return nil, err
+	}
+
+	if cfg.Transmitter.Enabled {
+		tx, err = transmitter.New(cfg.Transmitter, logger)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating transmitter: %v", err)
+		}
 	}
 
 	sdr = sdrpackage.New(cfg.Sdr, sdrOutputChan, logger)
@@ -54,37 +65,34 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 
 	appCache := cache.NewCache(cfg.CacheSize, ".cache.json")
 
-	multimon = multimonpackage.New(cfg.Multimon, sdrOutputChan, multimonOutputChan, appCache, logger)
+	multimon = multimonpackage.New(cfg.Multimon, sdrOutputChan, ps, appCache, tx.Tx, logger)
 	err = multimon.Start()
 	if err != nil {
 		return nil, fmt.Errorf("Error starting multimon: %v", err)
 	}
 
-	if cfg.Transmitter.Enabled {
-		tx, err = transmitter.New(cfg.Transmitter, logger)
-		if err != nil {
-			return nil, fmt.Errorf("Error creating transmitter: %v", err)
-		}
-	}
-
 	if cfg.IGate.Enabled {
-		ig, err = igate.New(cfg.IGate, multimonOutputChan, cfg.Transmitter.Enabled, tx.TxChan, cfg.StationCallsign, logger)
+		ig, err = igate.New(cfg.IGate, ps, cfg.Transmitter.Enabled, tx.Tx, cfg.StationCallsign, logger)
 		if err != nil {
 			return nil, fmt.Errorf("Error creating IGate client: %v", err)
 		}
 	}
 
+	if cfg.DigipeaterEnabled {
+		dp = digipeater.New(tx.Tx, ps, cfg.StationCallsign, logger)
+	}
+
 	dg := &DigiGate{
-		cfg:                cfg,
-		sdrOutputChan:      sdrOutputChan,
-		multimonOutputChan: multimonOutputChan,
-		transmitter:        tx,
-		stop:               make(chan bool),
-		igate:              ig,
-		logger:             logger,
-		cache:              appCache,
-		multimon:           multimon,
-		sdr:                sdr,
+		cfg:           cfg,
+		sdrOutputChan: sdrOutputChan,
+		transmitter:   tx,
+		stop:          make(chan bool),
+		igate:         ig,
+		logger:        logger,
+		cache:         appCache,
+		multimon:      multimon,
+		sdr:           sdr,
+		digipeater:    dp,
 	}
 
 	return dg, nil
@@ -118,6 +126,11 @@ func (d *DigiGate) Run() error {
 					d.igate.Stop()
 				}
 
+				if d.cfg.DigipeaterEnabled {
+					d.logger.Info("Stopping digipeater")
+					d.digipeater.Stop()
+				}
+
 				return
 			}
 		}
@@ -128,6 +141,12 @@ func (d *DigiGate) Run() error {
 	if d.cfg.IGate.Enabled {
 		g.Go(func() error {
 			return d.igate.Run()
+		})
+	}
+
+	if d.cfg.DigipeaterEnabled {
+		g.Go(func() error {
+			return d.digipeater.Run()
 		})
 	}
 

@@ -84,6 +84,7 @@ func (s *Sdr) pipeRtlFM(out io.ReadCloser, buf []byte) {
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
+
 			s.outputChan <- data
 		}
 	}
