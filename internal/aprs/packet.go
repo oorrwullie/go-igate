@@ -102,7 +102,7 @@ func (p *Packet) AckString(stationCallsign string) string {
 	return fmt.Sprintf(
 		"%s>APRS:%s:ack%s",
 		stationCallsign,
-		p.Src,
+		p.Dst,
 		ackNumber,
 	)
 }

@@ -94,6 +94,7 @@ func (t *Transmitter) Transmit(msg string) error {
 		return fmt.Errorf("Error transmitting APRS message: %s", err)
 	}
 
+	time.Sleep(time.Second * 2)
 	t.logger.Info("APRS message transmitted: ", msg)
 
 	return nil
