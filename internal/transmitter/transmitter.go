@@ -7,14 +7,15 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/tarm/serial"
+	"go.bug.st/serial"
 )
 
 type Transmitter struct {
-	Tx           *Tx
-	stop         chan bool
-	logger       *log.Logger
-	serialConfig *serial.Config
+	Tx         *Tx
+	stop       chan bool
+	logger     *log.Logger
+	serialMode *serial.Mode
+	serialPort string
 }
 
 type Tx struct {
@@ -23,20 +24,13 @@ type Tx struct {
 }
 
 func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
-	dataPort, err := config.DetectDataPort()
+	sp, err := config.DetectDataPort()
 	if err != nil {
 		return nil, fmt.Errorf("Error detecting data port: %v", err)
 	}
 
-	timeout, err := time.ParseDuration(cfg.ReadTimeout)
-	if err != nil {
-		return nil, fmt.Errorf("Invalid read timeout: %v", err)
-	}
-
-	serialConfig := &serial.Config{
-		Name:        dataPort,
-		Baud:        cfg.BaudRate,
-		ReadTimeout: timeout,
+	sm := &serial.Mode{
+		BaudRate: cfg.BaudRate,
 	}
 
 	tx := &Tx{
@@ -45,10 +39,11 @@ func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
 	}
 
 	return &Transmitter{
-		Tx:           tx,
-		stop:         make(chan bool),
-		logger:       logger,
-		serialConfig: serialConfig,
+		Tx:         tx,
+		stop:       make(chan bool),
+		logger:     logger,
+		serialMode: sm,
+		serialPort: sp,
 	}, nil
 }
 
@@ -76,7 +71,7 @@ func (t *Transmitter) Stop() {
 }
 
 func (t *Transmitter) Transmit(msg string) error {
-	port, err := serial.OpenPort(t.serialConfig)
+	port, err := serial.Open(t.serialPort, t.serialMode)
 	if err != nil {
 		return fmt.Errorf("failed to open serial port: %s", err)
 	}
