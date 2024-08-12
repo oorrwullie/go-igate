@@ -7,14 +7,16 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/tarm/serial"
+	"go.bug.st/serial"
 )
 
 type Transmitter struct {
-	Tx           *Tx
-	stop         chan bool
-	logger       *log.Logger
-	serialConfig *serial.Config
+	Tx         *Tx
+	stop       chan bool
+	logger     *log.Logger
+	serialMode *serial.Mode
+	serialPort string
+	timeout    time.Duration
 }
 
 type Tx struct {
@@ -28,9 +30,13 @@ func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
 		return nil, fmt.Errorf("Error detecting data port: %v", err)
 	}
 
-	sc := &serial.Config{
-		Baud: cfg.BaudRate,
-		Name: sp,
+	timeout, err := time.ParseDuration(cfg.ReadTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("Invalid read timeout: %v", err)
+	}
+
+	sm := &serial.Mode{
+		BaudRate: cfg.BaudRate,
 	}
 
 	tx := &Tx{
@@ -39,10 +45,12 @@ func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
 	}
 
 	return &Transmitter{
-		Tx:           tx,
-		stop:         make(chan bool),
-		logger:       logger,
-		serialConfig: sc,
+		Tx:         tx,
+		stop:       make(chan bool),
+		logger:     logger,
+		serialMode: sm,
+		serialPort: sp,
+		timeout:    timeout,
 	}, nil
 }
 
@@ -70,18 +78,29 @@ func (t *Transmitter) Stop() {
 }
 
 func (t *Transmitter) Transmit(msg string) error {
-	port, err := serial.OpenPort(t.serialConfig)
+	port, err := serial.Open(t.serialPort, t.serialMode)
 	if err != nil {
 		return fmt.Errorf("failed to open serial port: %s", err)
 	}
 
 	defer port.Close()
 
+	port.SetReadTimeout(t.timeout)
+	port.SetRTS(true)
+	port.SetDTR(true)
+
 	fmtMsg := fmt.Sprintf("%v\r\n", msg)
-	_, err = port.Write([]byte(fmtMsg))
+	writtenBytes, err := port.Write([]byte(fmtMsg))
 	if err != nil {
 		return fmt.Errorf("Error transmitting APRS message: %s", err)
 	}
+
+	fmt.Printf("APRS message transmitted: %s (wrote %d bytes)\n", msg, writtenBytes)
+
+	time.Sleep(time.Second * 1)
+
+	port.SetRTS(false)
+	port.SetDTR(false)
 
 	time.Sleep(time.Second * 2)
 	t.logger.Info("APRS message transmitted: ", msg)
