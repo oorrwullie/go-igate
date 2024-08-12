@@ -7,15 +7,14 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
-	"go.bug.st/serial"
+	"github.com/tarm/serial"
 )
 
 type Transmitter struct {
-	Tx         *Tx
-	stop       chan bool
-	logger     *log.Logger
-	serialMode *serial.Mode
-	serialPort string
+	Tx           *Tx
+	stop         chan bool
+	logger       *log.Logger
+	serialConfig *serial.Config
 }
 
 type Tx struct {
@@ -29,11 +28,9 @@ func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
 		return nil, fmt.Errorf("Error detecting data port: %v", err)
 	}
 
-	sm := &serial.Mode{
-		BaudRate: cfg.BaudRate,
-		Parity:   serial.NoParity,
-		DataBits: 8,
-		StopBits: serial.OneStopBit,
+	sc := &serial.Config{
+		Baud: cfg.BaudRate,
+		Name: sp,
 	}
 
 	tx := &Tx{
@@ -42,11 +39,10 @@ func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
 	}
 
 	return &Transmitter{
-		Tx:         tx,
-		stop:       make(chan bool),
-		logger:     logger,
-		serialMode: sm,
-		serialPort: sp,
+		Tx:           tx,
+		stop:         make(chan bool),
+		logger:       logger,
+		serialConfig: sc,
 	}, nil
 }
 
@@ -74,28 +70,12 @@ func (t *Transmitter) Stop() {
 }
 
 func (t *Transmitter) Transmit(msg string) error {
-	fmt.Printf("configured port: %v\n", t.serialPort)
-	ports, err := serial.GetPortsList()
-	if err != nil {
-		return fmt.Errorf("Error getting serial ports: %v", err)
-	}
-
-	fmt.Println("Available serial ports:")
-	for _, p := range ports {
-		fmt.Printf("Port: %s\n", p)
-	}
-
-	port, err := serial.Open(t.serialPort, t.serialMode)
+	port, err := serial.OpenPort(t.serialConfig)
 	if err != nil {
 		return fmt.Errorf("failed to open serial port: %s", err)
 	}
 
-	defer func() {
-		err := port.Close()
-		if err != nil {
-			t.logger.Error("Error closing serial port: ", err)
-		}
-	}()
+	defer port.Close()
 
 	fmtMsg := fmt.Sprintf("%v\r\n", msg)
 	_, err = port.Write([]byte(fmtMsg))
