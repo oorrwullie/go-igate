@@ -31,6 +31,9 @@ func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
 
 	sm := &serial.Mode{
 		BaudRate: cfg.BaudRate,
+		Parity:   serial.NoParity,
+		DataBits: 8,
+		StopBits: serial.OneStopBit,
 	}
 
 	tx := &Tx{
@@ -71,6 +74,17 @@ func (t *Transmitter) Stop() {
 }
 
 func (t *Transmitter) Transmit(msg string) error {
+	fmt.Printf("configured port: %v\n", t.serialPort)
+	ports, err := serial.GetPortsList()
+	if err != nil {
+		return fmt.Errorf("Error getting serial ports: %v", err)
+	}
+
+	fmt.Println("Available serial ports:")
+	for _, p := range ports {
+		fmt.Printf("Port: %s\n", p)
+	}
+
 	port, err := serial.Open(t.serialPort, t.serialMode)
 	if err != nil {
 		return fmt.Errorf("failed to open serial port: %s", err)
