@@ -11,12 +11,10 @@ import (
 )
 
 type Transmitter struct {
-	Tx         *Tx
-	stop       chan bool
-	logger     *log.Logger
-	serialMode *serial.Mode
-	serialPort string
-	timeout    time.Duration
+	Tx     *Tx
+	stop   chan bool
+	logger *log.Logger
+	Port   serial.Port
 }
 
 type Tx struct {
@@ -24,15 +22,10 @@ type Tx struct {
 	mu   sync.Mutex
 }
 
-func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
+func New(cfg config.Transmitter, port serial.Port, logger *log.Logger) (*Transmitter, error) {
 	sp, err := config.DetectDataPort()
 	if err != nil {
 		return nil, fmt.Errorf("Error detecting data port: %v", err)
-	}
-
-	timeout, err := time.ParseDuration(cfg.ReadTimeout)
-	if err != nil {
-		return nil, fmt.Errorf("Invalid read timeout: %v", err)
 	}
 
 	sm := &serial.Mode{
@@ -44,13 +37,25 @@ func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
 		mu:   sync.Mutex{},
 	}
 
+	if port == nil {
+		port, err = serial.Open(sp, sm)
+		if err != nil {
+			return nil, fmt.Errorf("failed to open serial port: %s", err)
+		}
+
+		timeout, err := time.ParseDuration(cfg.ReadTimeout)
+		if err != nil {
+			return nil, fmt.Errorf("Invalid read timeout: %v", err)
+		}
+
+		port.SetReadTimeout(timeout)
+	}
+
 	return &Transmitter{
-		Tx:         tx,
-		stop:       make(chan bool),
-		logger:     logger,
-		serialMode: sm,
-		serialPort: sp,
-		timeout:    timeout,
+		Tx:     tx,
+		stop:   make(chan bool),
+		logger: logger,
+		Port:   port,
 	}, nil
 }
 
@@ -59,6 +64,7 @@ func (t *Transmitter) Start() error {
 		for {
 			select {
 			case <-t.stop:
+				t.Port.Close()
 				return
 			case msg := <-t.Tx.Chan:
 				fmt.Printf("tx received message: %v\n", msg)
@@ -78,19 +84,11 @@ func (t *Transmitter) Stop() {
 }
 
 func (t *Transmitter) Transmit(msg string) error {
-	port, err := serial.Open(t.serialPort, t.serialMode)
-	if err != nil {
-		return fmt.Errorf("failed to open serial port: %s", err)
-	}
-
-	defer port.Close()
-
-	port.SetReadTimeout(t.timeout)
-	port.SetRTS(true)
-	port.SetDTR(true)
+	t.Port.SetRTS(true)
+	t.Port.SetDTR(true)
 
 	fmtMsg := fmt.Sprintf("%v\r\n", msg)
-	writtenBytes, err := port.Write([]byte(fmtMsg))
+	writtenBytes, err := t.Port.Write([]byte(fmtMsg))
 	if err != nil {
 		return fmt.Errorf("Error transmitting APRS message: %s", err)
 	}
@@ -99,8 +97,8 @@ func (t *Transmitter) Transmit(msg string) error {
 
 	time.Sleep(time.Second * 1)
 
-	port.SetRTS(false)
-	port.SetDTR(false)
+	t.Port.SetRTS(false)
+	t.Port.SetDTR(false)
 
 	time.Sleep(time.Second * 2)
 	t.logger.Info("APRS message transmitted: ", msg)

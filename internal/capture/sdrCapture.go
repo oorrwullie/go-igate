@@ -1,4 +1,4 @@
-package sdr
+package capture
 
 import (
 	"fmt"
@@ -8,16 +8,19 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
+	"go.bug.st/serial"
 )
 
-type Sdr struct {
+type SdrCapture struct {
 	cfg        config.Sdr
 	logger     *log.Logger
 	outputChan chan []byte
 	Cmd        *exec.Cmd
+	stop       chan bool
+	port       serial.Port
 }
 
-func New(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) *Sdr {
+func NewSdrCapture(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) (*SdrCapture, error) {
 	requiredArgs := []string{
 		"-f",
 		cfg.Frequency,
@@ -41,15 +44,17 @@ func New(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) *Sdr {
 	args = append(args, "-")
 	cmd := exec.Command("rtl_fm", args...)
 
-	return &Sdr{
+	return &SdrCapture{
 		cfg:        cfg,
 		logger:     logger,
 		outputChan: outputChan,
 		Cmd:        cmd,
-	}
+		stop:       make(chan bool),
+		port:       nil,
+	}, nil
 }
 
-func (s *Sdr) Start() error {
+func (s *SdrCapture) Start() error {
 	out, err := s.Cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("Error reading rtl_fm stdout: %s", err.Error())
@@ -61,16 +66,30 @@ func (s *Sdr) Start() error {
 	}
 
 	go func() {
-		buf := make([]byte, 4096)
+		select {
+		case <-s.stop:
+			s.logger.Info("Stopping rtl_fm process")
+			s.Cmd.Process.Kill()
+		default:
+			buf := make([]byte, 4096)
 
-		s.pipeRtlFM(out, buf)
+			s.pipeRtlFM(out, buf)
+		}
 	}()
 
 	return nil
 }
 
+func (s *SdrCapture) Stop() {
+	s.stop <- true
+}
+
+func (s *SdrCapture) Port() serial.Port {
+	return s.port
+}
+
 // Read from the rtl_fm stdout and send to the output channel
-func (s *Sdr) pipeRtlFM(out io.ReadCloser, buf []byte) {
+func (s *SdrCapture) pipeRtlFM(out io.ReadCloser, buf []byte) {
 	for {
 		n, err := out.Read(buf)
 		if err != nil {

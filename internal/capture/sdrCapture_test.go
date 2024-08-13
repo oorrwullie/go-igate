@@ -1,12 +1,13 @@
-package sdr
+package capture
 
 import (
 	"bytes"
-	"github.com/oorrwullie/go-igate/internal/config"
 	"io"
 	"log"
 	"os/exec"
 	"testing"
+
+	"github.com/oorrwullie/go-igate/internal/config"
 )
 
 type tReader struct {
@@ -48,7 +49,7 @@ func TestSdr_pipeRtlFM(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Sdr{
+			s := &SdrCapture{
 				cfg:        tt.fields.cfg,
 				outputChan: tt.fields.outputChan,
 				Cmd:        tt.fields.Cmd,

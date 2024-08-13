@@ -26,6 +26,7 @@ type (
 	}
 
 	Sdr struct {
+		Enabled         bool `yaml:"enabled"`
 		Path            string
 		Frequency       string
 		Device          string

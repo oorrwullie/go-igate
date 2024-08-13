@@ -4,13 +4,13 @@ import (
 	"fmt"
 
 	"github.com/oorrwullie/go-igate/internal/cache"
+	"github.com/oorrwullie/go-igate/internal/capture"
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/digipeater"
 	"github.com/oorrwullie/go-igate/internal/igate"
 	"github.com/oorrwullie/go-igate/internal/log"
 	multimonpackage "github.com/oorrwullie/go-igate/internal/multimon"
 	"github.com/oorrwullie/go-igate/internal/pubsub"
-	sdrpackage "github.com/oorrwullie/go-igate/internal/sdr"
 	"github.com/oorrwullie/go-igate/internal/transmitter"
 
 	"golang.org/x/sync/errgroup"
@@ -18,17 +18,17 @@ import (
 
 type (
 	DigiGate struct {
-		cfg           config.Config
-		sdr           *sdrpackage.Sdr
-		sdrOutputChan chan []byte
-		multimon      *multimonpackage.Multimon
-		transmitter   *transmitter.Transmitter
-		stop          chan bool
-		igate         *igate.IGate
-		digipeater    *digipeater.Digipeater
-		logger        *log.Logger
-		cache         *cache.Cache
-		pubsub        *pubsub.PubSub
+		cfg               config.Config
+		captureDevice     capture.Capture
+		captureOutputChan chan []byte
+		multimon          *multimonpackage.Multimon
+		transmitter       *transmitter.Transmitter
+		stop              chan bool
+		igate             *igate.IGate
+		digipeater        *digipeater.Digipeater
+		logger            *log.Logger
+		cache             *cache.Cache
+		pubsub            *pubsub.PubSub
 	}
 )
 
@@ -36,13 +36,12 @@ const minPacketSize = 35
 
 func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	var (
-		tx            *transmitter.Transmitter
-		ig            *igate.IGate
-		dp            *digipeater.Digipeater
-		sdr           *sdrpackage.Sdr
-		sdrOutputChan = make(chan []byte)
-		multimon      *multimonpackage.Multimon
-		ps            = pubsub.New()
+		tx                *transmitter.Transmitter
+		ig                *igate.IGate
+		dp                *digipeater.Digipeater
+		captureOutputChan = make(chan []byte)
+		multimon          *multimonpackage.Multimon
+		ps                = pubsub.New()
 	)
 
 	cfg, err := config.GetConfig()
@@ -50,22 +49,22 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		return nil, err
 	}
 
+	captureDevice, err := capture.New(cfg, captureOutputChan, logger)
+	err = captureDevice.Start()
+	if err != nil {
+		return nil, fmt.Errorf("Error starting SDR: %v", err)
+	}
+
 	if cfg.Transmitter.Enabled {
-		tx, err = transmitter.New(cfg.Transmitter, logger)
+		tx, err = transmitter.New(cfg.Transmitter, captureDevice.Port(), logger)
 		if err != nil {
 			return nil, fmt.Errorf("Error creating transmitter: %v", err)
 		}
 	}
 
-	sdr = sdrpackage.New(cfg.Sdr, sdrOutputChan, logger)
-	err = sdr.Start()
-	if err != nil {
-		return nil, fmt.Errorf("Error starting SDR: %v", err)
-	}
-
 	appCache := cache.NewCache(cfg.CacheSize, ".cache.json")
 
-	multimon = multimonpackage.New(cfg.Multimon, sdrOutputChan, ps, appCache, tx.Tx, logger)
+	multimon = multimonpackage.New(cfg.Multimon, captureOutputChan, ps, appCache, tx.Tx, logger)
 	err = multimon.Start()
 	if err != nil {
 		return nil, fmt.Errorf("Error starting multimon: %v", err)
@@ -83,16 +82,16 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	}
 
 	dg := &DigiGate{
-		cfg:           cfg,
-		sdrOutputChan: sdrOutputChan,
-		transmitter:   tx,
-		stop:          make(chan bool),
-		igate:         ig,
-		logger:        logger,
-		cache:         appCache,
-		multimon:      multimon,
-		sdr:           sdr,
-		digipeater:    dp,
+		cfg:               cfg,
+		captureOutputChan: captureOutputChan,
+		transmitter:       tx,
+		stop:              make(chan bool),
+		igate:             ig,
+		logger:            logger,
+		cache:             appCache,
+		multimon:          multimon,
+		captureDevice:     captureDevice,
+		digipeater:        dp,
 	}
 
 	return dg, nil
@@ -110,8 +109,8 @@ func (d *DigiGate) Run() error {
 		for {
 			select {
 			case <-d.stop:
-				d.logger.Info("Stopping rtl_fm process")
-				d.sdr.Cmd.Process.Kill()
+				d.logger.Info("Stopping capture device")
+				d.captureDevice.Stop()
 
 				d.logger.Info("Stopping multimon-ng process")
 				d.multimon.Cmd.Process.Kill()

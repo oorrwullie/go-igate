@@ -10,6 +10,8 @@ cache-size: 1000
 #set to true if you want to use the digipeater
 enable-digipeater: true
 sdr:
+  #Set to true to enable using an RTL-SDR dongle
+  enabled: true
   # RTL-SDR binary
   exec: "rtl_fm"
   # frequency to listen on
