@@ -42,6 +42,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		captureOutputChan = make(chan []byte)
 		multimon          *multimonpackage.Multimon
 		ps                = pubsub.New()
+		soundcard         *capture.SoundcardCapture
 	)
 
 	cfg, err := config.GetConfig()
@@ -56,7 +57,16 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	}
 
 	if cfg.Transmitter.Enabled {
-		tx, err = transmitter.New(cfg.Transmitter, captureDevice.Port(), logger)
+		if captureDevice.Type() != "Soundcard" {
+			soundcard, err = capture.NewSoundcardCapture(cfg, captureOutputChan, logger)
+			if err != nil {
+				return nil, fmt.Errorf("Error creating soundcard capture: %v", err)
+			}
+		} else {
+			soundcard = captureDevice.(*capture.SoundcardCapture)
+		}
+
+		tx, err = transmitter.New(soundcard, logger)
 		if err != nil {
 			return nil, fmt.Errorf("Error creating transmitter: %v", err)
 		}

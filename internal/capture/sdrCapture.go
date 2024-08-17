@@ -8,7 +8,6 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
-	"go.bug.st/serial"
 )
 
 type SdrCapture struct {
@@ -17,7 +16,6 @@ type SdrCapture struct {
 	outputChan chan []byte
 	Cmd        *exec.Cmd
 	stop       chan bool
-	port       serial.Port
 }
 
 func NewSdrCapture(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) (*SdrCapture, error) {
@@ -50,7 +48,6 @@ func NewSdrCapture(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) (
 		outputChan: outputChan,
 		Cmd:        cmd,
 		stop:       make(chan bool),
-		port:       nil,
 	}, nil
 }
 
@@ -84,8 +81,8 @@ func (s *SdrCapture) Stop() {
 	s.stop <- true
 }
 
-func (s *SdrCapture) Port() serial.Port {
-	return s.port
+func (s *SdrCapture) Type() string {
+	return "Sdr"
 }
 
 // Read from the rtl_fm stdout and send to the output channel

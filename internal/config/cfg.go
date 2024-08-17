@@ -17,6 +17,7 @@ type (
 		DigipeaterEnabled bool        `yaml:"enable-digipeater"`
 		CacheSize         int         `yaml:"cache-size"`
 		StationCallsign   string      `yaml:"station-callsign"`
+		SoundcardName     string      `yaml:"soundcard-name"`
 	}
 
 	IGate struct {
@@ -56,9 +57,7 @@ type (
 	}
 
 	Transmitter struct {
-		Enabled     bool   `yaml:"enabled"`
-		BaudRate    int    `yaml:"baud-rate"`
-		ReadTimeout string `yaml:"read-timeout"`
+		Enabled bool `yaml:"enabled"`
 	}
 )
 
