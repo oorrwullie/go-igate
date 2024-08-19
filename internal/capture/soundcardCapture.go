@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"math"
+	"unsafe"
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
@@ -12,49 +14,72 @@ import (
 )
 
 type SoundcardCapture struct {
-	StreamParams   portaudio.StreamDeviceParameters
-	DeviceInfo     *portaudio.DeviceInfo
+	StreamParams   portaudio.StreamParameters
 	SampleRate     int
-	BaudRate       int
-	MarkFrequency  int
-	SpaceFrequency int
+	BaudRate       float64
+	MarkFrequency  float64
+	SpaceFrequency float64
 	ChannelNum     int
 	BitDepth       int
 	BufferSize     int
 	stop           chan bool
-	sendChannel    chan []int16
+	sendChannel    chan string
 	logger         *log.Logger
 	outputChan     chan []byte
 }
 
 func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.Logger) (*SoundcardCapture, error) {
+	var (
+		sampleRate     = 44100
+		baudRate       = 1200.0
+		markFrequency  = 1200.0
+		spaceFrequency = 2200.0
+		channelNum     = 1
+		bitDepth       = 1
+		bufferSize     = 376320
+	)
+
 	if err := portaudio.Initialize(); err != nil {
 		return nil, err
 	}
+	defer portaudio.Terminate()
 
-	device, err := selectDeviceByName(cfg.SoundcardName)
+	inputDevice, outputDevice, err := getDevicesByName(cfg.SoundcardInputName, cfg.SoundcardOutputName)
 	if err != nil {
 		return nil, err
 	}
 
-	params := portaudio.StreamDeviceParameters{
-		Device:   device,
-		Channels: 2,
-		Latency:  device.DefaultLowOutputLatency,
+	inputDeviceInfo := portaudio.StreamDeviceParameters{
+		Device:   inputDevice,
+		Channels: 1,
+		Latency:  inputDevice.DefaultHighInputLatency,
+	}
+
+	outputDeviceInfo := portaudio.StreamDeviceParameters{
+		Device:   outputDevice,
+		Channels: 1,
+		Latency:  outputDevice.DefaultHighOutputLatency,
+	}
+
+	streamParams := portaudio.StreamParameters{
+		Input:           inputDeviceInfo,
+		Output:          outputDeviceInfo,
+		SampleRate:      float64(sampleRate),
+		FramesPerBuffer: bufferSize,
+		Flags:           portaudio.NoFlag,
 	}
 
 	sc := &SoundcardCapture{
-		StreamParams:   params,
-		DeviceInfo:     device,
-		SampleRate:     44100,
-		BaudRate:       1200,
-		MarkFrequency:  1200,
-		SpaceFrequency: 2200,
-		ChannelNum:     1,
-		BitDepth:       2,
-		BufferSize:     256,
+		StreamParams:   streamParams,
+		SampleRate:     sampleRate,
+		BaudRate:       baudRate,
+		MarkFrequency:  markFrequency,
+		SpaceFrequency: spaceFrequency,
+		ChannelNum:     channelNum,
+		BitDepth:       bitDepth,
+		BufferSize:     bufferSize,
 		stop:           make(chan bool),
-		sendChannel:    make(chan []int16, 10),
+		sendChannel:    make(chan string, 10),
 		logger:         logger,
 		outputChan:     outputChan,
 	}
@@ -63,115 +88,143 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 }
 
 func (s *SoundcardCapture) Start() error {
-	var (
-		inputChannels  = 1
-		outputChannels = 1
-	)
-
-	stream, err := portaudio.OpenDefaultStream(inputChannels, outputChannels, float64(s.SampleRate), s.BufferSize,
-		func(in, out []int16) {
-			go func() {
-				s.outputChan <- s.int16ToBytes(in)
-			}()
-
-			select {
-			case data := <-s.sendChannel:
-				copy(out, data)
-			default:
-				for i := range out {
-					out[i] = 0
-				}
-			}
-		})
-	if err != nil {
+	if err := portaudio.Initialize(); err != nil {
 		return err
 	}
+	defer portaudio.Terminate()
 
-	go func() {
-		defer stream.Close()
+	audioBuffer := make([]float32, s.BufferSize)
 
-		if err := stream.Start(); err != nil {
-			s.logger.Error("failed to start soundcard: ", err)
-		}
+	stream, err := portaudio.OpenStream(s.StreamParams, func(in, out []float32) {
+		copy(audioBuffer, in)
 
-		defer stream.Stop()
+		go func() {
+			bytes, err := s.float32ToBytes(audioBuffer)
+			if err != nil {
+				s.logger.Error("Error converting float32 to bytes: ", err)
+			}
+
+			s.outputChan <- bytes
+		}()
 
 		select {
-		case <-s.stop:
-			return
+		case msg := <-s.sendChannel:
+			audioData := s.EncodeAudio(msg)
+			n := copy(out, audioData)
+
+			for i := n; i < len(out); i++ {
+				out[i] = 0
+			}
+		default:
+			for i := range out {
+				out[i] = 0
+			}
 		}
-	}()
-
-	return nil
-}
-
-func (s *SoundcardCapture) Play(msg []byte) error {
-	binMsg, err := s.bytesToInt16(msg)
+	})
 	if err != nil {
 		return err
 	}
+	defer stream.Close()
 
-	s.sendChannel <- binMsg
+	if err := stream.Start(); err != nil {
+		s.logger.Error("failed to start soundcard: ", err)
+	}
+	defer stream.Stop()
 
-	return nil
-}
-
-func (s *SoundcardCapture) processAudio(out [][]float32, signal []byte) {
-	for i := range out[0] {
-		if len(signal) <= 0 {
-			out[0][i] = 0.0
-			out[1][i] = 0.0
-			continue
+	for {
+		select {
+		case <-s.stop:
+			return nil
 		}
-
-		sample := int16(signal[0]) | int16(signal[1])<<8
-		value := float32(sample) / 32768.0
-		out[0][i] = value
-		out[1][i] = value
-		signal = signal[s.BitDepth:]
 	}
 }
 
-func (s *SoundcardCapture) int16ToBytes(data []int16) []byte {
-	buf := make([]byte, len(data)*2)
-	for i, v := range data {
-		buf[i*2] = byte(v)
-		buf[i*2+1] = byte(v >> 8)
-	}
-	return buf
-}
-
-func (s *SoundcardCapture) bytesToInt16(data []byte) ([]int16, error) {
-	if len(data)%2 != 0 {
-		return nil, fmt.Errorf("data length is not even")
-	}
-
-	int16s := make([]int16, len(data)/2)
-	err := binary.Read(bytes.NewReader(data), binary.LittleEndian, &int16s)
-	if err != nil {
-		return nil, err
-	}
-
-	return int16s, nil
+func (s *SoundcardCapture) Play(msg string) {
+	s.sendChannel <- msg
 }
 
 func (s *SoundcardCapture) Stop() {
 	s.stop <- true
-	portaudio.Terminate()
 }
 
 func (s *SoundcardCapture) Type() string {
 	return "Soundcard"
 }
 
-func selectDeviceByName(name string) (*portaudio.DeviceInfo, error) {
-	devices, err := portaudio.Devices()
-	if err != nil {
-		return nil, err
+func (s *SoundcardCapture) float32ToBytes(data []float32) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	isLittleEndian := func() bool {
+		var i int32 = 0x01020304
+		u := (*[4]byte)(unsafe.Pointer(&i))
+		return u[0] == 0x04
+	}()
+
+	for _, f := range data {
+		if isLittleEndian {
+			if err := binary.Write(buf, binary.LittleEndian, f); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := binary.Write(buf, binary.BigEndian, f); err != nil {
+				return nil, err
+			}
+		}
 	}
 
-	if name == "" {
-		fmt.Println("No device name specified, defaulting to the first available device.")
+	return buf.Bytes(), nil
+}
+
+func (s *SoundcardCapture) EncodeAudio(packet string) []float32 {
+	bitstream := s.convertToNRZI(s.packetToBitstream(packet))
+
+	return s.modulateAFSK(bitstream)
+}
+
+func (s *SoundcardCapture) convertToNRZI(bitstream []int) []int {
+	var nrzi []int
+	currentState := 1
+	for _, bit := range bitstream {
+		if bit == 1 {
+			currentState = currentState ^ 1
+		}
+		nrzi = append(nrzi, currentState)
+	}
+	return nrzi
+}
+
+func (s *SoundcardCapture) modulateAFSK(bitstream []int) []float32 {
+	bitDuration := float64(s.SampleRate) / s.BaudRate
+	var audio []float32
+	for _, bit := range bitstream {
+		frequency := s.MarkFrequency
+		if bit == 0 {
+			frequency = s.SpaceFrequency
+		}
+		for i := 0; i < int(bitDuration); i++ {
+			audio = append(audio, float32(math.Sin(2*math.Pi*frequency*float64(i)/float64(s.SampleRate))))
+		}
+	}
+	return audio
+}
+
+func (s *SoundcardCapture) packetToBitstream(packet string) []int {
+	var bitstream []int
+	for _, char := range packet {
+		for i := 7; i >= 0; i-- {
+			bitstream = append(bitstream, int((char>>i)&1))
+		}
+	}
+	return bitstream
+}
+
+func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *portaudio.DeviceInfo, err error) {
+	devices, err := portaudio.Devices()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if inputName == "" {
+		fmt.Println("No device name for input specified, setting to the system default.")
 		fmt.Println("Please specify a device name in the config.yml file if you want to select a specific device.")
 		fmt.Println("Available devices:")
 
@@ -179,15 +232,56 @@ func selectDeviceByName(name string) (*portaudio.DeviceInfo, error) {
 			fmt.Printf("%s\n", device.Name)
 		}
 
-		return devices[0], nil
-	}
+		inputDevice, err = portaudio.DefaultInputDevice()
+		if err != nil {
+			return nil, nil, fmt.Errorf("Error getting default input device: %v", err)
+		}
+	} else {
+		for _, device := range devices {
+			if device.Name == inputName {
+				inputDevice = device
+				break
+			}
+		}
 
-	for _, device := range devices {
-		if device.Name == name {
-			return device, nil
+		if inputDevice == nil {
+			fmt.Printf("Input device '%s' not found. Reverting to system default.\n", inputName)
+			inputDevice, err = portaudio.DefaultInputDevice()
+			if err != nil {
+				return nil, nil, fmt.Errorf("Error getting default input device: %v", err)
+			}
 		}
 	}
 
-	fmt.Printf("Device named '%s' not found, defaulting to the first available device.\n", name)
-	return devices[0], nil
+	if outputName == "" {
+		fmt.Println("No device name for output specified, setting to the system default.")
+		fmt.Println("Please specify a device name in the config.yml file if you want to select a specific device.")
+		fmt.Println("Available devices:")
+
+		for _, device := range devices {
+			fmt.Printf("%s\n", device.Name)
+		}
+
+		outputDevice, err = portaudio.DefaultOutputDevice()
+		if err != nil {
+			return nil, nil, fmt.Errorf("Error getting default output device: %v", err)
+		}
+	} else {
+		for _, device := range devices {
+			if device.Name == outputName {
+				outputDevice = device
+				break
+			}
+		}
+
+		if outputDevice == nil {
+			fmt.Printf("Output device '%s' not found. Reverting to system default.\n", inputName)
+			outputDevice, err = portaudio.DefaultOutputDevice()
+			if err != nil {
+				return nil, nil, fmt.Errorf("Error getting default input device: %v", err)
+			}
+		}
+	}
+
+	return inputDevice, outputDevice, nil
 }

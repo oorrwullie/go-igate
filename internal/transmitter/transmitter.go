@@ -58,13 +58,16 @@ func (t *Transmitter) Start() error {
 }
 
 func (t *Transmitter) Stop() {
+	t.logger.Info("Stopping soundcard capture...")
+	t.soundcard.Stop()
+
+	t.logger.Info("Stopping transmitter...")
 	t.stop <- true
 }
 
 func (t *Transmitter) Transmit(msg string) {
 	fmtMsg := fmt.Sprintf("%v\r\n", msg)
-	wave := t.encodeMsg(fmtMsg)
-	t.soundcard.Play(wave)
+	t.soundcard.Play(fmtMsg)
 
 	t.logger.Info("APRS message transmitted: ", msg)
 }

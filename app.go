@@ -58,10 +58,12 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 
 	if cfg.Transmitter.Enabled {
 		if captureDevice.Type() != "Soundcard" {
-			soundcard, err = capture.NewSoundcardCapture(cfg, captureOutputChan, logger)
+			soundcard, err = capture.NewSoundcardCapture(cfg, nil, logger)
 			if err != nil {
 				return nil, fmt.Errorf("Error creating soundcard capture: %v", err)
 			}
+			go soundcard.Start()
+
 		} else {
 			soundcard = captureDevice.(*capture.SoundcardCapture)
 		}

@@ -10,14 +10,15 @@ import (
 
 type (
 	Config struct {
-		Sdr               Sdr         `yaml:"sdr"`
-		Multimon          Multimon    `yaml:"multimon"`
-		Transmitter       Transmitter `yaml:"transmitter"`
-		IGate             IGate       `yaml:"igate"`
-		DigipeaterEnabled bool        `yaml:"enable-digipeater"`
-		CacheSize         int         `yaml:"cache-size"`
-		StationCallsign   string      `yaml:"station-callsign"`
-		SoundcardName     string      `yaml:"soundcard-name"`
+		Sdr                 Sdr         `yaml:"sdr"`
+		Multimon            Multimon    `yaml:"multimon"`
+		Transmitter         Transmitter `yaml:"transmitter"`
+		IGate               IGate       `yaml:"igate"`
+		DigipeaterEnabled   bool        `yaml:"enable-digipeater"`
+		CacheSize           int         `yaml:"cache-size"`
+		StationCallsign     string      `yaml:"station-callsign"`
+		SoundcardInputName  string      `yaml:"soundcard-input-name"`
+		SoundcardOutputName string      `yaml:"soundcard-output-name"`
 	}
 
 	IGate struct {
