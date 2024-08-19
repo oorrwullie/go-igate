@@ -262,12 +262,12 @@ func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *
 func (s *SoundcardCapture) CreateAX25FrameFromAPRS(msg string) *AX25Frame {
 	parts := strings.Split(msg, ">")
 	if len(parts) != 2 {
-		s.logger.Error("Invalid APRS message: %v", msg)
+		s.logger.Error("Invalid APRS message: ", msg)
 	}
 
 	sourceDest := strings.Split(parts[0], ":")
 	if len(sourceDest) != 2 {
-		s.logger.Error("Invalid source/destination in APRS message: %v", parts[0])
+		s.logger.Error("Invalid source/destination in APRS message: ", parts[0])
 		return &AX25Frame{}
 	}
 
