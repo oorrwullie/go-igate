@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"time"
 	"unsafe"
 
 	"github.com/oorrwullie/go-igate/internal/config"
@@ -52,13 +53,13 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 	inputDeviceInfo := portaudio.StreamDeviceParameters{
 		Device:   inputDevice,
 		Channels: 1,
-		Latency:  inputDevice.DefaultHighInputLatency,
+		Latency:  inputDevice.DefaultLowInputLatency,
 	}
 
 	outputDeviceInfo := portaudio.StreamDeviceParameters{
 		Device:   outputDevice,
 		Channels: 1,
-		Latency:  outputDevice.DefaultHighOutputLatency,
+		Latency:  outputDevice.DefaultLowOutputLatency,
 	}
 
 	streamParams := portaudio.StreamParameters{
@@ -195,6 +196,14 @@ func (s *SoundcardCapture) convertToNRZI(bitstream []int) []int {
 func (s *SoundcardCapture) modulateAFSK(bitstream []int) []float32 {
 	bitDuration := float64(s.SampleRate) / s.BaudRate
 	var audio []float32
+
+	// generate VOX trigger tone
+	duration := time.Millisecond * 500
+	numSamples := int(float64(s.SampleRate) * duration.Seconds())
+	for i := 0; i < numSamples; i++ {
+		audio = append(audio, float32(0.8*math.Sin(2*math.Pi*1000.0*float64(i)/float64(s.SampleRate))))
+	}
+
 	for _, bit := range bitstream {
 		frequency := s.MarkFrequency
 		if bit == 0 {
