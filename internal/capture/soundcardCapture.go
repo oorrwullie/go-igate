@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -15,18 +16,28 @@ import (
 )
 
 type SoundcardCapture struct {
-	StreamParams   portaudio.StreamParameters
-	SampleRate     int
-	BaudRate       float64
-	MarkFrequency  float64
-	SpaceFrequency float64
-	ChannelNum     int
-	BitDepth       int
-	BufferSize     int
-	stop           chan bool
-	sendChannel    chan string
-	logger         *log.Logger
-	outputChan     chan []byte
+	StreamParams    portaudio.StreamParameters
+	SampleRate      int
+	BaudRate        float64
+	MarkFrequency   float64
+	SpaceFrequency  float64
+	ChannelNum      int
+	BitDepth        int
+	BufferSize      int
+	stop            chan bool
+	sendChannel     chan string
+	logger          *log.Logger
+	outputChan      chan []byte
+	stationCallsign string
+}
+
+type AX25Frame struct {
+	Destination [7]byte
+	Source      [7]byte
+	Digipeaters [7]byte
+	Control     byte
+	ProtocolID  byte
+	Info        []byte
 }
 
 func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.Logger) (*SoundcardCapture, error) {
@@ -38,6 +49,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		channelNum     = 1
 		bitDepth       = 1
 		bufferSize     = 376320
+		//bufferSize = 74910
 	)
 
 	if err := portaudio.Initialize(); err != nil {
@@ -71,18 +83,19 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 	}
 
 	sc := &SoundcardCapture{
-		StreamParams:   streamParams,
-		SampleRate:     sampleRate,
-		BaudRate:       baudRate,
-		MarkFrequency:  markFrequency,
-		SpaceFrequency: spaceFrequency,
-		ChannelNum:     channelNum,
-		BitDepth:       bitDepth,
-		BufferSize:     bufferSize,
-		stop:           make(chan bool),
-		sendChannel:    make(chan string, 10),
-		logger:         logger,
-		outputChan:     outputChan,
+		StreamParams:    streamParams,
+		SampleRate:      sampleRate,
+		BaudRate:        baudRate,
+		MarkFrequency:   markFrequency,
+		SpaceFrequency:  spaceFrequency,
+		ChannelNum:      channelNum,
+		BitDepth:        bitDepth,
+		BufferSize:      bufferSize,
+		stop:            make(chan bool),
+		sendChannel:     make(chan string, 10),
+		logger:          logger,
+		outputChan:      outputChan,
+		stationCallsign: cfg.StationCallsign,
 	}
 
 	return sc, nil
@@ -110,16 +123,18 @@ func (s *SoundcardCapture) Start() error {
 
 		select {
 		case msg := <-s.sendChannel:
-			audioData := s.EncodeAudio(msg)
+			// audioData := s.EncodeAudio(msg)
+			frame := s.CreateAX25FrameFromAPRS(msg)
+			bitstream := frame.ToBitstream()
+			nrziBitstream := frame.NRZIEncode(bitstream)
+			audioData := frame.ModulateAFSK(nrziBitstream)
+
 			n := copy(out, audioData)
 
 			for i := n; i < len(out); i++ {
 				out[i] = 0
 			}
-		default:
-			for i := range out {
-				out[i] = 0
-			}
+			s.logger.Debug("Output played to soundcard.")
 		}
 	})
 	if err != nil {
@@ -173,57 +188,6 @@ func (s *SoundcardCapture) float32ToBytes(data []float32) ([]byte, error) {
 	}
 
 	return buf.Bytes(), nil
-}
-
-func (s *SoundcardCapture) EncodeAudio(packet string) []float32 {
-	bitstream := s.convertToNRZI(s.packetToBitstream(packet))
-
-	return s.modulateAFSK(bitstream)
-}
-
-func (s *SoundcardCapture) convertToNRZI(bitstream []int) []int {
-	var nrzi []int
-	currentState := 1
-	for _, bit := range bitstream {
-		if bit == 1 {
-			currentState = currentState ^ 1
-		}
-		nrzi = append(nrzi, currentState)
-	}
-	return nrzi
-}
-
-func (s *SoundcardCapture) modulateAFSK(bitstream []int) []float32 {
-	bitDuration := float64(s.SampleRate) / s.BaudRate
-	var audio []float32
-
-	// generate VOX trigger tone
-	duration := time.Millisecond * 500
-	numSamples := int(float64(s.SampleRate) * duration.Seconds())
-	for i := 0; i < numSamples; i++ {
-		audio = append(audio, float32(0.8*math.Sin(2*math.Pi*1000.0*float64(i)/float64(s.SampleRate))))
-	}
-
-	for _, bit := range bitstream {
-		frequency := s.MarkFrequency
-		if bit == 0 {
-			frequency = s.SpaceFrequency
-		}
-		for i := 0; i < int(bitDuration); i++ {
-			audio = append(audio, float32(math.Sin(2*math.Pi*frequency*float64(i)/float64(s.SampleRate))))
-		}
-	}
-	return audio
-}
-
-func (s *SoundcardCapture) packetToBitstream(packet string) []int {
-	var bitstream []int
-	for _, char := range packet {
-		for i := 7; i >= 0; i-- {
-			bitstream = append(bitstream, int((char>>i)&1))
-		}
-	}
-	return bitstream
 }
 
 func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *portaudio.DeviceInfo, err error) {
@@ -293,4 +257,132 @@ func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *
 	}
 
 	return inputDevice, outputDevice, nil
+}
+
+func (s *SoundcardCapture) CreateAX25FrameFromAPRS(msg string) *AX25Frame {
+	parts := strings.Split(msg, ">")
+	if len(parts) != 2 {
+		s.logger.Error("Invalid APRS message: %v", msg)
+	}
+
+	sourceDest := strings.Split(parts[0], ":")
+	if len(sourceDest) != 2 {
+		s.logger.Error("Invalid source/destination in APRS message: %v", parts[0])
+		return &AX25Frame{}
+	}
+
+	destination := sourceDest[0]
+	source := sourceDest[1]
+
+	// Extract the info part from the message
+	info := strings.TrimSpace(parts[1])
+
+	// Prepare the destination, source, and digipeater addresses
+	dstAddr := callsignToAddress(destination)
+	srcAddr := callsignToAddress(source)
+
+	// Prepare the digipeater address
+	var digipeaterAddr [7]byte
+	if s.stationCallsign != "" {
+		digipeaterAddr = callsignToAddress(s.stationCallsign)
+	}
+
+	// Create the frame
+	return &AX25Frame{
+		Destination: dstAddr,
+		Source:      srcAddr,
+		Digipeaters: digipeaterAddr,
+		Control:     0x03, // UI-frame
+		ProtocolID:  0xF0, // No layer 3 protocol
+		Info:        []byte(info),
+	}
+}
+
+func callsignToAddress(callsign string) [7]byte {
+	var addr [7]byte
+	copy(addr[:], callsign)
+	for i := 0; i < 6; i++ {
+		addr[i] <<= 1
+	}
+	addr[6] = 0b01100001
+	return addr
+}
+
+func (frame *AX25Frame) ToBitstream() []int {
+	var bitstream []int
+
+	for _, b := range frame.Destination {
+		bitstream = append(bitstream, frame.byteToBits(b)...)
+	}
+
+	for _, b := range frame.Source {
+		bitstream = append(bitstream, frame.byteToBits(b)...)
+	}
+
+	for _, b := range frame.Digipeaters {
+		bitstream = append(bitstream, frame.byteToBits(b)...)
+	}
+
+	bitstream = append(bitstream, frame.byteToBits(frame.Control)...)
+	bitstream = append(bitstream, frame.byteToBits(frame.ProtocolID)...)
+
+	for _, b := range frame.Info {
+		bitstream = append(bitstream, frame.byteToBits(b)...)
+	}
+
+	bitstream = append(bitstream, []int{0, 1, 1, 1, 1, 1, 1, 0}...)
+
+	return bitstream
+}
+
+func (frame *AX25Frame) byteToBits(b byte) []int {
+	bits := make([]int, 8)
+	for i := 0; i < 8; i++ {
+		bits[i] = int((b >> (7 - i)) & 1)
+	}
+	return bits
+}
+
+// Apply NRZI encoding to the bitstream
+func (frame *AX25Frame) NRZIEncode(bitstream []int) []int {
+	var nrzi []int
+	currentState := 1
+	for _, bit := range bitstream {
+		if bit == 1 {
+			currentState = currentState ^ 1 // Toggle the state
+		}
+		nrzi = append(nrzi, currentState)
+	}
+	return nrzi
+}
+
+// Modulate the NRZI-encoded bitstream into AFSK audio
+func (frame *AX25Frame) ModulateAFSK(bitstream []int) []float32 {
+	sampleRate := 44100
+	bitDuration := float64(sampleRate) / 1200
+	var audioTrigger []float32
+	var audioMsg []float32
+	var audio []float32
+
+	// generate VOX trigger tone
+	duration := time.Millisecond * 400
+	numSamples := int(float64(sampleRate) * duration.Seconds())
+	for i := 0; i < numSamples; i++ {
+		audioTrigger = append(audioTrigger, float32(0.8*math.Sin(2*math.Pi*1000.0*float64(i)/float64(sampleRate))))
+	}
+
+	for _, bit := range bitstream {
+		frequency := 1200.0
+		if bit == 0 {
+			frequency = 2200.0
+		}
+		for i := 0; i < int(bitDuration); i++ {
+			audioMsg = append(audioMsg, float32(0.8*math.Sin(2*math.Pi*frequency*float64(i)/float64(sampleRate))))
+		}
+	}
+
+	audio = append(audio, audioTrigger...)
+	audio = append(audio, audioMsg...)
+
+	return audio
 }
