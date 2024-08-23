@@ -68,8 +68,6 @@ func (t *Transmitter) Stop() {
 func (t *Transmitter) Transmit(msg string) {
 	fmtMsg := fmt.Sprintf("%v\r\n", msg)
 	t.soundcard.Play(fmtMsg)
-
-	t.logger.Info("APRS message transmitted: ", msg)
 }
 
 func (t *Transmitter) encodeMsg(msg string) []byte {
@@ -110,9 +108,7 @@ func (t *Tx) Send(msg string) {
 	defer t.mu.Unlock()
 
 	t.Chan <- msg
-	fmt.Printf("Tx sent message to tx: %v\n", msg)
-
-	time.Sleep(time.Millisecond * 1500)
+	// time.Sleep(time.Millisecond * 1500)
 }
 
 func (t *Tx) RxBackoff() {

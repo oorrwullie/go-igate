@@ -2,7 +2,6 @@ package multimon
 
 import (
 	"bufio"
-	"fmt"
 	"io"
 	"os/exec"
 	"strings"
@@ -92,13 +91,14 @@ func (m *Multimon) Start() error {
 			scanner := bufio.NewScanner(out)
 			for scanner.Scan() {
 				msg := scanner.Text()
+				m.logger.Debug("Got message: ", msg)
 				if exists := m.cache.Set(msg, time.Now()); !exists {
 					m.logger.Info("packet received: ", msg)
 
-					if m.tx != nil {
-						fmt.Println("initiating tx backoff...")
-						go m.tx.RxBackoff()
-					}
+					// if m.tx != nil {
+					// 	fmt.Println("initiating tx backoff...")
+					// 	go m.tx.RxBackoff()
+					// }
 					m.pubsub.Publish(msg)
 				} else {
 					m.logger.Info("Duplicate packet received: ", msg)
