@@ -32,29 +32,29 @@ type SoundcardCapture struct {
 }
 
 const (
-	SampleRate     = 44100
+	SampleRate     = 22050
 	BaudRate       = 1200
 	MarkFrequency  = 1200.0
 	SpaceFrequency = 2200.0
 	SamplesPerBaud = SampleRate / BaudRate
-	Amplitude      = 0.99
+	Amplitude      = 1.5
 	TwoPi          = 2 * math.Pi
 	VOXFrequency   = 1000.0
-	VOXDuration    = 0.1
-	DelayDuration  = 0.25
+	VOXDuration    = 0.2
+	DelayDuration  = 0.1
 )
 
 func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.Logger) (*SoundcardCapture, error) {
 	var (
-		sampleRate     = 44100
+		sampleRate     = 22050
 		baudRate       = 1200.0
 		markFrequency  = 1200.0
 		spaceFrequency = 2200.0
 		channelNum     = 1
 		bitDepth       = 1
 		//bufferSize     = 512320
-		bufferSize = 376320
-		//bufferSize = 74910
+		//bufferSize = 376320
+		bufferSize = 74910
 	)
 
 	if err := portaudio.Initialize(); err != nil {
