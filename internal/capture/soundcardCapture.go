@@ -1,12 +1,26 @@
 package capture
 
+/*
+#cgo LDFLAGS: -lax25
+#include <ax25.h>
+#include <stdlib.h>
+#include <string.h>
+
+void encode_callsign(char *callsign, ax25_address *ax25_addr) {
+	ax25_aton_entry(callsign, ax25_addr);
+}
+
+unsigned int crc16(unsigned char *data, int len) {
+   return ax25_compute_fcs(len, data);
+}
+*/
+import "C"
 import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
 	"math"
 	"strings"
-	"testing"
 	"unsafe"
 
 	"github.com/oorrwullie/go-igate/internal/config"
@@ -17,22 +31,19 @@ import (
 
 type SoundcardCapture struct {
 	StreamParams    portaudio.StreamParameters
-	SampleRate      int
-	BaudRate        float64
-	MarkFrequency   float64
-	SpaceFrequency  float64
 	ChannelNum      int
 	BitDepth        int
 	BufferSize      int
 	stop            chan bool
-	sendChannel     chan string
+	sendChannel     chan []float32
 	logger          *log.Logger
 	outputChan      chan []byte
+	doneChan        chan bool
 	stationCallsign string
 }
 
 const (
-	SampleRate     = 22050
+	SampleRate     = 44100
 	BaudRate       = 1200
 	MarkFrequency  = 1200.0
 	SpaceFrequency = 2200.0
@@ -46,15 +57,12 @@ const (
 
 func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.Logger) (*SoundcardCapture, error) {
 	var (
-		sampleRate     = 22050
-		baudRate       = 1200.0
-		markFrequency  = 1200.0
-		spaceFrequency = 2200.0
-		channelNum     = 1
-		bitDepth       = 1
+		channelNum = 1
+		bitDepth   = 1
 		//bufferSize     = 512320
 		//bufferSize = 376320
-		bufferSize = 74910
+		//bufferSize = 74910
+		bufferSize = 262144
 	)
 
 	if err := portaudio.Initialize(); err != nil {
@@ -70,48 +78,37 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 	inputDeviceInfo := portaudio.StreamDeviceParameters{
 		Device:   inputDevice,
 		Channels: 1,
-		Latency:  inputDevice.DefaultLowInputLatency,
+		Latency:  inputDevice.DefaultHighInputLatency,
 	}
 
 	outputDeviceInfo := portaudio.StreamDeviceParameters{
 		Device:   outputDevice,
 		Channels: 1,
-		Latency:  outputDevice.DefaultLowOutputLatency,
+		Latency:  outputDevice.DefaultHighOutputLatency,
 	}
 
 	streamParams := portaudio.StreamParameters{
 		Input:           inputDeviceInfo,
 		Output:          outputDeviceInfo,
-		SampleRate:      float64(sampleRate),
+		SampleRate:      float64(SampleRate),
 		FramesPerBuffer: bufferSize,
 		Flags:           portaudio.NoFlag,
 	}
 
 	sc := &SoundcardCapture{
 		StreamParams:    streamParams,
-		SampleRate:      sampleRate,
-		BaudRate:        baudRate,
-		MarkFrequency:   markFrequency,
-		SpaceFrequency:  spaceFrequency,
 		ChannelNum:      channelNum,
 		BitDepth:        bitDepth,
 		BufferSize:      bufferSize,
 		stop:            make(chan bool),
-		sendChannel:     make(chan string, 10),
+		sendChannel:     make(chan []float32, 10),
 		logger:          logger,
 		outputChan:      outputChan,
 		stationCallsign: cfg.StationCallsign,
+		doneChan:        make(chan bool),
 	}
 
 	return sc, nil
-}
-
-func Int16ToFloat32(data []int16) []float32 {
-	floatData := make([]float32, len(data))
-	for i, v := range data {
-		floatData[i] = float32(v) / 32768.0
-	}
-	return floatData
 }
 
 func (s *SoundcardCapture) Start() error {
@@ -120,34 +117,7 @@ func (s *SoundcardCapture) Start() error {
 	}
 	defer portaudio.Terminate()
 
-	audioBuffer := make([]float32, s.BufferSize)
-
-	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
-		copy(audioBuffer, in)
-
-		go func() {
-			bytes, err := s.float32ToBytes(audioBuffer)
-			if err != nil {
-				s.logger.Error("Error converting float32 to bytes: ", err)
-			}
-
-			s.outputChan <- bytes
-		}()
-
-		select {
-		case msg := <-s.sendChannel:
-			src, dst, digi, info := parseAprsString(msg)
-			frame := buildAx25Frame(dst, src, digi, info)
-			wave := ax25ToAFSK(frame)
-
-			n := copy(out, wave)
-
-			for i := n; i < len(out); i++ {
-				out[i] = 0
-			}
-			s.logger.Debug("Output played to soundcard.")
-		}
-	})
+	stream, err := portaudio.OpenStream(s.StreamParams, s.audioCallback)
 	if err != nil {
 		return err
 	}
@@ -166,8 +136,48 @@ func (s *SoundcardCapture) Start() error {
 	}
 }
 
+func (s *SoundcardCapture) audioCallback(inputBuffer, outputBuffer []float32) {
+	audioBuffer := make([]float32, s.BufferSize)
+	copy(audioBuffer, inputBuffer)
+
+	go func() {
+		bytes, err := s.float32ToBytes(audioBuffer)
+		if err != nil {
+			s.logger.Error("Error converting float32 to bytes: ", err)
+		}
+
+		s.outputChan <- bytes
+	}()
+
+	select {
+	case wave := <-s.sendChannel:
+		for i := range outputBuffer {
+			if i < len(wave) {
+				outputBuffer[i] = wave[i]
+			} else {
+				outputBuffer[i] = 0
+			}
+		}
+	case <-s.doneChan:
+		for i := range outputBuffer {
+			outputBuffer[i] = 0
+		}
+	default:
+		for i := range outputBuffer {
+			outputBuffer[i] = 0
+		}
+	}
+}
+
 func (s *SoundcardCapture) Play(msg string) {
-	s.sendChannel <- msg
+	s.doneChan <- false
+	src, dst, digi, info := parseAprsString(msg)
+	frame := s.buildAx25Frame(dst, src, digi, info)
+	wave := s.ax25ToAFSK(frame)
+
+	s.sendChannel <- wave
+	// time.Sleep(time.Duration(len(wave)) * time.Second / SampleRate)
+	s.doneChan <- true
 }
 
 func (s *SoundcardCapture) Stop() {
@@ -270,6 +280,106 @@ func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *
 	return inputDevice, outputDevice, nil
 }
 
+func (s *SoundcardCapture) buildAx25Frame(destination, source string, digipeaters []string, infoField string) []byte {
+	frame := bytes.Buffer{}
+
+	destCallsign := C.CString(destination)
+	defer C.free(unsafe.Pointer(destCallsign))
+	var destAddr C.ax25_address
+	C.encode_callsign(destCallsign, &destAddr)
+	frame.Write(C.GoBytes(unsafe.Pointer(&destAddr), C.sizeof_ax25_address))
+
+	srcCallsign := C.CString(source)
+	defer C.free(unsafe.Pointer(srcCallsign))
+	var srcAddr C.ax25_address
+	C.encode_callsign(srcCallsign, &srcAddr)
+	frame.Write(C.GoBytes(unsafe.Pointer(&srcAddr), C.sizeof_ax25_address))
+
+	for _, digi := range digipeaters {
+		digiCallsign := C.CString(digi)
+		defer C.free(unsafe.Pointer(digiCallsign))
+		var digiAddr C.ax25_address
+		C.encode_callsign(digiCallsign, &digiAddr)
+		frame.Write(C.GoBytes(unsafe.Pointer(&digiAddr), C.sizeof_ax25_address))
+	}
+
+	control := byte(0x03)
+	protocol := byte(0xF0)
+	frame.WriteByte(control)
+	frame.WriteByte(protocol)
+	frame.WriteString(infoField)
+
+	crc := C.crc16((*C.uchar)(unsafe.Pointer(&frame.Bytes()[0])), C.int(frame.Len()))
+	crcBytes := make([]byte, 2)
+	binary.LittleEndian.PutUint16(crcBytes, uint16(crc))
+	frame.Write(crcBytes)
+
+	return frame.Bytes()
+}
+
+func (s *SoundcardCapture) ax25ToAFSK(frame []byte) []float32 {
+	var afskSignal []float32
+	var phase float64
+	markIncrement := TwoPi * s.MarkFrequency / float64(s.SampleRate)
+	spaceIncrement := TwoPi * s.SpaceFrequency / float64(s.SampleRate)
+
+	for _, byteValue := range frame {
+		for bit := 0; bit < 8; bit++ {
+			if byteValue&(0x80>>bit) != 0 {
+				// Mark (1200 Hz)
+				for i := 0; i < SamplesPerBaud; i++ {
+					afskSignal = append(afskSignal, Amplitude*float32(math.Sin(phase)))
+					phase += markIncrement
+					if phase >= TwoPi {
+						phase -= TwoPi
+					}
+				}
+			} else {
+				// Space (2200 Hz)
+				for i := 0; i < SamplesPerBaud; i++ {
+					afskSignal = append(afskSignal, Amplitude*float32(math.Sin(phase)))
+					phase += spaceIncrement
+					if phase >= TwoPi {
+						phase -= TwoPi
+					}
+				}
+			}
+		}
+	}
+
+	// Prepend a VOX tone if necessary
+	voxTone := s.generateVoxTone()
+
+	// Append the AFSK signal to the VOX tone
+	completeWave := append(voxTone, afskSignal...)
+
+	return completeWave
+}
+
+func parseAprsString(s string) (source string, destination string, digipeaters []string, infoField string) {
+	// Assuming the standard format for an APRS frame
+	parts := strings.Split(s, ">")
+	if len(parts) < 2 {
+		return
+	}
+	source = parts[0]
+
+	parts = strings.Split(parts[1], ":")
+	if len(parts) < 2 {
+		return
+	}
+	destinationAndDigipeaters := strings.Split(parts[0], ",")
+	destination = destinationAndDigipeaters[0]
+
+	if len(destinationAndDigipeaters) > 1 {
+		digipeaters = destinationAndDigipeaters[1:]
+	}
+
+	infoField = parts[1]
+
+	return
+}
+
 func encodeCallsign(callsign string, ssid int) []byte {
 	encoded := make([]byte, 7)
 	for i := 0; i < 6; i++ {
@@ -296,71 +406,6 @@ func crc16Ccitt(data []byte) uint16 {
 		}
 	}
 	return crc
-}
-
-func buildAx25Frame(destination, source string, digipeaters []string, infoField string) []byte {
-	frame := bytes.Buffer{}
-
-	destCallsign, destSsid := parseCallsign(destination)
-	frame.Write(encodeCallsign(destCallsign, destSsid))
-
-	sourceCallsign, sourceSsid := parseCallsign(source)
-	frame.Write(encodeCallsign(sourceCallsign, sourceSsid))
-
-	for i, digipeater := range digipeaters {
-		digiCallsign, digiSsid := parseCallsign(digipeater)
-		encodedDigi := encodeCallsign(digiCallsign, digiSsid)
-		if i == len(digipeaters)-1 {
-			encodedDigi[6] |= 0x01 // Mark the last digipeater
-		}
-		frame.Write(encodedDigi)
-	}
-
-	frame.WriteByte(0x03)
-
-	frame.WriteByte(0xF0)
-
-	frame.WriteString(infoField)
-
-	fcs := crc16Ccitt(frame.Bytes())
-	binary.Write(&frame, binary.LittleEndian, fcs)
-
-	return frame.Bytes()
-}
-
-func parseCallsign(callsign string) (string, int) {
-	parts := strings.Split(callsign, "-")
-	if len(parts) == 2 {
-		return parts[0], int(parts[1][0] - '0')
-	}
-	return callsign, 0
-}
-
-func parseAprsString(aprsString string) (string, string, []string, string) {
-	parts := strings.Split(aprsString, ">")
-	source := parts[0]
-
-	rest := strings.Split(parts[1], ":")
-	pathParts := strings.Split(rest[0], ",")
-	destination := pathParts[0]
-
-	var digipeaters []string
-	if len(pathParts) > 1 {
-		digipeaters = pathParts[1:]
-	}
-
-	infoField := rest[1]
-	return source, destination, digipeaters, infoField
-}
-
-// Unit test for CRC-16-CCITT calculation
-func TestCrc16Ccitt(t *testing.T) {
-	data := []byte("123456789")
-	expectedCrc := uint16(0x29B1)
-	calculatedCrc := crc16Ccitt(data)
-	if calculatedCrc != expectedCrc {
-		t.Errorf("CRC-16-CCITT calculation failed, expected %X but got %X", expectedCrc, calculatedCrc)
-	}
 }
 
 func ax25ToAFSK(frame []byte) []float32 {

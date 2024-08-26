@@ -1,0 +1,62 @@
+# Description: Configuration file for go-igate
+# License: MIT
+# Notes: This file is written in YAML format. For more information on YAML, see https://yaml.org/
+
+
+# call-sign of the DigiGate (your call sign including SSID) - e.g. "N0CALL-10"
+station-callsign: "KK7AOS-10"
+# size of in-memory cache for keeping track of received packets
+cache-size: 1000
+#set to true if you want to use the digipeater
+enable-digipeater: true
+# soundcard-input-name is the name of the device to use for audio input
+soundcard-input-name: ""
+# soundcard-output-name is the name of the device to use for audio output
+soundcard-output-name: "External Headphones"
+sdr:
+  enabled: true
+  # RTL-SDR binary
+  exec: "rtl_fm"
+  # frequency to listen on
+  frequency: "144.390M"
+  # device index
+  device: "0"
+  # gain of rtl-sdr
+  gain: "49.6"
+  # ppm error - 0 for no error
+  ppm-error: "0"
+  # squelch level - 0 for no squelch
+  squelch-level: "0"
+  # sample rate of rtl-sdr - 22050 for APRS
+  sample-rate: "22050"
+  additional-flags: ""
+multimon:
+  # multimon-ng binary
+  path: "multimon-ng"
+  additional-flags: ""
+transmitter:
+  # enabled: set to true to enable tx functionality
+  enabled: true
+  # baud rate of serial connection to the radio
+  baud-rate: 1200
+  # time to wait for serial connection to the radio
+  read-timeout: "5s"
+igate:
+  # enabled: set to true to enable DigiGate to act as an iGate.
+  enabled: false
+  beacon:
+    # enable to send beacon messages
+    enabled: false
+    # interval of beacon messages - e.g. "30m"
+    interval: 30m
+    # comment of beacon messages which should include the position of the station
+    comment: "Powered by gophers!"
+  aprsis:
+    # enable to connect to APRS-IS server for iGate
+    enabled: false
+    # server to connect to (noam.aprs2.net:14580 for North America)
+    server: "noam.aprs2.net:14580"
+    #passcode of iGate can be obtained from https://apps.magicbug.co.uk/passcode/ (do so with your SSID - eg. N0CALL-10)
+    passcode: ""
+    # filter for APRS-IS server - e.g. "m/50" for 50 miles radius
+    filter: ""
