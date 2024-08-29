@@ -43,7 +43,7 @@ const (
 	Tone2200Hz     = 2200.0
 	BitsPerSample  = 8
 	SamplesPerBaud = SampleRate / BaudRate
-	Volume         = 0.9
+	Volume         = 0.5
 	TwoPi          = 2.0 * math.Pi
 	VOXFrequency   = 1000.0
 	VOXDuration    = 0.1
@@ -368,9 +368,12 @@ func generateAFSK(packet []byte) []float32 {
 	}
 
 	voxTone := generateVoxTone()
-	completeWave := append(voxTone, signal...)
+	wave := append(voxTone, signal...)
 
-	return normalizeSignal(completeWave)
+	completeWave := removeDCOffset(wave)
+	limitedWave := applyLimiter(completeWave, 0.9)
+
+	return normalizeSignal(limitedWave)
 }
 
 func generateVoxTone() []float32 {
@@ -405,8 +408,34 @@ func normalizeSignal(signal []float32) []float32 {
 		}
 	}
 	if maxAmplitude > 0 {
+		safetyMargin := float32(0.9) // Scale down the signal slightly
 		for i := range signal {
-			signal[i] /= maxAmplitude
+			signal[i] = signal[i] / maxAmplitude * safetyMargin
+		}
+	}
+	return signal
+}
+
+func removeDCOffset(signal []float32) []float32 {
+	mean := float32(0)
+	for _, sample := range signal {
+		mean += sample
+	}
+	mean /= float32(len(signal))
+
+	for i := range signal {
+		signal[i] -= mean
+	}
+
+	return signal
+}
+
+func applyLimiter(signal []float32, threshold float32) []float32 {
+	for i, sample := range signal {
+		if sample > threshold {
+			signal[i] = threshold
+		} else if sample < -threshold {
+			signal[i] = -threshold
 		}
 	}
 	return signal
