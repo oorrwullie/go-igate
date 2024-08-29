@@ -1,11 +1,13 @@
 package igate
 
 import (
+	"testing"
+	"time"
+
 	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
-	"testing"
-	"time"
+	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
 func TestIGate_startBeacon(t *testing.T) {
@@ -14,7 +16,7 @@ func TestIGate_startBeacon(t *testing.T) {
 		callSign  string
 		inputChan chan string
 		enableTx  bool
-		txChan    chan string
+		tx        *transmitter.Tx
 		logger    *log.Logger
 		Aprsis    *aprs.AprsIs
 		stop      chan bool
@@ -32,7 +34,7 @@ func TestIGate_startBeacon(t *testing.T) {
 				callSign:  "N0CALL-10",
 				inputChan: make(chan string),
 				enableTx:  false,
-				txChan:    make(chan string),
+				tx:        &transmitter.Tx{},
 				Aprsis:    &aprs.AprsIs{},
 				stop:      make(chan bool),
 			},
@@ -45,7 +47,7 @@ func TestIGate_startBeacon(t *testing.T) {
 				cfg:       config.IGate{Beacon: config.Beacon{Interval: 10 * time.Minute}},
 				inputChan: make(chan string),
 				enableTx:  false,
-				txChan:    make(chan string),
+				tx:        &transmitter.Tx{},
 				Aprsis:    &aprs.AprsIs{},
 				stop:      make(chan bool),
 			},
@@ -60,7 +62,7 @@ func TestIGate_startBeacon(t *testing.T) {
 				callSign:  tt.fields.callSign,
 				inputChan: tt.fields.inputChan,
 				enableTx:  tt.fields.enableTx,
-				txChan:    tt.fields.txChan,
+				tx:        tt.fields.tx,
 				logger:    tt.fields.logger,
 				Aprsis:    tt.fields.Aprsis,
 				stop:      tt.fields.stop,

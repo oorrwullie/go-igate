@@ -8,13 +8,10 @@ import (
 	"strings"
 )
 
-const (
-	productID string = "2303"
-	vendorID  string = "067b"
-)
-
 func DetectDataPort() (string, error) {
 	var (
+		productIDs    = []string{"2303", "7523"}
+		vendorIDs     = []string{"067b", "1a86"}
 		cmd           *exec.Cmd
 		commandOutput string
 		productMatch  bool
@@ -34,11 +31,11 @@ func DetectDataPort() (string, error) {
 		lines := strings.Split(commandOutput, "\n")
 
 		for _, line := range lines {
-			if strings.Contains(line, productID) {
+			if containsAny(line, productIDs) {
 				productMatch = true
 			}
 
-			if productMatch && strings.Contains(line, vendorID) {
+			if productMatch && containsAny(line, vendorIDs) {
 				vendorMatch = true
 			} else {
 				productMatch = false
@@ -68,12 +65,12 @@ func DetectDataPort() (string, error) {
 
 		for i, line := range lines {
 			var nextLine string
-			if strings.Contains(line, productID) {
+			if containsAny(line, productIDs) {
 				productMatch = true
 				nextLine = lines[i+1]
 			}
 
-			if productMatch && (strings.Contains(nextLine, vendorID) || strings.Contains(nextLine, vendorID)) {
+			if productMatch && (containsAny(nextLine, vendorIDs) || containsAny(nextLine, vendorIDs)) {
 				vendorMatch = true
 			} else {
 				productMatch = false
@@ -94,5 +91,14 @@ func DetectDataPort() (string, error) {
 		return "", fmt.Errorf("unsupported platform")
 	}
 
-	return "", fmt.Errorf("no USB device found with product ID %s and vendor ID %s", productID, vendorID)
+	return "", fmt.Errorf("no USB device found")
+}
+
+func containsAny(s string, substrings []string) bool {
+	for _, substr := range substrings {
+		if strings.Contains(s, substr) {
+			return true
+		}
+	}
+	return false
 }

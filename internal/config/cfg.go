@@ -10,13 +10,15 @@ import (
 
 type (
 	Config struct {
-		Sdr               Sdr         `yaml:"sdr"`
-		Multimon          Multimon    `yaml:"multimon"`
-		Transmitter       Transmitter `yaml:"transmitter"`
-		IGate             IGate       `yaml:"igate"`
-		DigipeaterEnabled bool        `yaml:"enable-digipeater"`
-		CacheSize         int         `yaml:"cache-size"`
-		StationCallsign   string      `yaml:"station-callsign"`
+		Sdr                 Sdr         `yaml:"sdr"`
+		Multimon            Multimon    `yaml:"multimon"`
+		Transmitter         Transmitter `yaml:"transmitter"`
+		IGate               IGate       `yaml:"igate"`
+		DigipeaterEnabled   bool        `yaml:"enable-digipeater"`
+		CacheSize           int         `yaml:"cache-size"`
+		StationCallsign     string      `yaml:"station-callsign"`
+		SoundcardInputName  string      `yaml:"soundcard-input-name"`
+		SoundcardOutputName string      `yaml:"soundcard-output-name"`
 	}
 
 	IGate struct {
@@ -26,6 +28,7 @@ type (
 	}
 
 	Sdr struct {
+		Enabled         bool `yaml:"enabled"`
 		Path            string
 		Frequency       string
 		Device          string
@@ -55,9 +58,7 @@ type (
 	}
 
 	Transmitter struct {
-		Enabled     bool   `yaml:"enabled"`
-		BaudRate    int    `yaml:"baud-rate"`
-		ReadTimeout string `yaml:"read-timeout"`
+		Enabled bool `yaml:"enabled"`
 	}
 )
 

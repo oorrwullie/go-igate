@@ -2,42 +2,43 @@ package transmitter
 
 import (
 	"fmt"
+	"io"
+	"math"
+	"sync"
 	"time"
 
-	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/go-igate/internal/capture"
 	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/tarm/serial"
 )
 
 type Transmitter struct {
-	TxChan       chan string
-	stop         chan bool
-	logger       *log.Logger
-	serialConfig *serial.Config
+	Tx        *Tx
+	stop      chan bool
+	logger    *log.Logger
+	soundcard *capture.SoundcardCapture
 }
 
-func New(cfg config.Transmitter, logger *log.Logger) (*Transmitter, error) {
-	dataPort, err := config.DetectDataPort()
-	if err != nil {
-		return nil, fmt.Errorf("Error detecting data port: %v", err)
-	}
+type Tx struct {
+	Chan chan string
+	mu   sync.Mutex
+}
 
-	timeout, err := time.ParseDuration(cfg.ReadTimeout)
-	if err != nil {
-		return nil, fmt.Errorf("Invalid read timeout: %v", err)
-	}
+type waveReader struct {
+	wave     []byte
+	position int
+}
 
-	serialConfig := &serial.Config{
-		Name:        dataPort,
-		Baud:        cfg.BaudRate,
-		ReadTimeout: timeout,
+func New(sc *capture.SoundcardCapture, logger *log.Logger) (*Transmitter, error) {
+	tx := &Tx{
+		Chan: make(chan string, 1),
+		mu:   sync.Mutex{},
 	}
 
 	return &Transmitter{
-		TxChan:       make(chan string),
-		stop:         make(chan bool),
-		logger:       logger,
-		serialConfig: serialConfig,
+		Tx:        tx,
+		stop:      make(chan bool),
+		logger:    logger,
+		soundcard: sc,
 	}, nil
 }
 
@@ -47,11 +48,8 @@ func (t *Transmitter) Start() error {
 			select {
 			case <-t.stop:
 				return
-			case msg := <-t.TxChan:
-				err := t.Tx(msg)
-				if err != nil {
-					t.logger.Error("Error transmitting APRS message: ", err)
-				}
+			case msg := <-t.Tx.Chan:
+				t.Transmit(msg)
 			}
 		}
 	}()
@@ -60,24 +58,80 @@ func (t *Transmitter) Start() error {
 }
 
 func (t *Transmitter) Stop() {
+	t.logger.Info("Stopping soundcard capture...")
+	t.soundcard.Stop()
+
+	t.logger.Info("Stopping transmitter...")
 	t.stop <- true
 }
 
-func (t *Transmitter) Tx(msg string) error {
-	port, err := serial.OpenPort(t.serialConfig)
-	if err != nil {
-		return fmt.Errorf("failed to open serial port: %s", err)
+func (t *Transmitter) Transmit(msg string) {
+	//fmtMsg := fmt.Sprintf("%v\r\n", msg)
+	t.soundcard.Play(msg)
+}
+
+func (t *Transmitter) encodeMsg(msg string) []byte {
+	var (
+		bitDuration = time.Second / time.Duration(t.soundcard.BaudRate)
+		signal      []byte
+	)
+
+	for _, bit := range msg {
+		var freq float64
+		if bit == '1' {
+			freq = float64(t.soundcard.MarkFrequency)
+		} else {
+			freq = float64(t.soundcard.SpaceFrequency)
+		}
+		signal = append(signal, t.generateSineWave(freq, bitDuration, 0.5)...)
 	}
 
-	fmtMsg := fmt.Sprintf("%v\r\n", msg)
-	_, err = port.Write([]byte(fmtMsg))
-	if err != nil {
-		return fmt.Errorf("Error transmitting APRS message: %s", err)
+	return signal
+}
+
+func (t *Transmitter) generateSineWave(frequency float64, duration time.Duration, amplitude float64) []byte {
+	samples := int(float64(t.soundcard.SampleRate) * duration.Seconds())
+	wave := make([]byte, samples*t.soundcard.BitDepth)
+
+	for i := 0; i < samples; i++ {
+		t := float64(i) / float64(t.soundcard.SampleRate)
+		value := int16(amplitude * math.Sin(2*math.Pi*frequency*t) * 32767)
+		wave[i*2] = byte(value)
+		wave[i*2+1] = byte(value >> 8)
 	}
 
-	t.logger.Info("APRS message transmitted: ", msg)
+	return wave
+}
 
-	port.Close()
+func (t *Tx) Send(msg string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 
-	return nil
+	t.Chan <- msg
+	// time.Sleep(time.Millisecond * 1500)
+}
+
+func (t *Tx) RxBackoff() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	time.Sleep(time.Millisecond * 3500)
+	fmt.Printf("tx backoff finished")
+}
+
+func NewWaveReader(wave []byte) *waveReader {
+	return &waveReader{
+		wave: wave,
+	}
+}
+
+func (w *waveReader) Read(p []byte) (int, error) {
+	if w.position >= len(w.wave) {
+		return 0, io.EOF
+	}
+
+	n := copy(p, w.wave[w.position:])
+	w.position += n
+
+	return n, nil
 }
