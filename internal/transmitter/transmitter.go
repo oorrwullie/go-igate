@@ -66,8 +66,8 @@ func (t *Transmitter) Stop() {
 }
 
 func (t *Transmitter) Transmit(msg string) {
-	fmtMsg := fmt.Sprintf("%v\r\n", msg)
-	t.soundcard.Play(fmtMsg)
+	//fmtMsg := fmt.Sprintf("%v\r\n", msg)
+	t.soundcard.Play(msg)
 }
 
 func (t *Transmitter) encodeMsg(msg string) []byte {

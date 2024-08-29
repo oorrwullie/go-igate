@@ -56,6 +56,7 @@ func (d *Digipeater) HandleMessage(msg string) {
 	}
 
 	txMsg, err := d.fmtForTx(msg)
+	d.logger.Info("formatted message: ", txMsg)
 	if err != nil {
 		d.logger.Error("Failed to parse message: ", err)
 		return

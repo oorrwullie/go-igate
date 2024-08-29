@@ -5,14 +5,19 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/cmplx"
 	"strings"
-	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
 
 	"github.com/gordonklaus/portaudio"
+	"github.com/mjibson/go-dsp/fft"
+	"gonum.org/v1/plot"
+	"gonum.org/v1/plot/plotter"
+	"gonum.org/v1/plot/vg"
 )
 
 type SoundcardCapture struct {
@@ -32,29 +37,23 @@ type SoundcardCapture struct {
 }
 
 const (
-	SampleRate     = 22050
+	SampleRate     = 44100
 	BaudRate       = 1200
-	MarkFrequency  = 1200.0
-	SpaceFrequency = 2200.0
+	Tone1200Hz     = 1200.0
+	Tone2200Hz     = 2200.0
+	BitsPerSample  = 8
 	SamplesPerBaud = SampleRate / BaudRate
-	Amplitude      = 1.5
-	TwoPi          = 2 * math.Pi
+	Volume         = 0.9
+	TwoPi          = 2.0 * math.Pi
 	VOXFrequency   = 1000.0
-	VOXDuration    = 0.2
-	DelayDuration  = 0.1
+	VOXDuration    = 0.1
+	DelayDuration  = 0.4
 )
 
 func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.Logger) (*SoundcardCapture, error) {
 	var (
-		sampleRate     = 22050
-		baudRate       = 1200.0
-		markFrequency  = 1200.0
-		spaceFrequency = 2200.0
-		channelNum     = 1
-		bitDepth       = 1
-		//bufferSize     = 512320
-		//bufferSize = 376320
-		bufferSize = 74910
+		channelNum = 1
+		bitDepth   = 1
 	)
 
 	if err := portaudio.Initialize(); err != nil {
@@ -76,26 +75,25 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 	outputDeviceInfo := portaudio.StreamDeviceParameters{
 		Device:   outputDevice,
 		Channels: 1,
-		Latency:  outputDevice.DefaultLowOutputLatency,
+		Latency:  time.Duration(time.Millisecond * 5),
 	}
 
 	streamParams := portaudio.StreamParameters{
 		Input:           inputDeviceInfo,
 		Output:          outputDeviceInfo,
-		SampleRate:      float64(sampleRate),
-		FramesPerBuffer: bufferSize,
-		Flags:           portaudio.NoFlag,
+		SampleRate:      float64(SampleRate),
+		FramesPerBuffer: 262144,
+		Flags:           portaudio.ClipOff,
 	}
 
 	sc := &SoundcardCapture{
 		StreamParams:    streamParams,
-		SampleRate:      sampleRate,
-		BaudRate:        baudRate,
-		MarkFrequency:   markFrequency,
-		SpaceFrequency:  spaceFrequency,
+		SampleRate:      SampleRate,
+		BaudRate:        BaudRate,
+		MarkFrequency:   Tone1200Hz,
+		SpaceFrequency:  Tone2200Hz,
 		ChannelNum:      channelNum,
 		BitDepth:        bitDepth,
-		BufferSize:      bufferSize,
 		stop:            make(chan bool),
 		sendChannel:     make(chan string, 10),
 		logger:          logger,
@@ -136,10 +134,10 @@ func (s *SoundcardCapture) Start() error {
 
 		select {
 		case msg := <-s.sendChannel:
-			src, dst, digi, info := parseAprsString(msg)
-			frame := buildAx25Frame(dst, src, digi, info)
-			wave := ax25ToAFSK(frame)
+			ax25Packet := s.aprsToAx25(msg)
+			wave := generateAFSK(ax25Packet)
 
+			// s.displayFFT(wave)
 			n := copy(out, wave)
 
 			for i := n; i < len(out); i++ {
@@ -180,14 +178,9 @@ func (s *SoundcardCapture) Type() string {
 
 func (s *SoundcardCapture) float32ToBytes(data []float32) ([]byte, error) {
 	buf := new(bytes.Buffer)
-	isLittleEndian := func() bool {
-		var i int32 = 0x01020304
-		u := (*[4]byte)(unsafe.Pointer(&i))
-		return u[0] == 0x04
-	}()
 
 	for _, f := range data {
-		if isLittleEndian {
+		if isLittleEndian() {
 			if err := binary.Write(buf, binary.LittleEndian, f); err != nil {
 				return nil, err
 			}
@@ -270,134 +263,114 @@ func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *
 	return inputDevice, outputDevice, nil
 }
 
-func encodeCallsign(callsign string, ssid int) []byte {
-	encoded := make([]byte, 7)
-	for i := 0; i < 6; i++ {
-		if i < len(callsign) {
-			encoded[i] = callsign[i] << 1
-		} else {
-			encoded[i] = ' ' << 1
-		}
+func (s *SoundcardCapture) aprsToAx25(aprs string) []byte {
+	parts := strings.Split(aprs, ">")
+	if len(parts) != 2 {
+		s.logger.Error("Invalid APRS string format")
+		return nil
 	}
-	encoded[6] = byte((ssid << 1) | 0x60) // Set the 0x60 to indicate an end-of-address flag
-	return encoded
+
+	source := parts[0]
+	rest := strings.Split(parts[1], ":")
+	destination := strings.Split(rest[0], ",")[0]
+	viaPath := strings.Split(rest[0], ",")[1:]
+	infoField := rest[1]
+
+	var buffer bytes.Buffer
+	buffer.WriteByte(0x7E) // Start flag
+	buffer.Write(encodeCallsign(destination))
+	buffer.Write(encodeCallsign(source))
+
+	for i, via := range viaPath {
+		last := (i == len(viaPath)-1)
+		buffer.Write(encodeCallsign(via, last))
+	}
+
+	buffer.WriteByte(0x03) // Control field
+	buffer.WriteByte(0xF0) // Protocol ID
+	buffer.WriteString(infoField)
+
+	frame := buffer.Bytes()
+	fcs := computeFCS(frame[1:]) // Compute FCS (Frame Check Sequence)
+
+	// Append FCS in the correct byte order
+	if isLittleEndian() {
+		binary.Write(&buffer, binary.LittleEndian, fcs)
+	} else {
+		binary.Write(&buffer, binary.BigEndian, fcs)
+	}
+	buffer.WriteByte(0x7E) // End flag
+
+	return buffer.Bytes()
 }
 
-func crc16Ccitt(data []byte) uint16 {
-	var crc uint16 = 0xFFFF
-	for _, b := range data {
-		crc ^= uint16(b) << 8
+func encodeCallsign(callsign string, last ...bool) []byte {
+	callsign = strings.ToUpper(callsign)
+	addr := make([]byte, 7)
+	for i := 0; i < 6 && i < len(callsign); i++ {
+		addr[i] = callsign[i] << 1
+	}
+	if len(callsign) < 6 {
+		addr[len(callsign)] = ' ' << 1
+	}
+	ssid := 0
+	if len(callsign) > 6 {
+		ssid = int(callsign[6] - '0')
+	}
+	addr[6] = byte((ssid&0x0F)<<1 | 0x60)
+	if len(last) > 0 && last[0] {
+		addr[6] |= 0x01
+	}
+	return addr
+}
+
+func computeFCS(frame []byte) uint16 {
+	const polynomial = 0x8408
+	var fcs uint16 = 0xFFFF
+
+	for _, b := range frame {
+		fcs ^= uint16(b)
 		for i := 0; i < 8; i++ {
-			if crc&0x8000 != 0 {
-				crc = (crc << 1) ^ 0x1021
+			if fcs&0x0001 != 0 {
+				fcs = (fcs >> 1) ^ polynomial
 			} else {
-				crc <<= 1
+				fcs >>= 1
 			}
 		}
 	}
-	return crc
+
+	return ^fcs
 }
 
-func buildAx25Frame(destination, source string, digipeaters []string, infoField string) []byte {
-	frame := bytes.Buffer{}
+func generateAFSK(packet []byte) []float32 {
+	samplesPerBit := int(SampleRate / BaudRate)
+	signal := make([]float32, 0, len(packet)*8*samplesPerBit)
+	currentPhase := 0.0
 
-	destCallsign, destSsid := parseCallsign(destination)
-	frame.Write(encodeCallsign(destCallsign, destSsid))
+	// Constants for phase increments
+	phaseIncrement1200 := 2.0 * math.Pi * Tone1200Hz / SampleRate
+	phaseIncrement2200 := 2.0 * math.Pi * Tone2200Hz / SampleRate
 
-	sourceCallsign, sourceSsid := parseCallsign(source)
-	frame.Write(encodeCallsign(sourceCallsign, sourceSsid))
+	for _, byteVal := range packet {
+		for i := 0; i < 8; i++ {
+			bit := (byteVal >> (7 - i)) & 0x01
+			phaseIncrement := phaseIncrement2200
+			if bit == 1 {
+				phaseIncrement = phaseIncrement1200
+			}
 
-	for i, digipeater := range digipeaters {
-		digiCallsign, digiSsid := parseCallsign(digipeater)
-		encodedDigi := encodeCallsign(digiCallsign, digiSsid)
-		if i == len(digipeaters)-1 {
-			encodedDigi[6] |= 0x01 // Mark the last digipeater
-		}
-		frame.Write(encodedDigi)
-	}
-
-	frame.WriteByte(0x03)
-
-	frame.WriteByte(0xF0)
-
-	frame.WriteString(infoField)
-
-	fcs := crc16Ccitt(frame.Bytes())
-	binary.Write(&frame, binary.LittleEndian, fcs)
-
-	return frame.Bytes()
-}
-
-func parseCallsign(callsign string) (string, int) {
-	parts := strings.Split(callsign, "-")
-	if len(parts) == 2 {
-		return parts[0], int(parts[1][0] - '0')
-	}
-	return callsign, 0
-}
-
-func parseAprsString(aprsString string) (string, string, []string, string) {
-	parts := strings.Split(aprsString, ">")
-	source := parts[0]
-
-	rest := strings.Split(parts[1], ":")
-	pathParts := strings.Split(rest[0], ",")
-	destination := pathParts[0]
-
-	var digipeaters []string
-	if len(pathParts) > 1 {
-		digipeaters = pathParts[1:]
-	}
-
-	infoField := rest[1]
-	return source, destination, digipeaters, infoField
-}
-
-// Unit test for CRC-16-CCITT calculation
-func TestCrc16Ccitt(t *testing.T) {
-	data := []byte("123456789")
-	expectedCrc := uint16(0x29B1)
-	calculatedCrc := crc16Ccitt(data)
-	if calculatedCrc != expectedCrc {
-		t.Errorf("CRC-16-CCITT calculation failed, expected %X but got %X", expectedCrc, calculatedCrc)
-	}
-}
-
-func ax25ToAFSK(frame []byte) []float32 {
-	var afskSignal []float32
-	var phase float64
-	markIncrement := TwoPi * MarkFrequency / SampleRate
-	spaceIncrement := TwoPi * SpaceFrequency / SampleRate
-
-	for _, byteValue := range frame {
-		for bit := 0; bit < 8; bit++ {
-			if byteValue&(0x80>>bit) != 0 {
-				// Mark (1200 Hz)
-				for i := 0; i < SamplesPerBaud; i++ {
-					afskSignal = append(afskSignal, Amplitude*float32(math.Sin(phase)))
-					phase += markIncrement
-					if phase >= TwoPi {
-						phase -= TwoPi
-					}
-				}
-			} else {
-				// Space (2200 Hz)
-				for i := 0; i < SamplesPerBaud; i++ {
-					afskSignal = append(afskSignal, Amplitude*float32(math.Sin(phase)))
-					phase += spaceIncrement
-					if phase >= TwoPi {
-						phase -= TwoPi
-					}
-				}
+			for j := 0; j < samplesPerBit; j++ {
+				sample := float32(math.Sin(currentPhase))
+				signal = append(signal, sample*Volume)
+				currentPhase = math.Mod(currentPhase+phaseIncrement, TwoPi)
 			}
 		}
 	}
 
 	voxTone := generateVoxTone()
+	completeWave := append(voxTone, signal...)
 
-	completeWave := append(voxTone, afskSignal...)
-
-	return completeWave
+	return normalizeSignal(completeWave)
 }
 
 func generateVoxTone() []float32 {
@@ -407,11 +380,8 @@ func generateVoxTone() []float32 {
 	var phase float64
 
 	for i := 0; i < samples; i++ {
-		voxSignal[i] = Amplitude * float32(math.Sin(phase))
-		phase += phaseIncrement
-		if phase >= TwoPi {
-			phase -= TwoPi
-		}
+		voxSignal[i] = Volume * float32(math.Sin(phase))
+		phase = math.Mod(phase+phaseIncrement, TwoPi)
 	}
 
 	silentDelay := generateSilentDelay()
@@ -425,4 +395,65 @@ func generateSilentDelay() []float32 {
 	samples := int(DelayDuration * SampleRate)
 	silentSignal := make([]float32, samples)
 	return silentSignal
+}
+
+func normalizeSignal(signal []float32) []float32 {
+	maxAmplitude := float32(0)
+	for _, sample := range signal {
+		if math.Abs(float64(sample)) > float64(maxAmplitude) {
+			maxAmplitude = float32(math.Abs(float64(sample)))
+		}
+	}
+	if maxAmplitude > 0 {
+		for i := range signal {
+			signal[i] /= maxAmplitude
+		}
+	}
+	return signal
+}
+
+func isLittleEndian() bool {
+	var i int32 = 0x01020304
+	u := (*[4]byte)(unsafe.Pointer(&i))
+	return u[0] == 0x04
+}
+
+func (s *SoundcardCapture) displayFFT(signal []float32) {
+	// Convert signal to complex128 for FFT processing
+	complexSignal := make([]complex128, len(signal))
+	for i, v := range signal {
+		complexSignal[i] = complex(float64(v), 0)
+	}
+
+	// Perform FFT
+	fftResult := fft.FFT(complexSignal)
+
+	// Compute the magnitudes of the FFT result
+	magnitudes := make(plotter.XYs, len(fftResult)/2)
+	for i := 0; i < len(fftResult)/2; i++ {
+		magnitudes[i].X = float64(i) * float64(SampleRate) / float64(len(signal))
+		magnitudes[i].Y = cmplx.Abs(fftResult[i])
+	}
+
+	// Plot the magnitudes
+	p := plot.New()
+
+	p.Title.Text = "FFT of AFSK Signal"
+	p.X.Label.Text = "Frequency (Hz)"
+	p.Y.Label.Text = "Magnitude"
+
+	plotData, err := plotter.NewLine(magnitudes)
+	if err != nil {
+		s.logger.Error("Failed to create plot data: ", err)
+		return
+	}
+
+	p.Add(plotData)
+
+	if err := p.Save(10*vg.Inch, 4*vg.Inch, "fft.png"); err != nil {
+		s.logger.Error("Failed to save plot: ", err)
+		return
+	}
+
+	fmt.Println("FFT plot saved to fft.png")
 }
