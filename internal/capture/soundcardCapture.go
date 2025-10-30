@@ -8,6 +8,7 @@ import (
 	"math/cmplx"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -36,6 +37,8 @@ type SoundcardCapture struct {
 	logger          *log.Logger
 	outputChan      chan []byte
 	stationCallsign string
+	txBuffer        []float32
+	txMu            sync.Mutex
 }
 
 const (
@@ -122,49 +125,63 @@ func (s *SoundcardCapture) Start() error {
 	}
 	defer portaudio.Terminate()
 
-	audioBuffer := make([]float32, s.BufferSize)
+    var audioBuffer []float32
 
-	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
-		copy(audioBuffer, in)
+    go func() {
+        for msg := range s.sendChannel {
+            ax25Packet, err := s.aprsToAx25(msg)
+            if err != nil {
+                s.logger.Error("Failed to convert APRS frame: ", err)
+                continue
+            }
 
-		go func() {
-			bytes, err := s.float32ToBytes(audioBuffer)
-			if err != nil {
-				s.logger.Error("Error converting float32 to bytes: ", err)
-			}
+            wave, err := generateAFSK(ax25Packet)
+            if err != nil {
+                s.logger.Error("Failed to generate AFSK audio: ", err)
+                continue
+            }
 
-			s.outputChan <- bytes
-		}()
+            s.txMu.Lock()
+            s.txBuffer = append(s.txBuffer, wave...)
+            s.txMu.Unlock()
+        }
+    }()
 
-		select {
-		case msg := <-s.sendChannel:
-			ax25Packet, err := s.aprsToAx25(msg)
-			if err != nil {
-				s.logger.Error("Failed to convert APRS frame: ", err)
-				for i := range out {
-					out[i] = 0
-				}
-				return
-			}
+    stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
+        if len(audioBuffer) != len(in) {
+            audioBuffer = make([]float32, len(in))
+        }
+        copy(audioBuffer, in)
 
-			wave, err := generateAFSK(ax25Packet)
-			if err != nil {
-				s.logger.Error("Failed to generate AFSK audio: ", err)
-				for i := range out {
-					out[i] = 0
-				}
-				return
-			}
+        go func(data []float32) {
+            bytes, err := s.float32ToBytes(data)
+            if err != nil {
+                s.logger.Error("Error converting float32 to bytes: ", err)
+                return
+            }
 
-			// s.displayFFT(wave)
-			n := copy(out, wave)
+            s.outputChan <- bytes
+        }(append([]float32(nil), audioBuffer...))
 
-			for i := n; i < len(out); i++ {
-				out[i] = 0
-			}
-			s.logger.Debug("Output played to soundcard.")
-		}
-	})
+        s.txMu.Lock()
+        if len(s.txBuffer) > 0 {
+            n := copy(out, s.txBuffer)
+            if n < len(s.txBuffer) {
+                s.txBuffer = s.txBuffer[n:]
+            } else {
+                s.txBuffer = s.txBuffer[:0]
+            }
+            for i := n; i < len(out); i++ {
+                out[i] = 0
+            }
+            s.logger.Debug("Output played to soundcard.")
+        } else {
+            for i := range out {
+                out[i] = 0
+            }
+        }
+        s.txMu.Unlock()
+    })
 	if err != nil {
 		return err
 	}

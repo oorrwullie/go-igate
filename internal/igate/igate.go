@@ -2,6 +2,7 @@ package igate
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oorrwullie/go-igate/internal/aprs"
@@ -119,15 +120,16 @@ func (i *IGate) startBeacon() error {
 	ticker := time.NewTicker(i.cfg.Beacon.Interval)
 
 	sendBeacon := func(toAprsIs, toRf bool) {
-		msg := fmt.Sprintf("%s>BEACON:%s", i.callSign, i.cfg.Beacon.Comment)
-		i.logger.Info(msg)
-
 		if toAprsIs {
-			i.Aprsis.Conn.PrintfLine(msg)
+			isFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.ISPath, i.cfg.Beacon.Comment)
+			i.logger.Info("Beacon -> APRS-IS: ", isFrame)
+			i.Aprsis.Conn.PrintfLine(isFrame)
 		}
 
 		if toRf && i.enableTx && i.tx != nil {
-			go i.tx.Send(msg)
+			rfFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.RFPath, i.cfg.Beacon.Comment)
+			i.logger.Info("Beacon -> RF: ", rfFrame)
+			go i.tx.Send(rfFrame)
 		}
 	}
 
@@ -148,4 +150,22 @@ func (i *IGate) startBeacon() error {
 	}()
 
 	return nil
+}
+
+func buildBeaconFrame(callSign, path, comment string) string {
+	path = strings.TrimSpace(path)
+
+	var builder strings.Builder
+	builder.WriteString(callSign)
+	builder.WriteString(">APRS")
+
+	if path != "" {
+		builder.WriteString(",")
+		builder.WriteString(path)
+	}
+
+	builder.WriteString(":")
+	builder.WriteString(comment)
+
+	return builder.String()
 }

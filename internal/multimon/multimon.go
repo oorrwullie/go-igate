@@ -95,11 +95,13 @@ func (m *Multimon) Start() error {
 				if exists := m.cache.Set(msg, time.Now()); !exists {
 					m.logger.Info("packet received: ", msg)
 
+					normalized := strings.TrimPrefix(msg, "APRS: ")
+
 					// if m.tx != nil {
 					// 	fmt.Println("initiating tx backoff...")
 					// 	go m.tx.RxBackoff()
 					// }
-					m.pubsub.Publish(msg)
+					m.pubsub.Publish(normalized)
 				} else {
 					m.logger.Info("Duplicate packet received: ", msg)
 				}

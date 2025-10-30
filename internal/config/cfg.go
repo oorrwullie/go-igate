@@ -49,6 +49,8 @@ type (
 		Enabled  bool
 		Interval time.Duration
 		Comment  string
+		RFPath   string `yaml:"rf-path"`
+		ISPath   string `yaml:"is-path"`
 	}
 
 	AprsIs struct {
@@ -96,6 +98,14 @@ func GetConfig() (Config, error) {
 			`^TRACE[1-7]-[1-7]$`,
 			`^HOP[1-7]-[1-7]$`,
 		}
+	}
+
+	if cfg.IGate.Beacon.RFPath == "" {
+		cfg.IGate.Beacon.RFPath = "WIDE1-1"
+	}
+
+	if cfg.IGate.Beacon.ISPath == "" {
+		cfg.IGate.Beacon.ISPath = "TCPIP*"
 	}
 
 	return cfg, nil
