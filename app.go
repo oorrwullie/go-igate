@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/oorrwullie/go-igate/internal/cache"
 	"github.com/oorrwullie/go-igate/internal/capture"
@@ -54,6 +55,13 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	captureDevice, err := capture.New(cfg, captureOutputChan, logger)
 	if err != nil {
 		return nil, fmt.Errorf("Error creating capture device: %v", err)
+	}
+	if captureDevice == nil {
+		return nil, fmt.Errorf("Error creating capture device: capture backend initialization returned nil; verify the SDR or soundcard settings")
+	}
+
+	if isNilCapture(captureDevice) {
+		return nil, fmt.Errorf("Error creating capture device: %T returned a nil pointer; verify the SDR or soundcard settings", captureDevice)
 	}
 
 	err = captureDevice.Start()
@@ -186,4 +194,18 @@ func (d *DigiGate) Run() error {
 
 func (d *DigiGate) Stop() {
 	d.stop <- true
+}
+
+func isNilCapture(c capture.Capture) bool {
+	val := reflect.ValueOf(c)
+	if !val.IsValid() {
+		return true
+	}
+
+	switch val.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Interface, reflect.Slice, reflect.Func, reflect.Chan:
+		return val.IsNil()
+	default:
+		return false
+	}
 }
