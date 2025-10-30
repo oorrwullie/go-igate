@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"math"
 	"math/cmplx"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
 
+	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
 
@@ -48,6 +50,8 @@ const (
 	VOXFrequency   = 1000.0
 	VOXDuration    = 0.1
 	DelayDuration  = 0.4
+	PreambleFlags  = 16
+	TailFlags      = 2
 )
 
 func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.Logger) (*SoundcardCapture, error) {
@@ -134,8 +138,23 @@ func (s *SoundcardCapture) Start() error {
 
 		select {
 		case msg := <-s.sendChannel:
-			ax25Packet := s.aprsToAx25(msg)
-			wave := generateAFSK(ax25Packet)
+			ax25Packet, err := s.aprsToAx25(msg)
+			if err != nil {
+				s.logger.Error("Failed to convert APRS frame: ", err)
+				for i := range out {
+					out[i] = 0
+				}
+				return
+			}
+
+			wave, err := generateAFSK(ax25Packet)
+			if err != nil {
+				s.logger.Error("Failed to generate AFSK audio: ", err)
+				for i := range out {
+					out[i] = 0
+				}
+				return
+			}
 
 			// s.displayFFT(wave)
 			n := copy(out, wave)
@@ -263,65 +282,96 @@ func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *
 	return inputDevice, outputDevice, nil
 }
 
-func (s *SoundcardCapture) aprsToAx25(aprs string) []byte {
-	parts := strings.Split(aprs, ">")
-	if len(parts) != 2 {
-		s.logger.Error("Invalid APRS string format")
-		return nil
+func (s *SoundcardCapture) aprsToAx25(raw string) ([]byte, error) {
+	packet, err := aprs.ParsePacket(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parse APRS packet: %w", err)
 	}
 
-	source := parts[0]
-	rest := strings.Split(parts[1], ":")
-	destination := strings.Split(rest[0], ",")[0]
-	viaPath := strings.Split(rest[0], ",")[1:]
-	infoField := rest[1]
+	addresses := make([]string, 0, 2+len(packet.Path))
+	addresses = append(addresses, strings.TrimSpace(packet.Dst))
+	addresses = append(addresses, strings.TrimSpace(packet.Src))
 
-	var buffer bytes.Buffer
-	buffer.WriteByte(0x7E) // Start flag
-	buffer.Write(encodeCallsign(destination))
-	buffer.Write(encodeCallsign(source))
-
-	for i, via := range viaPath {
-		last := (i == len(viaPath)-1)
-		buffer.Write(encodeCallsign(via, last))
+	for _, path := range packet.Path {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		addresses = append(addresses, path)
 	}
 
-	buffer.WriteByte(0x03) // Control field
-	buffer.WriteByte(0xF0) // Protocol ID
-	buffer.WriteString(infoField)
-
-	frame := buffer.Bytes()
-	fcs := computeFCS(frame[1:]) // Compute FCS (Frame Check Sequence)
-
-	// Append FCS in the correct byte order
-	if isLittleEndian() {
-		binary.Write(&buffer, binary.LittleEndian, fcs)
-	} else {
-		binary.Write(&buffer, binary.BigEndian, fcs)
+	if len(addresses) < 2 {
+		return nil, fmt.Errorf("invalid AX.25 address set generated from %q", raw)
 	}
-	buffer.WriteByte(0x7E) // End flag
 
-	return buffer.Bytes()
+	var addr bytes.Buffer
+	for i, address := range addresses {
+		encoded, err := encodeAX25Address(address, i == len(addresses)-1)
+		if err != nil {
+			return nil, fmt.Errorf("encode AX.25 address %q: %w", address, err)
+		}
+		addr.Write(encoded)
+	}
+
+	frame := addr.Bytes()
+	frame = append(frame, 0x03) // UI frame
+	frame = append(frame, 0xF0) // No layer 3 protocol
+	frame = append(frame, []byte(packet.Payload)...)
+
+	fcs := computeFCS(frame)
+	frame = append(frame, byte(fcs&0xFF), byte((fcs>>8)&0xFF))
+
+	return frame, nil
 }
 
-func encodeCallsign(callsign string, last ...bool) []byte {
-	callsign = strings.ToUpper(callsign)
-	addr := make([]byte, 7)
-	for i := 0; i < 6 && i < len(callsign); i++ {
-		addr[i] = callsign[i] << 1
+func encodeAX25Address(address string, last bool) ([]byte, error) {
+	repeated := strings.HasSuffix(address, "*")
+	if repeated {
+		address = strings.TrimSuffix(address, "*")
 	}
-	if len(callsign) < 6 {
-		addr[len(callsign)] = ' ' << 1
-	}
+
+	base := address
 	ssid := 0
-	if len(callsign) > 6 {
-		ssid = int(callsign[6] - '0')
+	if idx := strings.Index(base, "-"); idx != -1 {
+		ssidPart := base[idx+1:]
+		base = base[:idx]
+
+		if ssidPart != "" {
+			parsed, err := strconv.Atoi(ssidPart)
+			if err != nil {
+				return nil, fmt.Errorf("invalid SSID in %q", address)
+			}
+			if parsed < 0 || parsed > 15 {
+				return nil, fmt.Errorf("SSID out of range in %q", address)
+			}
+			ssid = parsed
+		}
 	}
-	addr[6] = byte((ssid&0x0F)<<1 | 0x60)
-	if len(last) > 0 && last[0] {
-		addr[6] |= 0x01
+
+	base = strings.ToUpper(strings.TrimSpace(base))
+	if len(base) == 0 || len(base) > 6 {
+		return nil, fmt.Errorf("invalid callsign %q", address)
 	}
-	return addr
+
+	encoded := make([]byte, 7)
+	for i := 0; i < 6; i++ {
+		var c byte = ' '
+		if i < len(base) {
+			c = base[i]
+		}
+		encoded[i] = c << 1
+	}
+
+	ssidByte := byte(0x60 | ((ssid & 0x0F) << 1))
+	if repeated {
+		ssidByte |= 0x80
+	}
+	if last {
+		ssidByte |= 0x01
+	}
+	encoded[6] = ssidByte
+
+	return encoded, nil
 }
 
 func computeFCS(frame []byte) uint16 {
@@ -342,30 +392,23 @@ func computeFCS(frame []byte) uint16 {
 	return ^fcs
 }
 
-func generateAFSK(packet []byte) []float32 {
-	samplesPerBit := int(SampleRate / BaudRate)
-	signal := make([]float32, 0, len(packet)*8*samplesPerBit)
-	currentPhase := 0.0
-
-	// Constants for phase increments
-	phaseIncrement1200 := 2.0 * math.Pi * Tone1200Hz / SampleRate
-	phaseIncrement2200 := 2.0 * math.Pi * Tone2200Hz / SampleRate
-
-	for _, byteVal := range packet {
-		for i := 0; i < 8; i++ {
-			bit := (byteVal >> (7 - i)) & 0x01
-			phaseIncrement := phaseIncrement2200
-			if bit == 1 {
-				phaseIncrement = phaseIncrement1200
-			}
-
-			for j := 0; j < samplesPerBit; j++ {
-				sample := float32(math.Sin(currentPhase))
-				signal = append(signal, sample*Volume)
-				currentPhase = math.Mod(currentPhase+phaseIncrement, TwoPi)
-			}
-		}
+func generateAFSK(frame []byte) ([]float32, error) {
+	if len(frame) == 0 {
+		return nil, fmt.Errorf("empty AX.25 frame")
 	}
+
+	bits := make([]int, 0, (len(frame)+PreambleFlags+TailFlags)*8)
+	for i := 0; i < PreambleFlags; i++ {
+		bits = appendFlag(bits)
+	}
+
+	bits = append(bits, bitStuff(frame)...)
+
+	for i := 0; i < TailFlags; i++ {
+		bits = appendFlag(bits)
+	}
+
+	signal := bitsToAFSK(bits)
 
 	voxTone := generateVoxTone()
 	wave := append(voxTone, signal...)
@@ -373,7 +416,85 @@ func generateAFSK(packet []byte) []float32 {
 	completeWave := removeDCOffset(wave)
 	limitedWave := applyLimiter(completeWave, 0.9)
 
-	return normalizeSignal(limitedWave)
+	return normalizeSignal(limitedWave), nil
+}
+
+func appendFlag(bits []int) []int {
+	return appendByteLSB(bits, 0x7E)
+}
+
+func appendByteLSB(bits []int, value byte) []int {
+	for i := 0; i < 8; i++ {
+		bits = append(bits, int((value>>uint(i))&0x01))
+	}
+	return bits
+}
+
+func bitStuff(frame []byte) []int {
+	bits := make([]int, 0, len(frame)*8)
+	ones := 0
+
+	for _, b := range frame {
+		for i := 0; i < 8; i++ {
+			bit := int((b >> uint(i)) & 0x01)
+			bits = append(bits, bit)
+
+			if bit == 1 {
+				ones++
+				if ones == 5 {
+					bits = append(bits, 0)
+					ones = 0
+				}
+			} else {
+				ones = 0
+			}
+		}
+	}
+
+	return bits
+}
+
+func bitsToAFSK(bits []int) []float32 {
+	if len(bits) == 0 {
+		return nil
+	}
+
+	wave := make([]float32, 0, int(float64(len(bits))*float64(SampleRate)/BaudRate))
+	var (
+		samplesPerBit = float64(SampleRate) / BaudRate
+		remainder     float64
+		phase         float64
+		currentMark   = true
+	)
+
+	for _, bit := range bits {
+		if bit == 0 {
+			currentMark = !currentMark
+		}
+
+		freq := Tone2200Hz
+		if currentMark {
+			freq = Tone1200Hz
+		}
+
+		phaseIncrement := TwoPi * freq / SampleRate
+		totalSamples := samplesPerBit + remainder
+		sampleCount := int(math.Floor(totalSamples))
+		if sampleCount <= 0 {
+			sampleCount = 1
+		}
+		remainder = totalSamples - float64(sampleCount)
+
+		for i := 0; i < sampleCount; i++ {
+			wave = append(wave, Volume*float32(math.Sin(phase)))
+			phase += phaseIncrement
+			if phase >= TwoPi {
+				phase -= TwoPi
+			}
+		}
+	}
+
+	return wave
 }
 
 func generateVoxTone() []float32 {
