@@ -118,18 +118,28 @@ func (i *IGate) startBeacon() error {
 
 	ticker := time.NewTicker(i.cfg.Beacon.Interval)
 
-	// Send initial beacon
-	b := fmt.Sprintf("%s>BEACON:%s", i.callSign, i.cfg.Beacon.Comment)
-	i.logger.Info(b)
-	i.Aprsis.Conn.PrintfLine(b)
+	sendBeacon := func(toAprsIs, toRf bool) {
+		msg := fmt.Sprintf("%s>BEACON:%s", i.callSign, i.cfg.Beacon.Comment)
+		i.logger.Info(msg)
+
+		if toAprsIs {
+			i.Aprsis.Conn.PrintfLine(msg)
+		}
+
+		if toRf && i.enableTx && i.tx != nil {
+			go i.tx.Send(msg)
+		}
+	}
+
+	// Send initial beacon only via RF
+	sendBeacon(false, true)
 
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				b := fmt.Sprintf("%s>BEACON:%s", i.callSign, i.cfg.Beacon.Comment)
-				i.logger.Info(b)
-				i.Aprsis.Conn.PrintfLine(b)
+				// Periodic beacons go to APRS-IS only
+				sendBeacon(true, false)
 			case <-i.stop:
 				ticker.Stop()
 				return
