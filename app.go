@@ -37,6 +37,7 @@ const minPacketSize = 35
 func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	var (
 		tx                *transmitter.Transmitter
+		txHandle          *transmitter.Tx
 		ig                *igate.IGate
 		dp                *digipeater.Digipeater
 		captureOutputChan = make(chan []byte, 10)
@@ -72,25 +73,32 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		if err != nil {
 			return nil, fmt.Errorf("Error creating transmitter: %v", err)
 		}
+		txHandle = tx.Tx
 	}
 
 	appCache := cache.NewCache(cfg.CacheSize, ".cache.json")
 
-	multimon = multimonpackage.New(cfg.Multimon, captureOutputChan, ps, appCache, tx.Tx, logger)
+	multimon = multimonpackage.New(cfg.Multimon, captureOutputChan, ps, appCache, txHandle, logger)
 	err = multimon.Start()
 	if err != nil {
 		return nil, fmt.Errorf("Error starting multimon: %v", err)
 	}
 
 	if cfg.IGate.Enabled {
-		ig, err = igate.New(cfg.IGate, ps, cfg.Transmitter.Enabled, tx.Tx, cfg.StationCallsign, logger)
+		ig, err = igate.New(cfg.IGate, ps, cfg.Transmitter.Enabled, txHandle, cfg.StationCallsign, logger)
 		if err != nil {
 			return nil, fmt.Errorf("Error creating IGate client: %v", err)
 		}
 	}
 
 	if cfg.DigipeaterEnabled {
-		dp = digipeater.New(tx.Tx, ps, cfg.StationCallsign, logger)
+		if txHandle == nil {
+			return nil, fmt.Errorf("digipeater enabled but transmitter is disabled")
+		}
+		dp, err = digipeater.New(txHandle, ps, cfg.StationCallsign, cfg.Digipeater, logger)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating digipeater: %v", err)
+		}
 	}
 
 	dg := &DigiGate{

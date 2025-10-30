@@ -15,6 +15,7 @@ type (
 		Transmitter         Transmitter `yaml:"transmitter"`
 		IGate               IGate       `yaml:"igate"`
 		DigipeaterEnabled   bool        `yaml:"enable-digipeater"`
+		Digipeater          Digipeater  `yaml:"digipeater"`
 		CacheSize           int         `yaml:"cache-size"`
 		StationCallsign     string      `yaml:"station-callsign"`
 		SoundcardInputName  string      `yaml:"soundcard-input-name"`
@@ -60,6 +61,12 @@ type (
 	Transmitter struct {
 		Enabled bool `yaml:"enabled"`
 	}
+
+	Digipeater struct {
+		AliasPatterns []string      `yaml:"alias-patterns"`
+		WidePatterns  []string      `yaml:"wide-patterns"`
+		DedupeWindow  time.Duration `yaml:"dedupe-window"`
+	}
 )
 
 func GetConfig() (Config, error) {
@@ -73,6 +80,22 @@ func GetConfig() (Config, error) {
 	err = yaml.Unmarshal(f, &cfg)
 	if err != nil {
 		return cfg, fmt.Errorf("Could not parse config file: %v", err)
+	}
+
+	if cfg.Digipeater.DedupeWindow == 0 {
+		cfg.Digipeater.DedupeWindow = 30 * time.Second
+	}
+
+	if len(cfg.Digipeater.AliasPatterns) == 0 {
+		cfg.Digipeater.AliasPatterns = []string{`^WIDE1-1$`}
+	}
+
+	if len(cfg.Digipeater.WidePatterns) == 0 {
+		cfg.Digipeater.WidePatterns = []string{
+			`^WIDE[1-7]-[1-7]$`,
+			`^TRACE[1-7]-[1-7]$`,
+			`^HOP[1-7]-[1-7]$`,
+		}
 	}
 
 	return cfg, nil

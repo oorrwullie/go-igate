@@ -9,6 +9,16 @@ station-callsign: ""
 cache-size: 1000
 # set to true if you want to use the digipeater
 enable-digipeater: true
+# digipeater configuration mimics Direwolf defaults; adjust for local policy
+digipeater:
+  alias-patterns:
+    - "^WIDE1-1$"
+  wide-patterns:
+    - "^WIDE[1-7]-[1-7]$"
+    - "^TRACE[1-7]-[1-7]$"
+    - "^HOP[1-7]-[1-7]$"
+  # drop duplicates seen during this window (e.g. 30s)
+  dedupe-window: 30s
 # soundcard-input-name is the name of the device to use for audio input. If empty, the system default device will be used.
 soundcard-input-name: ""
 # soundcard-output-name is the name of the device to use for audio output. If empty, the system default device will be used.
