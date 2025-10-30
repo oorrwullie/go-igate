@@ -52,6 +52,10 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	}
 
 	captureDevice, err := capture.New(cfg, captureOutputChan, logger)
+	if err != nil {
+		return nil, fmt.Errorf("Error creating capture device: %v", err)
+	}
+
 	err = captureDevice.Start()
 	if err != nil {
 		return nil, fmt.Errorf("Error starting SDR: %v", err)
