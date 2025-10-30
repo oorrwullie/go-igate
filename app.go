@@ -61,16 +61,24 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		return nil, fmt.Errorf("Error starting SDR: %v", err)
 	}
 
+	deviceType := captureDevice.Type()
+
 	if cfg.Transmitter.Enabled {
-		if captureDevice.Type() != "Soundcard" {
+		if sc, ok := captureDevice.(*capture.SoundcardCapture); ok {
+			if sc == nil {
+				return nil, fmt.Errorf("capture device reported type %q but returned a nil implementation", deviceType)
+			}
+			soundcard = sc
+		} else {
+			if deviceType == "Soundcard" {
+				return nil, fmt.Errorf("capture device reported type %q but is %T", deviceType, captureDevice)
+			}
+
 			soundcard, err = capture.NewSoundcardCapture(cfg, captureOutputChan, logger)
 			if err != nil {
 				return nil, fmt.Errorf("Error creating soundcard capture: %v", err)
 			}
 			go soundcard.Start()
-
-		} else {
-			soundcard = captureDevice.(*capture.SoundcardCapture)
 		}
 
 		tx, err = transmitter.New(soundcard, logger)
