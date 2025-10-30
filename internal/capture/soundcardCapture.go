@@ -50,9 +50,6 @@ const (
 	SamplesPerBaud = SampleRate / BaudRate
 	Volume         = 0.5
 	TwoPi          = 2.0 * math.Pi
-	VOXFrequency   = 1000.0
-	VOXDuration    = 0.1
-	DelayDuration  = 0.4
 	PreambleFlags  = 16
 	TailFlags      = 2
 )
@@ -125,63 +122,63 @@ func (s *SoundcardCapture) Start() error {
 	}
 	defer portaudio.Terminate()
 
-    var audioBuffer []float32
+	var audioBuffer []float32
 
-    go func() {
-        for msg := range s.sendChannel {
-            ax25Packet, err := s.aprsToAx25(msg)
-            if err != nil {
-                s.logger.Error("Failed to convert APRS frame: ", err)
-                continue
-            }
+	go func() {
+		for msg := range s.sendChannel {
+			ax25Packet, err := s.aprsToAx25(msg)
+			if err != nil {
+				s.logger.Error("Failed to convert APRS frame: ", err)
+				continue
+			}
 
-            wave, err := generateAFSK(ax25Packet)
-            if err != nil {
-                s.logger.Error("Failed to generate AFSK audio: ", err)
-                continue
-            }
+			wave, err := generateAFSK(ax25Packet)
+			if err != nil {
+				s.logger.Error("Failed to generate AFSK audio: ", err)
+				continue
+			}
 
-            s.txMu.Lock()
-            s.txBuffer = append(s.txBuffer, wave...)
-            s.txMu.Unlock()
-        }
-    }()
+			s.txMu.Lock()
+			s.txBuffer = append(s.txBuffer, wave...)
+			s.txMu.Unlock()
+		}
+	}()
 
-    stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
-        if len(audioBuffer) != len(in) {
-            audioBuffer = make([]float32, len(in))
-        }
-        copy(audioBuffer, in)
+	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
+		if len(audioBuffer) != len(in) {
+			audioBuffer = make([]float32, len(in))
+		}
+		copy(audioBuffer, in)
 
-        go func(data []float32) {
-            bytes, err := s.float32ToBytes(data)
-            if err != nil {
-                s.logger.Error("Error converting float32 to bytes: ", err)
-                return
-            }
+		go func(data []float32) {
+			bytes, err := s.float32ToBytes(data)
+			if err != nil {
+				s.logger.Error("Error converting float32 to bytes: ", err)
+				return
+			}
 
-            s.outputChan <- bytes
-        }(append([]float32(nil), audioBuffer...))
+			s.outputChan <- bytes
+		}(append([]float32(nil), audioBuffer...))
 
-        s.txMu.Lock()
-        if len(s.txBuffer) > 0 {
-            n := copy(out, s.txBuffer)
-            if n < len(s.txBuffer) {
-                s.txBuffer = s.txBuffer[n:]
-            } else {
-                s.txBuffer = s.txBuffer[:0]
-            }
-            for i := n; i < len(out); i++ {
-                out[i] = 0
-            }
-            s.logger.Debug("Output played to soundcard.")
-        } else {
-            for i := range out {
-                out[i] = 0
-            }
-        }
-        s.txMu.Unlock()
-    })
+		s.txMu.Lock()
+		if len(s.txBuffer) > 0 {
+			n := copy(out, s.txBuffer)
+			if n < len(s.txBuffer) {
+				s.txBuffer = s.txBuffer[n:]
+			} else {
+				s.txBuffer = s.txBuffer[:0]
+			}
+			for i := n; i < len(out); i++ {
+				out[i] = 0
+			}
+			s.logger.Debug("Output played to soundcard.")
+		} else {
+			for i := range out {
+				out[i] = 0
+			}
+		}
+		s.txMu.Unlock()
+	})
 	if err != nil {
 		return err
 	}
@@ -426,11 +423,7 @@ func generateAFSK(frame []byte) ([]float32, error) {
 	}
 
 	signal := bitsToAFSK(bits)
-
-	voxTone := generateVoxTone()
-	wave := append(voxTone, signal...)
-
-	completeWave := removeDCOffset(wave)
+	completeWave := removeDCOffset(signal)
 	limitedWave := applyLimiter(completeWave, 0.9)
 
 	return normalizeSignal(limitedWave), nil
@@ -512,30 +505,6 @@ func bitsToAFSK(bits []int) []float32 {
 	}
 
 	return wave
-}
-
-func generateVoxTone() []float32 {
-	samples := int(VOXDuration * SampleRate)
-	voxSignal := make([]float32, samples)
-	phaseIncrement := TwoPi * VOXFrequency / SampleRate
-	var phase float64
-
-	for i := 0; i < samples; i++ {
-		voxSignal[i] = Volume * float32(math.Sin(phase))
-		phase = math.Mod(phase+phaseIncrement, TwoPi)
-	}
-
-	silentDelay := generateSilentDelay()
-
-	voxSignal = append(voxSignal, silentDelay...)
-
-	return voxSignal
-}
-
-func generateSilentDelay() []float32 {
-	samples := int(DelayDuration * SampleRate)
-	silentSignal := make([]float32, samples)
-	return silentSignal
 }
 
 func normalizeSignal(signal []float32) []float32 {
