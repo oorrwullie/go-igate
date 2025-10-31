@@ -28,6 +28,7 @@ To run Go-iGate, the following are required.
 * An RTL-SDR compatible device.
 * [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr)
 * [multimon-ng](https://github.com/EliasOenal/multimon-ng)
+* [alsa-utils](https://alsa-project.org/wiki/Main_Page) (`aplay`) when using the soundcard transmitter
  
 - Go version go1.22.5
 

@@ -15,6 +15,7 @@ type (
 		Transmitter         Transmitter `yaml:"transmitter"`
 		IGate               IGate       `yaml:"igate"`
 		DigipeaterEnabled   bool        `yaml:"enable-digipeater"`
+		Digipeater          Digipeater  `yaml:"digipeater"`
 		CacheSize           int         `yaml:"cache-size"`
 		StationCallsign     string      `yaml:"station-callsign"`
 		SoundcardInputName  string      `yaml:"soundcard-input-name"`
@@ -48,6 +49,8 @@ type (
 		Enabled  bool
 		Interval time.Duration
 		Comment  string
+		RFPath   string `yaml:"rf-path"`
+		ISPath   string `yaml:"is-path"`
 	}
 
 	AprsIs struct {
@@ -58,12 +61,22 @@ type (
 	}
 
 	Transmitter struct {
-		Enabled bool `yaml:"enabled"`
+		Enabled  bool          `yaml:"enabled"`
+		TxDelay  time.Duration `yaml:"tx-delay"`
+		TxTail   time.Duration `yaml:"tx-tail"`
+		UseAplay bool          `yaml:"use-aplay"`
+	}
+
+	Digipeater struct {
+		AliasPatterns []string      `yaml:"alias-patterns"`
+		WidePatterns  []string      `yaml:"wide-patterns"`
+		DedupeWindow  time.Duration `yaml:"dedupe-window"`
 	}
 )
 
 func GetConfig() (Config, error) {
 	var cfg Config
+	const defaultTxDelay = 300 * time.Millisecond
 
 	f, err := os.ReadFile("config.yml")
 	if err != nil {
@@ -73,6 +86,38 @@ func GetConfig() (Config, error) {
 	err = yaml.Unmarshal(f, &cfg)
 	if err != nil {
 		return cfg, fmt.Errorf("Could not parse config file: %v", err)
+	}
+
+	if cfg.Digipeater.DedupeWindow == 0 {
+		cfg.Digipeater.DedupeWindow = 30 * time.Second
+	}
+
+	if len(cfg.Digipeater.AliasPatterns) == 0 {
+		cfg.Digipeater.AliasPatterns = []string{`^WIDE1-1$`}
+	}
+
+	if len(cfg.Digipeater.WidePatterns) == 0 {
+		cfg.Digipeater.WidePatterns = []string{
+			`^WIDE[1-7]-[1-7]$`,
+			`^TRACE[1-7]-[1-7]$`,
+			`^HOP[1-7]-[1-7]$`,
+		}
+	}
+
+	if cfg.IGate.Beacon.RFPath == "" {
+		cfg.IGate.Beacon.RFPath = "WIDE1-1"
+	}
+
+	if cfg.IGate.Beacon.ISPath == "" {
+		cfg.IGate.Beacon.ISPath = "TCPIP*"
+	}
+
+	if cfg.Transmitter.TxDelay <= 0 {
+		cfg.Transmitter.TxDelay = defaultTxDelay
+	}
+
+	if cfg.Transmitter.TxTail <= 0 {
+		cfg.Transmitter.TxTail = 100 * time.Millisecond
 	}
 
 	return cfg, nil

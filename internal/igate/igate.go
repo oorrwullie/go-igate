@@ -2,6 +2,7 @@ package igate
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oorrwullie/go-igate/internal/aprs"
@@ -118,18 +119,33 @@ func (i *IGate) startBeacon() error {
 
 	ticker := time.NewTicker(i.cfg.Beacon.Interval)
 
-	// Send initial beacon
-	b := fmt.Sprintf("%s>BEACON:%s", i.callSign, i.cfg.Beacon.Comment)
-	i.logger.Info(b)
-	i.Aprsis.Conn.PrintfLine(b)
+	sendBeacon := func(toAprsIs, toRf bool) {
+		if toAprsIs {
+			isFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.ISPath, i.cfg.Beacon.Comment)
+			i.logger.Info("Beacon -> APRS-IS: ", isFrame)
+			i.Aprsis.Conn.PrintfLine(isFrame)
+		}
+
+		if toRf && i.enableTx && i.tx != nil {
+			rfFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.RFPath, i.cfg.Beacon.Comment)
+			i.logger.Info("Beacon -> RF: ", rfFrame)
+			go func(msg string) {
+				const warmup = 2 * time.Second
+				time.Sleep(5 * time.Second)
+				i.tx.Send(msg)
+			}(rfFrame)
+		}
+	}
+
+	// Send initial beacon to both RF and APRS-IS
+	sendBeacon(true, true)
 
 	go func() {
 		for {
 			select {
 			case <-ticker.C:
-				b := fmt.Sprintf("%s>BEACON:%s", i.callSign, i.cfg.Beacon.Comment)
-				i.logger.Info(b)
-				i.Aprsis.Conn.PrintfLine(b)
+				// Periodic beacons go to APRS-IS only
+				sendBeacon(true, false)
 			case <-i.stop:
 				ticker.Stop()
 				return
@@ -138,4 +154,22 @@ func (i *IGate) startBeacon() error {
 	}()
 
 	return nil
+}
+
+func buildBeaconFrame(callSign, path, comment string) string {
+	path = strings.TrimSpace(path)
+
+	var builder strings.Builder
+	builder.WriteString(callSign)
+	builder.WriteString(">APRS")
+
+	if path != "" {
+		builder.WriteString(",")
+		builder.WriteString(path)
+	}
+
+	builder.WriteString(":")
+	builder.WriteString(comment)
+
+	return builder.String()
 }

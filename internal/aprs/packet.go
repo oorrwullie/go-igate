@@ -33,7 +33,7 @@ const (
 )
 
 func ParsePacket(p string) (*Packet, error) {
-	parts := strings.Split(p, ">")
+	parts := strings.SplitN(p, ">", 2)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid packet format")
 	}

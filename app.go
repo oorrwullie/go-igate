@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/oorrwullie/go-igate/internal/cache"
 	"github.com/oorrwullie/go-igate/internal/capture"
@@ -37,6 +38,7 @@ const minPacketSize = 35
 func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	var (
 		tx                *transmitter.Transmitter
+		txHandle          *transmitter.Tx
 		ig                *igate.IGate
 		dp                *digipeater.Digipeater
 		captureOutputChan = make(chan []byte, 10)
@@ -51,46 +53,73 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	}
 
 	captureDevice, err := capture.New(cfg, captureOutputChan, logger)
+	if err != nil {
+		return nil, fmt.Errorf("Error creating capture device: %v", err)
+	}
+	if captureDevice == nil {
+		return nil, fmt.Errorf("Error creating capture device: capture backend initialization returned nil; verify the SDR or soundcard settings")
+	}
+
+	if isNilCapture(captureDevice) {
+		return nil, fmt.Errorf("Error creating capture device: %T returned a nil pointer; verify the SDR or soundcard settings", captureDevice)
+	}
+
 	err = captureDevice.Start()
 	if err != nil {
 		return nil, fmt.Errorf("Error starting SDR: %v", err)
 	}
 
+	deviceType := captureDevice.Type()
+
 	if cfg.Transmitter.Enabled {
-		if captureDevice.Type() != "Soundcard" {
+		if sc, ok := captureDevice.(*capture.SoundcardCapture); ok {
+			if sc == nil {
+				return nil, fmt.Errorf("capture device reported type %q but returned a nil implementation", deviceType)
+			}
+			soundcard = sc
+		} else {
+			if deviceType == "Soundcard" {
+				return nil, fmt.Errorf("capture device reported type %q but is %T", deviceType, captureDevice)
+			}
+
 			soundcard, err = capture.NewSoundcardCapture(cfg, captureOutputChan, logger)
 			if err != nil {
 				return nil, fmt.Errorf("Error creating soundcard capture: %v", err)
 			}
 			go soundcard.Start()
-
-		} else {
-			soundcard = captureDevice.(*capture.SoundcardCapture)
 		}
 
 		tx, err = transmitter.New(soundcard, logger)
 		if err != nil {
 			return nil, fmt.Errorf("Error creating transmitter: %v", err)
 		}
+		txHandle = tx.Tx
 	}
 
 	appCache := cache.NewCache(cfg.CacheSize, ".cache.json")
 
-	multimon = multimonpackage.New(cfg.Multimon, captureOutputChan, ps, appCache, tx.Tx, logger)
+	multimon = multimonpackage.New(cfg.Multimon, captureOutputChan, ps, appCache, txHandle, logger)
 	err = multimon.Start()
 	if err != nil {
 		return nil, fmt.Errorf("Error starting multimon: %v", err)
 	}
 
 	if cfg.IGate.Enabled {
-		ig, err = igate.New(cfg.IGate, ps, cfg.Transmitter.Enabled, tx.Tx, cfg.StationCallsign, logger)
+		ig, err = igate.New(cfg.IGate, ps, cfg.Transmitter.Enabled, txHandle, cfg.StationCallsign, logger)
 		if err != nil {
 			return nil, fmt.Errorf("Error creating IGate client: %v", err)
 		}
 	}
 
 	if cfg.DigipeaterEnabled {
-		dp = digipeater.New(tx.Tx, ps, cfg.StationCallsign, logger)
+		if txHandle == nil {
+			logger.Warn("Digipeater enabled but transmitter is disabled; skipping digipeater")
+		} else {
+			dp, err = digipeater.New(txHandle, ps, cfg.StationCallsign, cfg.Digipeater, logger)
+			if err != nil {
+				return nil, fmt.Errorf("Error creating digipeater: %v", err)
+			}
+		}
 	}
 
 	dg := &DigiGate{
@@ -137,7 +166,7 @@ func (d *DigiGate) Run() error {
 					d.igate.Stop()
 				}
 
-				if d.cfg.DigipeaterEnabled {
+				if d.cfg.DigipeaterEnabled && d.digipeater != nil {
 					d.logger.Info("Stopping digipeater")
 					d.digipeater.Stop()
 				}
@@ -155,10 +184,12 @@ func (d *DigiGate) Run() error {
 		})
 	}
 
-	if d.cfg.DigipeaterEnabled {
+	if d.cfg.DigipeaterEnabled && d.digipeater != nil {
 		g.Go(func() error {
 			return d.digipeater.Run()
 		})
+	} else if d.cfg.DigipeaterEnabled {
+		d.logger.Warn("Digipeater enabled but transmitter is disabled; digipeater will not run")
 	}
 
 	return g.Wait()
@@ -166,4 +197,18 @@ func (d *DigiGate) Run() error {
 
 func (d *DigiGate) Stop() {
 	d.stop <- true
+}
+
+func isNilCapture(c capture.Capture) bool {
+	val := reflect.ValueOf(c)
+	if !val.IsValid() {
+		return true
+	}
+
+	switch val.Kind() {
+	case reflect.Ptr, reflect.Map, reflect.Interface, reflect.Slice, reflect.Func, reflect.Chan:
+		return val.IsNil()
+	default:
+		return false
+	}
 }
