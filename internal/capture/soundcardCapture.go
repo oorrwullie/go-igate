@@ -215,21 +215,30 @@ func (s *SoundcardCapture) Type() string {
 }
 
 func (s *SoundcardCapture) float32ToBytes(data []float32) ([]byte, error) {
-	buf := new(bytes.Buffer)
+	buf := make([]byte, len(data)*2)
+	littleEndian := isLittleEndian()
 
-	for _, f := range data {
-		if isLittleEndian() {
-			if err := binary.Write(buf, binary.LittleEndian, f); err != nil {
-				return nil, err
-			}
+	for i, f := range data {
+		if math.IsNaN(float64(f)) || math.IsInf(float64(f), 0) {
+			f = 0
+		}
+		if f > 1 {
+			f = 1
+		} else if f < -1 {
+			f = -1
+		}
+
+		sample := int16(f * 32767)
+		offset := i * 2
+
+		if littleEndian {
+			binary.LittleEndian.PutUint16(buf[offset:], uint16(sample))
 		} else {
-			if err := binary.Write(buf, binary.BigEndian, f); err != nil {
-				return nil, err
-			}
+			binary.BigEndian.PutUint16(buf[offset:], uint16(sample))
 		}
 	}
 
-	return buf.Bytes(), nil
+	return buf, nil
 }
 
 func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *portaudio.DeviceInfo, err error) {
