@@ -84,8 +84,9 @@ func (i *IGate) listenForMessages() {
 			}
 
 			if !packet.IsAckMessage() && packet.Type().ForwardToAprsIs() {
-				fmt.Printf("uploading APRS-IS packet: %v\n", msg)
-				err = i.Aprsis.Upload(msg)
+				uploadFrame := formatForAprsIs(packet, i.callSign)
+				fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
+				err = i.Aprsis.Upload(uploadFrame)
 				if err != nil {
 					i.logger.Error("Error uploading APRS packet: ", err)
 					continue
@@ -164,6 +165,20 @@ func buildBeaconFrame(callSign, path, comment string) string {
 
 	builder.WriteString(":")
 	builder.WriteString(comment)
+
+	return builder.String()
+}
+
+func formatForAprsIs(packet *aprs.Packet, callSign string) string {
+	var builder strings.Builder
+
+	builder.WriteString(packet.Src)
+	builder.WriteString(">")
+	builder.WriteString(packet.Dst)
+	builder.WriteString(",TCPIP*,qAR,")
+	builder.WriteString(strings.ToUpper(strings.TrimSpace(callSign)))
+	builder.WriteString(":")
+	builder.WriteString(packet.Payload)
 
 	return builder.String()
 }
