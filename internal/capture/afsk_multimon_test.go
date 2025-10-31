@@ -9,13 +9,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"log"
 )
 
 // TestGenerateAFSKWithMultimonNG verifies that the generated AFSK audio decodes to the original frame.
 func TestGenerateAFSKWithMultimonNG(t *testing.T) {
 	const aprsFrame = "N0CALL-1>APRS,WIDE1-1:/123456h4903.50N/07201.75W-Test message"
 
-	sc := &SoundcardCapture{}
+	sc := &SoundcardCapture{
+		Logger: log.New(os.Stdout, "test: ", log.LstdFlags),
+	}
 	ax25, err := sc.aprsToAx25(aprsFrame)
 	if err != nil {
 		t.Fatalf("aprsToAx25 failed: %v", err)
