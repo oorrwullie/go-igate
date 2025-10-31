@@ -133,8 +133,8 @@ func (i *IGate) startBeacon() error {
 		}
 	}
 
-	// Send initial beacon only via RF
-	sendBeacon(false, true)
+	// Send initial beacon to both RF and APRS-IS
+	sendBeacon(true, true)
 
 	go func() {
 		for {
