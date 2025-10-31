@@ -38,6 +38,7 @@ type SoundcardCapture struct {
 	outputChan      chan []byte
 	stationCallsign string
 	txBuffer        []float32
+	preambleFlags   int
 	txMu            sync.Mutex
 }
 
@@ -50,9 +51,12 @@ const (
 	SamplesPerBaud = SampleRate / BaudRate
 	Volume         = 0.5
 	TwoPi          = 2.0 * math.Pi
-	PreambleFlags  = 16
 	TailFlags      = 2
 )
+
+const defaultTxDelay = 300 * time.Millisecond
+
+var defaultPreambleFlags = preambleFlagsForDelay(defaultTxDelay)
 
 func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.Logger) (*SoundcardCapture, error) {
 	var (
@@ -103,6 +107,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		logger:          logger,
 		outputChan:      outputChan,
 		stationCallsign: cfg.StationCallsign,
+		preambleFlags:   preambleFlagsForDelay(cfg.Transmitter.TxDelay),
 	}
 
 	return sc, nil
@@ -132,7 +137,7 @@ func (s *SoundcardCapture) Start() error {
 				continue
 			}
 
-			wave, err := generateAFSK(ax25Packet)
+			wave, err := s.generateAFSK(ax25Packet)
 			if err != nil {
 				s.logger.Error("Failed to generate AFSK audio: ", err)
 				continue
@@ -406,13 +411,18 @@ func computeFCS(frame []byte) uint16 {
 	return ^fcs
 }
 
-func generateAFSK(frame []byte) ([]float32, error) {
+func (s *SoundcardCapture) generateAFSK(frame []byte) ([]float32, error) {
 	if len(frame) == 0 {
 		return nil, fmt.Errorf("empty AX.25 frame")
 	}
 
-	bits := make([]int, 0, (len(frame)+PreambleFlags+TailFlags)*8)
-	for i := 0; i < PreambleFlags; i++ {
+	preamble := s.preambleFlags
+	if preamble <= 0 {
+		preamble = defaultPreambleFlags
+	}
+
+	bits := make([]int, 0, (len(frame)+preamble+TailFlags)*8)
+	for i := 0; i < preamble; i++ {
 		bits = appendFlag(bits)
 	}
 
@@ -552,6 +562,18 @@ func isLittleEndian() bool {
 	var i int32 = 0x01020304
 	u := (*[4]byte)(unsafe.Pointer(&i))
 	return u[0] == 0x04
+}
+
+func preambleFlagsForDelay(delay time.Duration) int {
+	if delay <= 0 {
+		delay = defaultTxDelay
+	}
+
+	flags := int(math.Ceil(delay.Seconds() * BaudRate / 8.0))
+	if flags < 1 {
+		flags = 1
+	}
+	return flags
 }
 
 func (s *SoundcardCapture) displayFFT(signal []float32) {

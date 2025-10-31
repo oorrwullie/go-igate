@@ -61,7 +61,8 @@ type (
 	}
 
 	Transmitter struct {
-		Enabled bool `yaml:"enabled"`
+		Enabled bool          `yaml:"enabled"`
+		TxDelay time.Duration `yaml:"tx-delay"`
 	}
 
 	Digipeater struct {
@@ -73,6 +74,7 @@ type (
 
 func GetConfig() (Config, error) {
 	var cfg Config
+	const defaultTxDelay = 300 * time.Millisecond
 
 	f, err := os.ReadFile("config.yml")
 	if err != nil {
@@ -106,6 +108,10 @@ func GetConfig() (Config, error) {
 
 	if cfg.IGate.Beacon.ISPath == "" {
 		cfg.IGate.Beacon.ISPath = "TCPIP*"
+	}
+
+	if cfg.Transmitter.TxDelay <= 0 {
+		cfg.Transmitter.TxDelay = defaultTxDelay
 	}
 
 	return cfg, nil
