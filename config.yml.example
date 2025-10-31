@@ -54,6 +54,8 @@ transmitter:
   read-timeout: "5s"
   # duration of HDLC flag preamble before payload (helps VOX/PTT settle)
   tx-delay: 300ms
+  # optional mark tone appended after packet to hold VOX/PTT engaged
+  tx-tail: 100ms
 igate:
   # enabled: set to true to enable DigiGate to act as an iGate.
   enabled: true

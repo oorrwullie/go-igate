@@ -95,7 +95,7 @@ func (m *Multimon) Start() error {
 				if exists := m.cache.Set(msg, time.Now()); !exists {
 					m.logger.Info("packet received: ", msg)
 
-					normalized := strings.TrimPrefix(msg, "APRS: ")
+					normalized := normalizeMultimonMessage(msg)
 
 					// if m.tx != nil {
 					// 	fmt.Println("initiating tx backoff...")
@@ -115,4 +115,10 @@ func (m *Multimon) Start() error {
 	}()
 
 	return nil
+}
+
+func normalizeMultimonMessage(msg string) string {
+	msg = strings.TrimSpace(msg)
+	msg = strings.TrimPrefix(msg, "APRS: ")
+	return msg
 }

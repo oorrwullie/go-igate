@@ -39,6 +39,7 @@ type SoundcardCapture struct {
 	stationCallsign string
 	txBuffer        []float32
 	preambleFlags   int
+	tailTone        []float32
 	txMu            sync.Mutex
 }
 
@@ -49,7 +50,7 @@ const (
 	Tone2200Hz     = 2200.0
 	BitsPerSample  = 8
 	SamplesPerBaud = SampleRate / BaudRate
-	Volume         = 0.5
+	Volume         = 1.0
 	TwoPi          = 2.0 * math.Pi
 	TailFlags      = 2
 )
@@ -108,6 +109,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		outputChan:      outputChan,
 		stationCallsign: cfg.StationCallsign,
 		preambleFlags:   preambleFlagsForDelay(cfg.Transmitter.TxDelay),
+		tailTone:        generateTone(Tone1200Hz, cfg.Transmitter.TxTail),
 	}
 
 	return sc, nil
@@ -442,10 +444,22 @@ func (s *SoundcardCapture) generateAFSK(frame []byte) ([]float32, error) {
 	}
 
 	signal := bitsToAFSK(bits)
-	completeWave := removeDCOffset(signal)
-	limitedWave := applyLimiter(completeWave, 0.9)
+	total := append([]float32(nil), signal...)
+	if len(s.tailTone) > 0 {
+		total = append(total, s.tailTone...)
+	}
+	completeWave := removeDCOffset(total)
+	return normalizeSignal(completeWave), nil
+}
 
-	return normalizeSignal(limitedWave), nil
+// AprsToAx25ForTest exposes aprsToAx25 for test utilities.
+func (s *SoundcardCapture) AprsToAx25ForTest(raw string) ([]byte, error) {
+	return s.aprsToAx25(raw)
+}
+
+// GenerateAFSKForTest exposes generateAFSK for test utilities.
+func (s *SoundcardCapture) GenerateAFSKForTest(frame []byte) ([]float32, error) {
+	return s.generateAFSK(frame)
 }
 
 func appendFlag(bits []int) []int {
@@ -556,15 +570,25 @@ func removeDCOffset(signal []float32) []float32 {
 	return signal
 }
 
-func applyLimiter(signal []float32, threshold float32) []float32 {
-	for i, sample := range signal {
-		if sample > threshold {
-			signal[i] = threshold
-		} else if sample < -threshold {
-			signal[i] = -threshold
+func generateTone(freq float64, duration time.Duration) []float32 {
+	if duration <= 0 {
+		return nil
+	}
+
+	samples := int(math.Ceil(duration.Seconds() * float64(SampleRate)))
+	tone := make([]float32, samples)
+	phaseIncrement := TwoPi * freq / SampleRate
+	var phase float64
+
+	for i := 0; i < samples; i++ {
+		tone[i] = Volume * float32(math.Sin(phase))
+		phase += phaseIncrement
+		if phase >= TwoPi {
+			phase -= TwoPi
 		}
 	}
-	return signal
+
+	return tone
 }
 
 func isLittleEndian() bool {

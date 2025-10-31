@@ -63,6 +63,7 @@ type (
 	Transmitter struct {
 		Enabled bool          `yaml:"enabled"`
 		TxDelay time.Duration `yaml:"tx-delay"`
+		TxTail  time.Duration `yaml:"tx-tail"`
 	}
 
 	Digipeater struct {
@@ -112,6 +113,10 @@ func GetConfig() (Config, error) {
 
 	if cfg.Transmitter.TxDelay <= 0 {
 		cfg.Transmitter.TxDelay = defaultTxDelay
+	}
+
+	if cfg.Transmitter.TxTail <= 0 {
+		cfg.Transmitter.TxTail = 100 * time.Millisecond
 	}
 
 	return cfg, nil
