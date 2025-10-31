@@ -113,11 +113,12 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 
 	if cfg.DigipeaterEnabled {
 		if txHandle == nil {
-			return nil, fmt.Errorf("digipeater enabled but transmitter is disabled")
-		}
-		dp, err = digipeater.New(txHandle, ps, cfg.StationCallsign, cfg.Digipeater, logger)
-		if err != nil {
-			return nil, fmt.Errorf("Error creating digipeater: %v", err)
+			logger.Warn("Digipeater enabled but transmitter is disabled; skipping digipeater")
+		} else {
+			dp, err = digipeater.New(txHandle, ps, cfg.StationCallsign, cfg.Digipeater, logger)
+			if err != nil {
+				return nil, fmt.Errorf("Error creating digipeater: %v", err)
+			}
 		}
 	}
 
@@ -165,7 +166,7 @@ func (d *DigiGate) Run() error {
 					d.igate.Stop()
 				}
 
-				if d.cfg.DigipeaterEnabled {
+				if d.cfg.DigipeaterEnabled && d.digipeater != nil {
 					d.logger.Info("Stopping digipeater")
 					d.digipeater.Stop()
 				}
@@ -183,10 +184,12 @@ func (d *DigiGate) Run() error {
 		})
 	}
 
-	if d.cfg.DigipeaterEnabled {
+	if d.cfg.DigipeaterEnabled && d.digipeater != nil {
 		g.Go(func() error {
 			return d.digipeater.Run()
 		})
+	} else if d.cfg.DigipeaterEnabled {
+		d.logger.Warn("Digipeater enabled but transmitter is disabled; digipeater will not run")
 	}
 
 	return g.Wait()
