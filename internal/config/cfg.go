@@ -61,9 +61,10 @@ type (
 	}
 
 	Transmitter struct {
-		Enabled bool          `yaml:"enabled"`
-		TxDelay time.Duration `yaml:"tx-delay"`
-		TxTail  time.Duration `yaml:"tx-tail"`
+		Enabled  bool          `yaml:"enabled"`
+		TxDelay  time.Duration `yaml:"tx-delay"`
+		TxTail   time.Duration `yaml:"tx-tail"`
+		UseAplay bool          `yaml:"use-aplay"`
 	}
 
 	Digipeater struct {

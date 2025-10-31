@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"math"
 	"math/cmplx"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,7 +35,7 @@ type SoundcardCapture struct {
 	ChannelNum      int
 	BitDepth        int
 	BufferSize      int
-	stop            chan bool
+	stop            chan struct{}
 	sendChannel     chan string
 	logger          *log.Logger
 	outputChan      chan []byte
@@ -41,20 +44,23 @@ type SoundcardCapture struct {
 	preambleFlags   int
 	tailTone        []float32
 	txMu            sync.Mutex
+	stopOnce        sync.Once
+	useAplay        bool
+	aplayDevice     string
 }
 
 const (
-	SampleRate         = 44100
-	BaudRate           = 1200
-	Tone1200Hz         = 1200.0
-	Tone2200Hz         = 2200.0
-	BitsPerSample      = 8
-	SamplesPerBaud     = SampleRate / BaudRate
-	Volume             = 1.0
-	TwoPi              = 2.0 * math.Pi
-	TailFlags          = 2
-	MaxCallsignLength  = 6  // Maximum callsign length in AX.25
-	MaxSSID            = 15 // Maximum SSID value in AX.25
+	SampleRate        = 44100
+	BaudRate          = 1200
+	Tone1200Hz        = 1200.0
+	Tone2200Hz        = 2200.0
+	BitsPerSample     = 8
+	SamplesPerBaud    = SampleRate / BaudRate
+	Volume            = 1.0
+	TwoPi             = 2.0 * math.Pi
+	TailFlags         = 2
+	MaxCallsignLength = 6  // Maximum callsign length in AX.25
+	MaxSSID           = 15 // Maximum SSID value in AX.25
 )
 
 const defaultTxDelay = 300 * time.Millisecond
@@ -66,6 +72,32 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		channelNum = 1
 		bitDepth   = 1
 	)
+
+	sc := &SoundcardCapture{
+		SampleRate:      SampleRate,
+		BaudRate:        BaudRate,
+		MarkFrequency:   Tone1200Hz,
+		SpaceFrequency:  Tone2200Hz,
+		ChannelNum:      channelNum,
+		BitDepth:        bitDepth,
+		stop:            make(chan struct{}),
+		sendChannel:     make(chan string, 10),
+		logger:          logger,
+		outputChan:      outputChan,
+		stationCallsign: cfg.StationCallsign,
+		preambleFlags:   preambleFlagsForDelay(cfg.Transmitter.TxDelay),
+		tailTone:        generateTone(Tone1200Hz, cfg.Transmitter.TxTail),
+		useAplay:        cfg.Transmitter.UseAplay,
+		aplayDevice:     cfg.SoundcardOutputName,
+	}
+
+	if sc.useAplay && sc.aplayDevice == "" {
+		sc.aplayDevice = "default"
+	}
+
+	if sc.useAplay {
+		return sc, nil
+	}
 
 	if err := portaudio.Initialize(); err != nil {
 		return nil, err
@@ -85,7 +117,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 
 	outputDeviceInfo := portaudio.StreamDeviceParameters{
 		Device:   outputDevice,
-		Channels: 1,
+		Channels: channelNum,
 		Latency:  time.Duration(time.Millisecond * 5),
 	}
 
@@ -97,22 +129,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		Flags:           portaudio.ClipOff,
 	}
 
-	sc := &SoundcardCapture{
-		StreamParams:    streamParams,
-		SampleRate:      SampleRate,
-		BaudRate:        BaudRate,
-		MarkFrequency:   Tone1200Hz,
-		SpaceFrequency:  Tone2200Hz,
-		ChannelNum:      channelNum,
-		BitDepth:        bitDepth,
-		stop:            make(chan bool),
-		sendChannel:     make(chan string, 10),
-		logger:          logger,
-		outputChan:      outputChan,
-		stationCallsign: cfg.StationCallsign,
-		preambleFlags:   preambleFlagsForDelay(cfg.Transmitter.TxDelay),
-		tailTone:        generateTone(Tone1200Hz, cfg.Transmitter.TxTail),
-	}
+	sc.StreamParams = streamParams
 
 	return sc, nil
 }
@@ -126,6 +143,11 @@ func Int16ToFloat32(data []int16) []float32 {
 }
 
 func (s *SoundcardCapture) Start() error {
+	if s.useAplay {
+		go s.runAplayLoop()
+		return nil
+	}
+
 	if err := portaudio.Initialize(); err != nil {
 		return err
 	}
@@ -134,22 +156,40 @@ func (s *SoundcardCapture) Start() error {
 	var audioBuffer []float32
 
 	go func() {
-		for msg := range s.sendChannel {
-			ax25Packet, err := s.aprsToAx25(msg)
-			if err != nil {
-				s.logger.Error("Failed to convert APRS frame: ", err)
-				continue
-			}
+		for {
+			select {
+			case <-s.stop:
+				return
+			case msg, ok := <-s.sendChannel:
+				if !ok {
+					return
+				}
 
-			wave, err := s.generateAFSK(ax25Packet)
-			if err != nil {
-				s.logger.Error("Failed to generate AFSK audio: ", err)
-				continue
-			}
+				msg = strings.TrimSpace(msg)
+				if msg == "" {
+					continue
+				}
 
-			s.txMu.Lock()
-			s.txBuffer = append(s.txBuffer, wave...)
-			s.txMu.Unlock()
+				ax25Packet, err := s.aprsToAx25(msg)
+				if err != nil {
+					s.logger.Error("Failed to convert APRS frame: ", err)
+					continue
+				}
+
+				wave, err := s.generateAFSK(ax25Packet)
+				if err != nil {
+					s.logger.Error("Failed to generate AFSK audio: ", err)
+					continue
+				}
+
+				if err := dumpWaveForDebug(wave); err != nil {
+					s.logger.Warn("Failed to write debug wave: ", err)
+				}
+
+				s.txMu.Lock()
+				s.txBuffer = append(s.txBuffer, wave...)
+				s.txMu.Unlock()
+			}
 		}
 	}()
 
@@ -207,11 +247,34 @@ func (s *SoundcardCapture) Start() error {
 }
 
 func (s *SoundcardCapture) Play(msg string) {
-	s.sendChannel <- msg
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return
+	}
+
+	select {
+	case <-s.stop:
+		return
+	default:
+	}
+
+	select {
+	case s.sendChannel <- msg:
+	default:
+		go func(m string) {
+			select {
+			case s.sendChannel <- m:
+			case <-s.stop:
+			}
+		}(msg)
+	}
 }
 
 func (s *SoundcardCapture) Stop() {
-	s.stop <- true
+	s.stopOnce.Do(func() {
+		close(s.stop)
+		close(s.sendChannel)
+	})
 }
 
 func (s *SoundcardCapture) Type() string {
@@ -452,6 +515,133 @@ func (s *SoundcardCapture) generateAFSK(frame []byte) ([]float32, error) {
 	}
 	completeWave := removeDCOffset(total)
 	return normalizeSignal(completeWave), nil
+}
+
+func (s *SoundcardCapture) runAplayLoop() {
+	for {
+		select {
+		case <-s.stop:
+			return
+		case msg, ok := <-s.sendChannel:
+			if !ok {
+				return
+			}
+
+			msg = strings.TrimSpace(msg)
+			if msg == "" {
+				continue
+			}
+
+			ax25Packet, err := s.aprsToAx25(msg)
+			if err != nil {
+				s.logger.Error("Failed to convert APRS frame: ", err)
+				continue
+			}
+
+			wave, err := s.generateAFSK(ax25Packet)
+			if err != nil {
+				s.logger.Error("Failed to generate AFSK audio: ", err)
+				continue
+			}
+
+			if err := dumpWaveForDebug(wave); err != nil {
+				s.logger.Warn("Failed to write debug wave: ", err)
+			}
+
+			if err := s.playWithAplay(wave); err != nil {
+				s.logger.Error("Failed to transmit with aplay: ", err)
+			}
+		}
+	}
+}
+
+func (s *SoundcardCapture) playWithAplay(samples []float32) error {
+	file, err := os.CreateTemp("", "go-igate-tx-*.wav")
+	if err != nil {
+		return fmt.Errorf("create temp wav: %w", err)
+	}
+	tmpName := file.Name()
+
+	if _, err := file.Write(buildDebugWav(samples)); err != nil {
+		file.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write temp wav: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close temp wav: %w", err)
+	}
+
+	args := []string{"aplay", "-q"}
+	if s.aplayDevice != "" {
+		args = append(args, "-D", s.aplayDevice)
+	}
+	args = append(args, tmpName)
+
+	cmd := exec.Command(args[0], args[1:]...)
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("aplay command failed: %w", err)
+	}
+
+	return os.Remove(tmpName)
+}
+
+func dumpWaveForDebug(samples []float32) error {
+	dir := os.Getenv("GO_IGATE_DEBUG_WAV_DIR")
+	if dir == "" || len(samples) == 0 {
+		return nil
+	}
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create debug directory: %w", err)
+	}
+
+	filename := filepath.Join(dir, fmt.Sprintf("tx_%d.wav", time.Now().UnixNano()))
+	return os.WriteFile(filename, buildDebugWav(samples), 0o644)
+}
+
+func buildDebugWav(samples []float32) []byte {
+	const (
+		audioFormat   = 1
+		numChannels   = 1
+		sampleRate    = SampleRate
+		bitsPerSample = 16
+		byteRate      = sampleRate * numChannels * bitsPerSample / 8
+		blockAlign    = numChannels * bitsPerSample / 8
+	)
+
+	var pcm bytes.Buffer
+	for _, sample := range samples {
+		if sample > 1 {
+			sample = 1
+		} else if sample < -1 {
+			sample = -1
+		}
+		value := int16(sample * 32767)
+		_ = binary.Write(&pcm, binary.LittleEndian, value)
+	}
+
+	dataLen := uint32(pcm.Len())
+	riffSize := 4 + 8 + 16 + 8 + dataLen
+
+	var wav bytes.Buffer
+	wav.WriteString("RIFF")
+	_ = binary.Write(&wav, binary.LittleEndian, uint32(riffSize))
+	wav.WriteString("WAVE")
+	wav.WriteString("fmt ")
+	_ = binary.Write(&wav, binary.LittleEndian, uint32(16))
+	_ = binary.Write(&wav, binary.LittleEndian, uint16(audioFormat))
+	_ = binary.Write(&wav, binary.LittleEndian, uint16(numChannels))
+	_ = binary.Write(&wav, binary.LittleEndian, uint32(sampleRate))
+	_ = binary.Write(&wav, binary.LittleEndian, uint32(byteRate))
+	_ = binary.Write(&wav, binary.LittleEndian, uint16(blockAlign))
+	_ = binary.Write(&wav, binary.LittleEndian, uint16(bitsPerSample))
+	wav.WriteString("data")
+	_ = binary.Write(&wav, binary.LittleEndian, dataLen)
+	wav.Write(pcm.Bytes())
+
+	return wav.Bytes()
 }
 
 // AprsToAx25ForTest exposes aprsToAx25 for test utilities.

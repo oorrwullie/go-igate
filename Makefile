@@ -8,7 +8,7 @@ GOBASE=$(shell pwd)
 GOBIN=$(GOBASE)/$(BUILD_DIR)
 GOPATH=$(shell go env GOPATH)
 
-.PHONY: all build clean run test install-service
+.PHONY: all build clean run test install-service reference-audio
 
 all: build
 
@@ -28,6 +28,9 @@ run: build
 test:
 	@echo "Running tests"
 	@go test ./...
+
+reference-audio:
+	@./scripts/gen-reference-audio.sh
 
 install-service:
 	@echo "Installing $(BINARY_NAME) as a service"

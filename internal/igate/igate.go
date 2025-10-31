@@ -129,7 +129,11 @@ func (i *IGate) startBeacon() error {
 		if toRf && i.enableTx && i.tx != nil {
 			rfFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.RFPath, i.cfg.Beacon.Comment)
 			i.logger.Info("Beacon -> RF: ", rfFrame)
-			go i.tx.Send(rfFrame)
+			go func(msg string) {
+				const warmup = 2 * time.Second
+				time.Sleep(5 * time.Second)
+				i.tx.Send(msg)
+			}(rfFrame)
 		}
 	}
 

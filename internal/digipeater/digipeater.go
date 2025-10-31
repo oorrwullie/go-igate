@@ -103,7 +103,11 @@ func (d *Digipeater) HandleMessage(msg string) {
 
 func (d *Digipeater) prepare(msg string) (string, bool) {
 	if len(msg) < minPacketSize {
-		d.logger.Debug("Packet too short to process: ", msg)
+		if strings.HasPrefix(msg, ":") || strings.Contains(msg, ":ack") {
+			d.logger.Debug("Ignoring ACK message below min size: ", msg)
+		} else {
+			d.logger.Debug("Packet too short to process: ", msg)
+		}
 		return "", false
 	}
 
