@@ -98,7 +98,7 @@ func (d *Digipeater) HandleMessage(msg string) {
 	}
 
 	d.logger.Info("Digipeating packet: ", txMsg)
-	d.tx.Send(txMsg)
+	go d.tx.Send(txMsg)
 }
 
 func (d *Digipeater) prepare(msg string) (string, bool) {
