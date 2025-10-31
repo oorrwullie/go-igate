@@ -90,12 +90,6 @@ func (i *IGate) listenForMessages() {
 					i.logger.Error("Error uploading APRS packet: ", err)
 					continue
 				}
-
-				if i.enableTx {
-					ackMsg := packet.AckString(i.callSign)
-
-					i.tx.Send(ackMsg)
-				}
 			}
 		}
 	}

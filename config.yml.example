@@ -53,10 +53,10 @@ transmitter:
   # time to wait for serial connection to the radio
   read-timeout: "5s"
   # duration of HDLC flag preamble before payload (helps VOX/PTT settle)
-  tx-delay: 300ms
+  tx-delay: 400ms
   # optional mark tone appended after packet to hold VOX/PTT engaged
-  tx-tail: 100ms
-  use-aplay: false
+  tx-tail: 75ms
+  use-aplay: true
 igate:
   # enabled: set to true to enable DigiGate to act as an iGate.
   enabled: true
@@ -65,8 +65,12 @@ igate:
     enabled: false
     # interval of beacon messages - e.g. "30m"
     interval: 30m
-    # comment of beacon messages which should include the position of the station
-    comment: "Powered by gophers!"
+    # comment (e.g. position/status). Example shows !DAO-style with primary table symbol.
+    comment: "=0000.00N/00000.00W-Go iGate"
+    # RF path for the beacon; avoid implicit WIDE1-1 hops from fixed stations.
+    rf-path: "WIDE2-1"
+    # Path inserted on APRS-IS frames; qAR + your callsign is common.
+    is-path: "TCPIP*,qAR,N0CALL-10"
   aprsis:
     # enable to connect to APRS-IS server for iGate
     enabled: false
@@ -74,5 +78,5 @@ igate:
     server: "noam.aprs2.net:14580"
     #passcode of iGate can be obtained from https://apps.magicbug.co.uk/passcode/ (do so with your SSID - eg. N0CALL-10)
     passcode: ""
-    # filter for APRS-IS server - e.g. "m/50" for 50 miles radius
-    filter: ""
+    # filter for APRS-IS server - e.g. "r/lat/lon/radius" to scope traffic
+    filter: "r/00.00/000.00/150"
