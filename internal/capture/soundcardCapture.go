@@ -53,6 +53,7 @@ const (
 	Volume         = 1.0
 	TwoPi          = 2.0 * math.Pi
 	TailFlags      = 2
+	MaxSSID        = 15 // Maximum SSID value in AX.25
 )
 
 const defaultTxDelay = 300 * time.Millisecond
@@ -371,7 +372,7 @@ func encodeAX25Address(address string, last bool) ([]byte, error) {
 			if err != nil {
 				return nil, fmt.Errorf("invalid SSID in %q", address)
 			}
-			if parsed < 0 || parsed > 15 {
+			if parsed < 0 || parsed > MaxSSID {
 				return nil, fmt.Errorf("SSID out of range in %q", address)
 			}
 			ssid = parsed
