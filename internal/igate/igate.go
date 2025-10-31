@@ -3,6 +3,7 @@ package igate
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oorrwullie/go-igate/internal/aprs"
@@ -22,10 +23,17 @@ type (
 		logger    *log.Logger
 		Aprsis    *aprs.AprsIs
 		stop      chan bool
+		lastRxMu  sync.Mutex
+		lastRx    time.Time
 	}
 )
 
 const minPacketSize = 35
+const (
+	beaconChannelQuiet  = 3 * time.Second
+	beaconMaxWait       = 45 * time.Second
+	beaconRetryInterval = 5 * time.Second
+)
 
 func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx, callSign string, logger *log.Logger) (*IGate, error) {
 	aprsis, err := aprs.New(cfg.Aprsis, callSign, cfg.Beacon.Comment, logger)
@@ -44,6 +52,7 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		logger:    logger,
 		stop:      make(chan bool),
 		Aprsis:    aprsis,
+		lastRx:    time.Now(),
 	}
 
 	return ig, nil
@@ -72,6 +81,8 @@ func (i *IGate) listenForMessages() {
 		case <-i.stop:
 			return
 		case msg := <-i.inputChan:
+			i.markRx()
+
 			if len(msg) < minPacketSize {
 				i.logger.Error("Packet too short: ", msg)
 				continue
@@ -126,8 +137,22 @@ func (i *IGate) startBeacon() error {
 			i.logger.Info("Beacon -> RF: ", rfFrame)
 			go func(msg string) {
 				const warmup = 2 * time.Second
-				time.Sleep(5 * time.Second)
-				i.tx.Send(msg)
+				deadline := time.Now().Add(beaconMaxWait)
+
+				for {
+					if i.channelQuietFor(beaconChannelQuiet) {
+						time.Sleep(warmup)
+						i.tx.Send(msg)
+						return
+					}
+
+					if time.Now().After(deadline) {
+						i.logger.Warn("Skipping beacon -> RF due to continuous channel activity")
+						return
+					}
+
+					time.Sleep(beaconRetryInterval)
+				}
 			}(rfFrame)
 		}
 	}
@@ -172,13 +197,52 @@ func buildBeaconFrame(callSign, path, comment string) string {
 func formatForAprsIs(packet *aprs.Packet, callSign string) string {
 	var builder strings.Builder
 
+	callSign = strings.ToUpper(strings.TrimSpace(callSign))
+
 	builder.WriteString(packet.Src)
 	builder.WriteString(">")
 	builder.WriteString(packet.Dst)
-	builder.WriteString(",TCPIP*,qAR,")
-	builder.WriteString(strings.ToUpper(strings.TrimSpace(callSign)))
+
+	path := append([]string{}, packet.Path...)
+	if !containsAprsIsHop(path) && callSign != "" {
+		path = append(path, "TCPIP*", "qAR", callSign)
+	}
+
+	if len(path) > 0 {
+		builder.WriteString(",")
+		builder.WriteString(strings.Join(path, ","))
+	}
+
 	builder.WriteString(":")
 	builder.WriteString(packet.Payload)
 
 	return builder.String()
+}
+
+func containsAprsIsHop(path []string) bool {
+	for _, component := range path {
+		c := strings.ToUpper(strings.TrimSpace(component))
+		if strings.HasPrefix(c, "TCPIP") || strings.HasPrefix(c, "TCPXX") || strings.HasPrefix(c, "Q") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (i *IGate) markRx() {
+	i.lastRxMu.Lock()
+	i.lastRx = time.Now()
+	i.lastRxMu.Unlock()
+}
+
+func (i *IGate) channelQuietFor(duration time.Duration) bool {
+	i.lastRxMu.Lock()
+	defer i.lastRxMu.Unlock()
+
+	if i.lastRx.IsZero() {
+		return true
+	}
+
+	return time.Since(i.lastRx) >= duration
 }
