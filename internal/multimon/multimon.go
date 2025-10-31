@@ -37,7 +37,13 @@ func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *c
 	userArgs := strings.Fields(cfg.AdditionalFlags)
 	args := append(requiredArgs, userArgs...)
 	args = append(args, "-")
-	cmd := exec.Command("multimon-ng", args...)
+
+	binary := cfg.Path
+	if binary == "" {
+		binary = "multimon-ng"
+	}
+
+	cmd := exec.Command(binary, args...)
 
 	return &Multimon{
 		cache:     cache,
