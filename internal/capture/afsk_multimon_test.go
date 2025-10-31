@@ -15,6 +15,13 @@ import (
 func TestGenerateAFSKWithMultimonNG(t *testing.T) {
 	const aprsFrame = "N0CALL-1>APRS,WIDE1-1:/123456h4903.50N/07201.75W-Test message"
 
+	if _, err := exec.LookPath("multimon-ng"); err != nil {
+		t.Skipf("multimon-ng not available: %v", err)
+	}
+	if _, err := exec.LookPath("sox"); err != nil {
+		t.Skipf("sox not available: %v", err)
+	}
+
 	sc := &SoundcardCapture{
 		preambleFlags: defaultPreambleFlags,
 		tailTone:      nil,
