@@ -44,16 +44,17 @@ type SoundcardCapture struct {
 }
 
 const (
-	SampleRate     = 44100
-	BaudRate       = 1200
-	Tone1200Hz     = 1200.0
-	Tone2200Hz     = 2200.0
-	BitsPerSample  = 8
-	SamplesPerBaud = SampleRate / BaudRate
-	Volume         = 1.0
-	TwoPi          = 2.0 * math.Pi
-	TailFlags      = 2
-	MaxSSID        = 15 // Maximum SSID value in AX.25
+	SampleRate         = 44100
+	BaudRate           = 1200
+	Tone1200Hz         = 1200.0
+	Tone2200Hz         = 2200.0
+	BitsPerSample      = 8
+	SamplesPerBaud     = SampleRate / BaudRate
+	Volume             = 1.0
+	TwoPi              = 2.0 * math.Pi
+	TailFlags          = 2
+	MaxCallsignLength  = 6  // Maximum callsign length in AX.25
+	MaxSSID            = 15 // Maximum SSID value in AX.25
 )
 
 const defaultTxDelay = 300 * time.Millisecond
@@ -380,12 +381,12 @@ func encodeAX25Address(address string, last bool) ([]byte, error) {
 	}
 
 	base = strings.ToUpper(strings.TrimSpace(base))
-	if len(base) == 0 || len(base) > 6 {
+	if len(base) == 0 || len(base) > MaxCallsignLength {
 		return nil, fmt.Errorf("invalid callsign %q", address)
 	}
 
 	encoded := make([]byte, 7)
-	for i := 0; i < 6; i++ {
+	for i := 0; i < MaxCallsignLength; i++ {
 		var c byte = ' '
 		if i < len(base) {
 			c = base[i]
