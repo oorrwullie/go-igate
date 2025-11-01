@@ -17,6 +17,9 @@ digipeater:
     - "^WIDE[1-7]-[1-7]$"
     - "^TRACE[1-7]-[1-7]$"
     - "^HOP[1-7]-[1-7]$"
+    - "^[A-Z]{2}[1-7]-[1-7]$"
+  # optional list of SSn prefixes (e.g. UT, ID) this digi should service
+  ssn-prefixes: []
   # drop duplicates seen during this window (e.g. 30s)
   dedupe-window: 30s
 # soundcard-input-name is the name of the device to use for audio input. If empty, the system default device will be used.
@@ -71,7 +74,7 @@ igate:
     # values above are not provided.
     # interval: 30m
     # comment (e.g. position/status). Example shows !DAO-style with primary table symbol.
-    comment: "=0000.00N/00000.00W-Go iGate"
+    comment: "=0000.00NS00000.00W#Go iGate"
     # RF path for the beacon; avoid implicit WIDE1-1 hops from fixed stations.
     rf-path: "WIDE2-1"
     # Path inserted on APRS-IS frames; qAR + your callsign is common.

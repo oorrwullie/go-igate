@@ -24,6 +24,7 @@ type Digipeater struct {
 	callsignUpper string
 	aliasRules    []*regexp.Regexp
 	wideRules     []*regexp.Regexp
+	ssnPrefixes   map[string]struct{}
 	dedupe        *deduper
 	logger        *log.Logger
 	stop          chan bool
@@ -57,6 +58,14 @@ func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, cfg config.Digi
 		window = 30 * time.Second
 	}
 
+	ssnPrefixes := make(map[string]struct{}, len(cfg.SSnPrefixes))
+	for _, prefix := range cfg.SSnPrefixes {
+		if prefix == "" {
+			continue
+		}
+		ssnPrefixes[strings.ToUpper(prefix)] = struct{}{}
+	}
+
 	return &Digipeater{
 		tx:            tx,
 		inputChan:     ps.Subscribe(),
@@ -64,6 +73,7 @@ func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, cfg config.Digi
 		callsignUpper: strings.ToUpper(callsign),
 		aliasRules:    alias,
 		wideRules:     wide,
+		ssnPrefixes:   ssnPrefixes,
 		dedupe:        newDeduper(window),
 		logger:        logger,
 		stop:          make(chan bool),
@@ -170,6 +180,11 @@ func (d *Digipeater) rewritePath(packet *aprs.Packet, idx int) bool {
 			if !ok || remaining <= 0 {
 				return false
 			}
+			base = strings.ToUpper(base)
+
+			if prefix, ok := ssnPrefix(base); ok && !d.allowSSnPrefix(prefix) {
+				return false
+			}
 
 			if remaining == 1 {
 				packet.Path[idx] = d.callsignUpper + "*"
@@ -243,6 +258,36 @@ func insertBefore(path []string, idx int, value string) []string {
 
 	path = append(path[:idx], append([]string{value}, path[idx:]...)...)
 	return path
+}
+
+func (d *Digipeater) allowSSnPrefix(prefix string) bool {
+	if len(d.ssnPrefixes) == 0 {
+		return false
+	}
+
+	_, ok := d.ssnPrefixes[strings.ToUpper(prefix)]
+	return ok
+}
+
+func ssnPrefix(base string) (string, bool) {
+	if len(base) < 3 {
+		return "", false
+	}
+
+	prefix := base[:2]
+	suffix := base[2:]
+
+	for _, r := range prefix {
+		if r < 'A' || r > 'Z' {
+			return "", false
+		}
+	}
+
+	if len(suffix) != 1 || suffix[0] < '0' || suffix[0] > '7' {
+		return "", false
+	}
+
+	return prefix, true
 }
 
 func formatPacket(packet *aprs.Packet) string {

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -72,6 +73,7 @@ type (
 	Digipeater struct {
 		AliasPatterns []string      `yaml:"alias-patterns"`
 		WidePatterns  []string      `yaml:"wide-patterns"`
+		SSnPrefixes   []string      `yaml:"ssn-prefixes"`
 		DedupeWindow  time.Duration `yaml:"dedupe-window"`
 	}
 )
@@ -103,7 +105,12 @@ func GetConfig() (Config, error) {
 			`^WIDE[1-7]-[1-7]$`,
 			`^TRACE[1-7]-[1-7]$`,
 			`^HOP[1-7]-[1-7]$`,
+			`^[A-Z]{2}[1-7]-[1-7]$`,
 		}
+	}
+
+	for idx, prefix := range cfg.Digipeater.SSnPrefixes {
+		cfg.Digipeater.SSnPrefixes[idx] = strings.ToUpper(strings.TrimSpace(prefix))
 	}
 
 	if cfg.IGate.Beacon.RFPath == "" {
