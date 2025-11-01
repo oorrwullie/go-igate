@@ -63,8 +63,13 @@ igate:
   beacon:
     # enable to send beacon messages
     enabled: false
-    # interval of beacon messages - e.g. "30m"
-    interval: 30m
+    # interval for RF beacons (>=10m). Falls back to "interval" if omitted.
+    rf-interval: 30m
+    # interval for APRS-IS beacons (>=10m). Falls back to "interval" if omitted.
+    is-interval: 30m
+    # optional legacy interval applied to both RF and APRS-IS when the per-path
+    # values above are not provided.
+    # interval: 30m
     # comment (e.g. position/status). Example shows !DAO-style with primary table symbol.
     comment: "=0000.00N/00000.00W-Go iGate"
     # RF path for the beacon; avoid implicit WIDE1-1 hops from fixed stations.

@@ -46,11 +46,13 @@ type (
 	}
 
 	Beacon struct {
-		Enabled  bool
-		Interval time.Duration
-		Comment  string
-		RFPath   string `yaml:"rf-path"`
-		ISPath   string `yaml:"is-path"`
+		Enabled    bool
+		Interval   time.Duration
+		RFInterval time.Duration `yaml:"rf-interval"`
+		ISInterval time.Duration `yaml:"is-interval"`
+		Comment    string
+		RFPath     string `yaml:"rf-path"`
+		ISPath     string `yaml:"is-path"`
 	}
 
 	AprsIs struct {
@@ -110,6 +112,14 @@ func GetConfig() (Config, error) {
 
 	if cfg.IGate.Beacon.ISPath == "" {
 		cfg.IGate.Beacon.ISPath = "TCPIP*"
+	}
+
+	if cfg.IGate.Beacon.RFInterval <= 0 {
+		cfg.IGate.Beacon.RFInterval = cfg.IGate.Beacon.Interval
+	}
+
+	if cfg.IGate.Beacon.ISInterval <= 0 {
+		cfg.IGate.Beacon.ISInterval = cfg.IGate.Beacon.Interval
 	}
 
 	if cfg.Transmitter.TxDelay <= 0 {

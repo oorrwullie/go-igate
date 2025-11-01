@@ -108,8 +108,26 @@ func (i *IGate) listenForMessages() {
 }
 
 func (i *IGate) startBeacon() error {
-	if i.cfg.Beacon.Interval < (time.Duration(10) * time.Minute) {
-		return fmt.Errorf("interval cannot be < 10m")
+	const minInterval = 10 * time.Minute
+
+	rfInterval := i.cfg.Beacon.RFInterval
+	isInterval := i.cfg.Beacon.ISInterval
+
+	if rfInterval <= 0 && isInterval <= 0 && i.cfg.Beacon.Interval > 0 {
+		rfInterval = i.cfg.Beacon.Interval
+		isInterval = i.cfg.Beacon.Interval
+	}
+
+	if rfInterval > 0 && rfInterval < minInterval {
+		return fmt.Errorf("rf-interval cannot be < 10m")
+	}
+
+	if isInterval > 0 && isInterval < minInterval {
+		return fmt.Errorf("is-interval cannot be < 10m")
+	}
+
+	if rfInterval <= 0 && isInterval <= 0 {
+		return fmt.Errorf("beacon interval not configured")
 	}
 
 	if i.callSign == "" {
@@ -121,9 +139,31 @@ func (i *IGate) startBeacon() error {
 		return nil
 	}
 
-	i.logger.Info("Starting beacon every ", i.cfg.Beacon.Interval)
+	switch {
+	case rfInterval > 0 && isInterval > 0:
+		i.logger.Info("Starting beacon schedule RF every ", rfInterval, " and APRS-IS every ", isInterval)
+	case rfInterval > 0:
+		i.logger.Info("Starting beacon schedule RF every ", rfInterval)
+	case isInterval > 0:
+		i.logger.Info("Starting beacon schedule APRS-IS every ", isInterval)
+	}
 
-	ticker := time.NewTicker(i.cfg.Beacon.Interval)
+	var (
+		rfTicker *time.Ticker
+		isTicker *time.Ticker
+		rfChan   <-chan time.Time
+		isChan   <-chan time.Time
+	)
+
+	if rfInterval > 0 {
+		rfTicker = time.NewTicker(rfInterval)
+		rfChan = rfTicker.C
+	}
+
+	if isInterval > 0 {
+		isTicker = time.NewTicker(isInterval)
+		isChan = isTicker.C
+	}
 
 	sendBeacon := func(toAprsIs, toRf bool) {
 		if toAprsIs {
@@ -157,18 +197,28 @@ func (i *IGate) startBeacon() error {
 		}
 	}
 
-	// Send initial beacon to both RF and APRS-IS
-	sendBeacon(true, true)
+	// Send initial beacon to each configured destination
+	sendBeacon(isInterval > 0, rfInterval > 0)
 
 	go func() {
+		defer func() {
+			if isTicker != nil {
+				isTicker.Stop()
+			}
+
+			if rfTicker != nil {
+				rfTicker.Stop()
+			}
+		}()
+
 		for {
 			select {
-			case <-ticker.C:
-				// Periodic beacons go to APRS-IS only
-				sendBeacon(true, false)
 			case <-i.stop:
-				ticker.Stop()
 				return
+			case <-isChan:
+				sendBeacon(true, false)
+			case <-rfChan:
+				sendBeacon(false, true)
 			}
 		}
 	}()

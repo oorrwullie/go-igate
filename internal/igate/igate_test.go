@@ -28,7 +28,7 @@ func TestIGate_startBeacon(t *testing.T) {
 		wantErrString string
 	}{
 		{
-			name: "test short beacon interval",
+			name: "test short RF beacon interval",
 			fields: fields{
 				cfg:       config.IGate{Beacon: config.Beacon{Interval: 1}},
 				callSign:  "N0CALL-10",
@@ -39,7 +39,7 @@ func TestIGate_startBeacon(t *testing.T) {
 				stop:      make(chan bool),
 			},
 			wantErr:       true,
-			wantErrString: "interval cannot be < 10m",
+			wantErrString: "rf-interval cannot be < 10m",
 		},
 		{
 			name: "test no callsign",
