@@ -28,7 +28,7 @@ type (
 		stopOnce    sync.Once
 		rfBeaconMu  sync.Mutex
 		beaconMu    sync.Mutex
-		beaconWait  *beaconWait
+		beaconWaits map[string]*beaconWait
 		lastRxMu    sync.Mutex
 		lastRx      time.Time
 	}
@@ -70,6 +70,7 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		forwardChan: make(chan *aprs.Packet, forwarderQueueSize),
 		stop:        make(chan struct{}),
 		lastRx:      time.Now(),
+		beaconWaits: make(map[string]*beaconWait),
 	}
 
 	return ig, nil
@@ -420,13 +421,13 @@ func (i *IGate) sendBeaconRf(frame, payload string) {
 		}
 
 		sendStart := time.Now()
-		outcomeCh := i.expectBeacon(frame, payload, sendStart)
+		key, outcomeCh := i.expectBeacon(frame, payload, sendStart)
 
 		i.logger.Info("Beacon -> RF: ", frame)
 		i.tx.Send(frame)
 
 		success, continueRunning := i.waitForBeaconOutcome(outcomeCh)
-		i.clearBeaconExpectation(outcomeCh)
+		i.clearBeaconExpectation(key, outcomeCh)
 
 		if !continueRunning {
 			return
@@ -472,19 +473,25 @@ func (i *IGate) sleepWithStop(d time.Duration) bool {
 	}
 }
 
-func (i *IGate) expectBeacon(frame, payload string, started time.Time) <-chan bool {
+func (i *IGate) expectBeacon(frame, payload string, started time.Time) (string, <-chan bool) {
 	result := make(chan bool, 1)
 
+	key := strings.TrimSpace(frame)
+	payload = strings.TrimSpace(payload)
+
 	i.beaconMu.Lock()
-	i.beaconWait = &beaconWait{
-		frame:   frame,
-		payload: strings.TrimSpace(payload),
+	if i.beaconWaits == nil {
+		i.beaconWaits = make(map[string]*beaconWait)
+	}
+	i.beaconWaits[key] = &beaconWait{
+		frame:   key,
+		payload: payload,
 		started: started,
 		result:  result,
 	}
 	i.beaconMu.Unlock()
 
-	return result
+	return key, result
 }
 
 func (i *IGate) waitForBeaconOutcome(ch <-chan bool) (bool, bool) {
@@ -501,12 +508,16 @@ func (i *IGate) waitForBeaconOutcome(ch <-chan bool) (bool, bool) {
 	}
 }
 
-func (i *IGate) clearBeaconExpectation(ch <-chan bool) {
+func (i *IGate) clearBeaconExpectation(key string, ch <-chan bool) {
 	i.beaconMu.Lock()
 	defer i.beaconMu.Unlock()
 
-	if i.beaconWait != nil && i.beaconWait.result == ch {
-		i.beaconWait = nil
+	if i.beaconWaits == nil {
+		return
+	}
+
+	if wait, ok := i.beaconWaits[key]; ok && wait.result == ch {
+		delete(i.beaconWaits, key)
 	}
 }
 
@@ -514,38 +525,46 @@ func (i *IGate) observeBeacon(packet *aprs.Packet) {
 	i.beaconMu.Lock()
 	defer i.beaconMu.Unlock()
 
-	if i.beaconWait == nil {
+	if len(i.beaconWaits) == 0 {
 		return
 	}
 
 	payload := strings.TrimSpace(packet.Payload)
 
-	if strings.EqualFold(packet.Src, i.callSign) && payload == i.beaconWait.payload {
+	path := strings.Join(packet.Path, ",")
+	frame := buildBeaconFrame(packet.Src, path, payload)
+
+	if wait, ok := i.beaconWaits[frame]; ok && wait.payload == payload {
 		select {
-		case i.beaconWait.result <- true:
+		case wait.result <- true:
 		default:
 		}
-		i.beaconWait = nil
+		delete(i.beaconWaits, frame)
 		return
 	}
 
-	if i.isSelfPacket(packet) {
-		if payload == i.beaconWait.payload {
+	if i.isSelfPacket(packet) && payload != "" {
+		for key, wait := range i.beaconWaits {
+			if wait.payload == payload {
+				select {
+				case wait.result <- true:
+				default:
+				}
+				delete(i.beaconWaits, key)
+				return
+			}
+		}
+	}
+
+	now := time.Now()
+	for key, wait := range i.beaconWaits {
+		if now.Sub(wait.started) <= beaconCollisionWindow {
 			select {
-			case i.beaconWait.result <- true:
+			case wait.result <- false:
 			default:
 			}
-			i.beaconWait = nil
+			delete(i.beaconWaits, key)
 		}
-		return
-	}
-
-	if time.Since(i.beaconWait.started) <= beaconCollisionWindow {
-		select {
-		case i.beaconWait.result <- false:
-		default:
-		}
-		i.beaconWait = nil
 	}
 }
 
@@ -581,13 +600,15 @@ func (i *IGate) cancelPendingBeacon() {
 	i.beaconMu.Lock()
 	defer i.beaconMu.Unlock()
 
-	if i.beaconWait == nil {
+	if len(i.beaconWaits) == 0 {
 		return
 	}
 
-	select {
-	case i.beaconWait.result <- false:
-	default:
+	for key, wait := range i.beaconWaits {
+		select {
+		case wait.result <- false:
+		default:
+		}
+		delete(i.beaconWaits, key)
 	}
-	i.beaconWait = nil
 }

@@ -196,6 +196,106 @@ func TestSendBeaconRfIgnoresSelfCollision(t *testing.T) {
 	close(ig.stop)
 }
 
+func TestSendBeaconRfHandlesConcurrentSchedules(t *testing.T) {
+	restore := setTestBeaconTimings()
+	defer restore()
+
+	logger, err := log.New()
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	tx := &transmitter.Tx{
+		Chan: make(chan string, 4),
+	}
+
+	ig := &IGate{
+		callSign:    "N0CALL-9",
+		enableTx:    true,
+		tx:          tx,
+		logger:      logger,
+		stop:        make(chan struct{}),
+		forwardChan: make(chan *aprs.Packet, 1),
+	}
+
+	directDone := make(chan struct{})
+	go func() {
+		ig.sendBeaconRf("N0CALL-9>APRS:Beacon", "Beacon")
+		close(directDone)
+	}()
+
+	wideDone := make(chan struct{})
+	go func() {
+		ig.sendBeaconRf("N0CALL-9>APRS,WIDE1-1,WIDE2-1:Beacon", "Beacon")
+		close(wideDone)
+	}()
+
+	frames := map[string]bool{
+		"N0CALL-9>APRS:Beacon":                 false,
+		"N0CALL-9>APRS,WIDE1-1,WIDE2-1:Beacon": false,
+	}
+
+	ackFrame := func(frame string) {
+		switch frame {
+		case "N0CALL-9>APRS:Beacon":
+			ig.markRx()
+			ig.observeBeacon(&aprs.Packet{
+				Src:     "N0CALL-9",
+				Payload: "Beacon",
+			})
+		case "N0CALL-9>APRS,WIDE1-1,WIDE2-1:Beacon":
+			ig.markRx()
+			ig.observeBeacon(&aprs.Packet{
+				Src:     "N0CALL-9",
+				Path:    []string{"WIDE1-1", "WIDE2-1"},
+				Payload: "Beacon",
+			})
+		default:
+			t.Fatalf("unexpected frame value %q", frame)
+		}
+	}
+
+	first := waitForTx(t, tx, 200*time.Millisecond)
+	if _, ok := frames[first]; !ok {
+		t.Fatalf("unexpected first frame: %q", first)
+	}
+	frames[first] = true
+	ackFrame(first)
+
+	second := waitForTx(t, tx, 200*time.Millisecond)
+	if _, ok := frames[second]; !ok {
+		t.Fatalf("unexpected second frame: %q", second)
+	}
+	frames[second] = true
+	ackFrame(second)
+
+	if !frames["N0CALL-9>APRS:Beacon"] || !frames["N0CALL-9>APRS,WIDE1-1,WIDE2-1:Beacon"] {
+		t.Fatalf("missing expected frames: %+v", frames)
+	}
+
+	select {
+	case <-directDone:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("direct beacon did not finish")
+	}
+
+	select {
+	case <-wideDone:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("wide beacon did not finish")
+	}
+
+	time.Sleep(10 * time.Millisecond)
+
+	select {
+	case extra := <-tx.Chan:
+		t.Fatalf("unexpected extra transmission: %q", extra)
+	default:
+	}
+
+	close(ig.stop)
+}
+
 func waitForTx(t *testing.T, tx *transmitter.Tx, timeout time.Duration) string {
 	t.Helper()
 
