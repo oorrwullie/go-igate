@@ -47,6 +47,31 @@ func TestIGate_startBeacon(t *testing.T) {
 			wantErrString: "rf-interval cannot be < 10m",
 		},
 		{
+			name: "additional rf beacon interval too short",
+			fields: fields{
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled: true,
+						ExtraRF: []config.RFBeacon{
+							{
+								Path:     "",
+								Interval: 5 * time.Minute,
+							},
+						},
+					},
+				},
+				callSign:  "N0CALL-10",
+				inputChan: make(chan string),
+				enableTx:  false,
+				tx:        &transmitter.Tx{},
+				logger:    mustLogger(t),
+				Aprsis:    &aprs.AprsIs{},
+				stop:      make(chan struct{}),
+			},
+			wantErr:       true,
+			wantErrString: "additional-rf-beacons interval cannot be < 10m",
+		},
+		{
 			name: "test no callsign",
 			fields: fields{
 				cfg: config.IGate{
@@ -82,7 +107,32 @@ func TestIGate_startBeacon(t *testing.T) {
 				},
 				callSign:  "N0CALL-10",
 				inputChan: make(chan string),
-				enableTx:  true,
+				enableTx:  false,
+				tx:        &transmitter.Tx{},
+				logger:    mustLogger(t),
+				Aprsis:    &aprs.AprsIs{},
+				stop:      make(chan struct{}),
+			},
+			wantErr: false,
+		},
+		{
+			name: "additional rf beacon without primary",
+			fields: fields{
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled: true,
+						ExtraRF: []config.RFBeacon{
+							{
+								Path:     "",
+								Interval: 10 * time.Minute,
+							},
+						},
+						DisableTCP: true,
+					},
+				},
+				callSign:  "N0CALL-10",
+				inputChan: make(chan string),
+				enableTx:  false,
 				tx:        &transmitter.Tx{},
 				logger:    mustLogger(t),
 				Aprsis:    &aprs.AprsIs{},

@@ -175,15 +175,19 @@ func (i *IGate) startBeacon() error {
 
 	rfInterval := i.cfg.Beacon.RFInterval
 	isInterval := i.cfg.Beacon.ISInterval
-
-	if rfInterval <= 0 && isInterval <= 0 && i.cfg.Beacon.Interval > 0 {
-		rfInterval = i.cfg.Beacon.Interval
-		isInterval = i.cfg.Beacon.Interval
-	}
+	extraRF := i.cfg.Beacon.ExtraRF
 
 	if !i.cfg.Beacon.Enabled {
 		fmt.Println("beacon is disabled")
 		return nil
+	}
+
+	if !i.cfg.Beacon.DisableRF && rfInterval <= 0 && len(extraRF) == 0 && i.cfg.Beacon.Interval > 0 {
+		rfInterval = i.cfg.Beacon.Interval
+	}
+
+	if !i.cfg.Beacon.DisableTCP && isInterval <= 0 && i.cfg.Beacon.Interval > 0 {
+		isInterval = i.cfg.Beacon.Interval
 	}
 
 	if i.cfg.Beacon.DisableRF {
@@ -202,7 +206,38 @@ func (i *IGate) startBeacon() error {
 		return fmt.Errorf("is-interval cannot be < 10m")
 	}
 
-	if rfInterval <= 0 && isInterval <= 0 {
+	type rfSchedule struct {
+		path     string
+		interval time.Duration
+	}
+
+	var rfSchedules []rfSchedule
+
+	if !i.cfg.Beacon.DisableRF {
+		if rfInterval > 0 {
+			rfSchedules = append(rfSchedules, rfSchedule{
+				path:     strings.TrimSpace(i.cfg.Beacon.RFPath),
+				interval: rfInterval,
+			})
+		}
+
+		for _, schedule := range extraRF {
+			if schedule.Interval <= 0 {
+				return fmt.Errorf("additional-rf-beacons interval must be > 0")
+			}
+
+			if schedule.Interval < minInterval {
+				return fmt.Errorf("additional-rf-beacons interval cannot be < 10m")
+			}
+
+			rfSchedules = append(rfSchedules, rfSchedule{
+				path:     schedule.Path,
+				interval: schedule.Interval,
+			})
+		}
+	}
+
+	if len(rfSchedules) == 0 && isInterval <= 0 {
 		if i.cfg.Beacon.DisableRF && i.cfg.Beacon.DisableTCP {
 			fmt.Println("beacon destinations disabled")
 			return nil
@@ -224,47 +259,49 @@ func (i *IGate) startBeacon() error {
 		i.logger.Info("Starting beacon schedule APRS-IS every ", isInterval)
 	}
 
-	var (
-		rfTicker *time.Ticker
-		isTicker *time.Ticker
-		rfChan   <-chan time.Time
-		isChan   <-chan time.Time
-	)
-
-	if rfInterval > 0 {
-		rfTicker = time.NewTicker(rfInterval)
-		rfChan = rfTicker.C
+	for _, schedule := range rfSchedules {
+		path := schedule.path
+		if path == "" {
+			path = "(direct)"
+		}
+		i.logger.Info("RF beacon path ", path, " every ", schedule.interval)
 	}
 
+	var isTicker *time.Ticker
+	var isChan <-chan time.Time
 	if isInterval > 0 {
 		isTicker = time.NewTicker(isInterval)
 		isChan = isTicker.C
 	}
 
-	sendBeacon := func(toAprsIs, toRf bool) {
-		if toAprsIs && !i.cfg.Beacon.DisableTCP && i.Aprsis != nil && i.Aprsis.Conn != nil {
+	sendAprsIs := func() {
+		if !i.cfg.Beacon.DisableTCP && i.Aprsis != nil && i.Aprsis.Conn != nil {
 			isFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.ISPath, i.cfg.Beacon.Comment)
 			i.logger.Info("Beacon -> APRS-IS: ", isFrame)
 			i.Aprsis.Conn.PrintfLine(isFrame)
 		}
+	}
 
-		if toRf && !i.cfg.Beacon.DisableRF && i.enableTx && i.tx != nil {
-			rfFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.RFPath, i.cfg.Beacon.Comment)
+	sendRF := func(path string) {
+		if !i.cfg.Beacon.DisableRF && i.enableTx && i.tx != nil {
+			rfFrame := buildBeaconFrame(i.callSign, path, i.cfg.Beacon.Comment)
 			go i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment)
 		}
 	}
 
 	// Send initial beacon to each configured destination
-	sendBeacon(isInterval > 0, rfInterval > 0)
+	if isInterval > 0 {
+		sendAprsIs()
+	}
+
+	for _, schedule := range rfSchedules {
+		sendRF(schedule.path)
+	}
 
 	go func() {
 		defer func() {
 			if isTicker != nil {
 				isTicker.Stop()
-			}
-
-			if rfTicker != nil {
-				rfTicker.Stop()
 			}
 		}()
 
@@ -273,12 +310,27 @@ func (i *IGate) startBeacon() error {
 			case <-i.stop:
 				return
 			case <-isChan:
-				sendBeacon(true, false)
-			case <-rfChan:
-				sendBeacon(false, true)
+				sendAprsIs()
 			}
 		}
 	}()
+
+	for _, schedule := range rfSchedules {
+		s := schedule
+		go func() {
+			ticker := time.NewTicker(s.interval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-i.stop:
+					return
+				case <-ticker.C:
+					sendRF(s.path)
+				}
+			}
+		}()
+	}
 
 	return nil
 }

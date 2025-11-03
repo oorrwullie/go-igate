@@ -82,6 +82,10 @@ igate:
     rf-path: "WIDE2-1"
     # Path inserted on APRS-IS frames; qAR + your callsign is common.
     is-path: "TCPIP*,qAR,N0CALL-10"
+    # Optional secondary RF schedules (e.g. direct beacons). Each must be >=10m.
+    additional-rf-beacons:
+    - path: ""
+      interval: 10m
   aprsis:
     # enable to connect to APRS-IS server for iGate
     enabled: false
