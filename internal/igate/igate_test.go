@@ -30,7 +30,12 @@ func TestIGate_startBeacon(t *testing.T) {
 		{
 			name: "test short RF beacon interval",
 			fields: fields{
-				cfg:       config.IGate{Beacon: config.Beacon{Interval: 1}},
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled:  true,
+						Interval: 1,
+					},
+				},
 				callSign:  "N0CALL-10",
 				inputChan: make(chan string),
 				enableTx:  false,
@@ -44,7 +49,12 @@ func TestIGate_startBeacon(t *testing.T) {
 		{
 			name: "test no callsign",
 			fields: fields{
-				cfg:       config.IGate{Beacon: config.Beacon{Interval: 10 * time.Minute}},
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled:  true,
+						Interval: 10 * time.Minute,
+					},
+				},
 				inputChan: make(chan string),
 				enableTx:  false,
 				tx:        &transmitter.Tx{},
@@ -53,6 +63,54 @@ func TestIGate_startBeacon(t *testing.T) {
 			},
 			wantErr:       true,
 			wantErrString: "beacon call-sign not configured",
+		},
+		{
+			name: "disable aprs-is beacons allows short interval",
+			fields: fields{
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled:    true,
+						RFInterval: 30 * time.Minute,
+						ISInterval: time.Minute,
+						DisableTCP: true,
+						DisableRF:  false,
+						Comment:    "Test",
+						RFPath:     "WIDE1-1",
+						ISPath:     "TCPIP*",
+					},
+					Aprsis: config.AprsIs{Enabled: true},
+				},
+				callSign:  "N0CALL-10",
+				inputChan: make(chan string),
+				enableTx:  true,
+				tx:        &transmitter.Tx{},
+				logger:    mustLogger(t),
+				Aprsis:    &aprs.AprsIs{},
+				stop:      make(chan struct{}),
+			},
+			wantErr: false,
+		},
+		{
+			name: "disable both destinations skips beaconing",
+			fields: fields{
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled:    true,
+						RFInterval: 30 * time.Minute,
+						ISInterval: 30 * time.Minute,
+						DisableRF:  true,
+						DisableTCP: true,
+					},
+				},
+				callSign:  "N0CALL-10",
+				inputChan: make(chan string),
+				enableTx:  true,
+				tx:        &transmitter.Tx{},
+				logger:    mustLogger(t),
+				Aprsis:    &aprs.AprsIs{},
+				stop:      make(chan struct{}),
+			},
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
@@ -74,6 +132,20 @@ func TestIGate_startBeacon(t *testing.T) {
 			if tt.wantErr && err.Error() != tt.wantErrString {
 				t.Errorf("startBeacon() errorString = %v, wantErrString %v", err.Error(), tt.wantErrString)
 			}
+			if !tt.wantErr && i.stop != nil {
+				close(i.stop)
+			}
 		})
 	}
+}
+
+func mustLogger(t *testing.T) *log.Logger {
+	t.Helper()
+
+	logger, err := log.New()
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	return logger
 }

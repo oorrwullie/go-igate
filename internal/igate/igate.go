@@ -175,6 +175,19 @@ func (i *IGate) startBeacon() error {
 		isInterval = i.cfg.Beacon.Interval
 	}
 
+	if !i.cfg.Beacon.Enabled {
+		fmt.Println("beacon is disabled")
+		return nil
+	}
+
+	if i.cfg.Beacon.DisableRF {
+		rfInterval = 0
+	}
+
+	if i.cfg.Beacon.DisableTCP {
+		isInterval = 0
+	}
+
 	if rfInterval > 0 && rfInterval < minInterval {
 		return fmt.Errorf("rf-interval cannot be < 10m")
 	}
@@ -184,16 +197,16 @@ func (i *IGate) startBeacon() error {
 	}
 
 	if rfInterval <= 0 && isInterval <= 0 {
+		if i.cfg.Beacon.DisableRF && i.cfg.Beacon.DisableTCP {
+			fmt.Println("beacon destinations disabled")
+			return nil
+		}
+
 		return fmt.Errorf("beacon interval not configured")
 	}
 
 	if i.callSign == "" {
 		return fmt.Errorf("beacon call-sign not configured")
-	}
-
-	if !i.cfg.Beacon.Enabled {
-		fmt.Println("beacon is disabled")
-		return nil
 	}
 
 	switch {
@@ -223,13 +236,13 @@ func (i *IGate) startBeacon() error {
 	}
 
 	sendBeacon := func(toAprsIs, toRf bool) {
-		if toAprsIs {
+		if toAprsIs && !i.cfg.Beacon.DisableTCP && i.Aprsis != nil && i.Aprsis.Conn != nil {
 			isFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.ISPath, i.cfg.Beacon.Comment)
 			i.logger.Info("Beacon -> APRS-IS: ", isFrame)
 			i.Aprsis.Conn.PrintfLine(isFrame)
 		}
 
-		if toRf && i.enableTx && i.tx != nil {
+		if toRf && !i.cfg.Beacon.DisableRF && i.enableTx && i.tx != nil {
 			rfFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.RFPath, i.cfg.Beacon.Comment)
 			go i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment)
 		}

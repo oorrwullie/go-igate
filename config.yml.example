@@ -70,6 +70,9 @@ igate:
     rf-interval: 30m
     # interval for APRS-IS beacons (>=10m). Falls back to "interval" if omitted.
     is-interval: 30m
+    # set to true to suppress RF beaconing or APRS-IS beaconing respectively.
+    disable-rf: false
+    disable-tcp: false
     # optional legacy interval applied to both RF and APRS-IS when the per-path
     # values above are not provided.
     # interval: 30m

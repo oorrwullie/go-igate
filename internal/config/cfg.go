@@ -51,6 +51,8 @@ type (
 		Interval   time.Duration
 		RFInterval time.Duration `yaml:"rf-interval"`
 		ISInterval time.Duration `yaml:"is-interval"`
+		DisableRF  bool          `yaml:"disable-rf"`
+		DisableTCP bool          `yaml:"disable-tcp"`
 		Comment    string
 		RFPath     string `yaml:"rf-path"`
 		ISPath     string `yaml:"is-path"`
@@ -127,6 +129,14 @@ func GetConfig() (Config, error) {
 
 	if cfg.IGate.Beacon.ISInterval <= 0 {
 		cfg.IGate.Beacon.ISInterval = cfg.IGate.Beacon.Interval
+	}
+
+	if cfg.IGate.Beacon.DisableRF {
+		cfg.IGate.Beacon.RFInterval = 0
+	}
+
+	if cfg.IGate.Beacon.DisableTCP {
+		cfg.IGate.Beacon.ISInterval = 0
 	}
 
 	if cfg.Transmitter.TxDelay <= 0 {
