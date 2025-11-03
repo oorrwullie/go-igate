@@ -11,28 +11,44 @@ import (
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/oorrwullie/go-igate/internal/pubsub"
 	"github.com/oorrwullie/go-igate/internal/transmitter"
+	"golang.org/x/sync/errgroup"
 )
 
 type (
 	IGate struct {
-		cfg       config.IGate
-		callSign  string
-		inputChan <-chan string
-		enableTx  bool
-		tx        *transmitter.Tx
-		logger    *log.Logger
-		Aprsis    *aprs.AprsIs
-		stop      chan bool
-		lastRxMu  sync.Mutex
-		lastRx    time.Time
+		cfg         config.IGate
+		callSign    string
+		inputChan   <-chan string
+		enableTx    bool
+		tx          *transmitter.Tx
+		logger      *log.Logger
+		Aprsis      *aprs.AprsIs
+		forwardChan chan *aprs.Packet
+		stop        chan struct{}
+		stopOnce    sync.Once
+		rfBeaconMu  sync.Mutex
+		beaconMu    sync.Mutex
+		beaconWait  *beaconWait
+		lastRxMu    sync.Mutex
+		lastRx      time.Time
 	}
 )
 
+type beaconWait struct {
+	frame   string
+	payload string
+	started time.Time
+	result  chan bool
+}
+
 const minPacketSize = 35
-const (
-	beaconChannelQuiet  = 3 * time.Second
-	beaconMaxWait       = 45 * time.Second
-	beaconRetryInterval = 5 * time.Second
+const forwarderQueueSize = 32
+
+var (
+	beaconChannelQuiet    = 3 * time.Second
+	beaconRetryInterval   = 5 * time.Second
+	beaconCollisionWindow = 5 * time.Second
+	beaconWarmup          = 2 * time.Second
 )
 
 func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx, callSign string, logger *log.Logger) (*IGate, error) {
@@ -44,15 +60,16 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 	inputChan := ps.Subscribe()
 
 	ig := &IGate{
-		cfg:       cfg,
-		callSign:  callSign,
-		inputChan: inputChan,
-		enableTx:  enableTx,
-		tx:        tx,
-		logger:    logger,
-		stop:      make(chan bool),
-		Aprsis:    aprsis,
-		lastRx:    time.Now(),
+		cfg:         cfg,
+		callSign:    callSign,
+		inputChan:   inputChan,
+		enableTx:    enableTx,
+		tx:          tx,
+		logger:      logger,
+		Aprsis:      aprsis,
+		forwardChan: make(chan *aprs.Packet, forwarderQueueSize),
+		stop:        make(chan struct{}),
+		lastRx:      time.Now(),
 	}
 
 	return ig, nil
@@ -66,21 +83,37 @@ func (i *IGate) Run() error {
 		}
 	}
 
-	i.listenForMessages()
+	var g errgroup.Group
 
-	return nil
+	g.Go(func() error {
+		return i.forwardPackets()
+	})
+
+	g.Go(func() error {
+		return i.listenForMessages()
+	})
+
+	return g.Wait()
 }
 
 func (i *IGate) Stop() {
-	i.stop <- true
+	i.stopOnce.Do(func() {
+		close(i.stop)
+		i.cancelPendingBeacon()
+	})
 }
 
-func (i *IGate) listenForMessages() {
+func (i *IGate) listenForMessages() error {
+	defer close(i.forwardChan)
+
 	for {
 		select {
 		case <-i.stop:
-			return
-		case msg := <-i.inputChan:
+			return nil
+		case msg, ok := <-i.inputChan:
+			if !ok {
+				return nil
+			}
 			i.markRx()
 
 			if len(msg) < minPacketSize {
@@ -94,14 +127,38 @@ func (i *IGate) listenForMessages() {
 				continue
 			}
 
-			if !packet.IsAckMessage() && packet.Type().ForwardToAprsIs() {
-				uploadFrame := formatForAprsIs(packet, i.callSign)
-				fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
-				err = i.Aprsis.Upload(uploadFrame)
-				if err != nil {
-					i.logger.Error("Error uploading APRS packet: ", err)
-					continue
+			shouldForward := !packet.IsAckMessage() && packet.Type().ForwardToAprsIs()
+			if shouldForward {
+				select {
+				case <-i.stop:
+					return nil
+				case i.forwardChan <- packet:
 				}
+			}
+
+			i.observeBeacon(packet)
+		}
+	}
+}
+
+func (i *IGate) forwardPackets() error {
+	for {
+		select {
+		case <-i.stop:
+			return nil
+		case packet, ok := <-i.forwardChan:
+			if !ok {
+				return nil
+			}
+
+			if packet == nil {
+				continue
+			}
+
+			uploadFrame := formatForAprsIs(packet, i.callSign)
+			fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
+			if err := i.Aprsis.Upload(uploadFrame); err != nil {
+				i.logger.Error("Error uploading APRS packet: ", err)
 			}
 		}
 	}
@@ -174,26 +231,7 @@ func (i *IGate) startBeacon() error {
 
 		if toRf && i.enableTx && i.tx != nil {
 			rfFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.RFPath, i.cfg.Beacon.Comment)
-			i.logger.Info("Beacon -> RF: ", rfFrame)
-			go func(msg string) {
-				const warmup = 2 * time.Second
-				deadline := time.Now().Add(beaconMaxWait)
-
-				for {
-					if i.channelQuietFor(beaconChannelQuiet) {
-						time.Sleep(warmup)
-						i.tx.Send(msg)
-						return
-					}
-
-					if time.Now().After(deadline) {
-						i.logger.Warn("Skipping beacon -> RF due to continuous channel activity")
-						return
-					}
-
-					time.Sleep(beaconRetryInterval)
-				}
-			}(rfFrame)
+			go i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment)
 		}
 	}
 
@@ -295,4 +333,151 @@ func (i *IGate) channelQuietFor(duration time.Duration) bool {
 	}
 
 	return time.Since(i.lastRx) >= duration
+}
+
+func (i *IGate) sendBeaconRf(frame, payload string) {
+	i.rfBeaconMu.Lock()
+	defer i.rfBeaconMu.Unlock()
+
+	for {
+		if !i.waitForQuiet(beaconChannelQuiet) {
+			return
+		}
+
+		if !i.sleepWithStop(beaconWarmup) {
+			return
+		}
+
+		sendStart := time.Now()
+		outcomeCh := i.expectBeacon(frame, payload, sendStart)
+
+		i.logger.Info("Beacon -> RF: ", frame)
+		i.tx.Send(frame)
+
+		success, continueRunning := i.waitForBeaconOutcome(outcomeCh)
+		i.clearBeaconExpectation(outcomeCh)
+
+		if !continueRunning {
+			return
+		}
+
+		if success {
+			i.logger.Debug("Beacon RF transmission confirmed without collision")
+			return
+		}
+
+		i.logger.Warn("Beacon collision detected; backing off before retry")
+		if !i.sleepWithStop(beaconRetryInterval) {
+			return
+		}
+	}
+}
+
+func (i *IGate) waitForQuiet(duration time.Duration) bool {
+	for {
+		if i.channelQuietFor(duration) {
+			return true
+		}
+
+		if !i.sleepWithStop(beaconRetryInterval) {
+			return false
+		}
+	}
+}
+
+func (i *IGate) sleepWithStop(d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-i.stop:
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (i *IGate) expectBeacon(frame, payload string, started time.Time) <-chan bool {
+	result := make(chan bool, 1)
+
+	i.beaconMu.Lock()
+	i.beaconWait = &beaconWait{
+		frame:   frame,
+		payload: strings.TrimSpace(payload),
+		started: started,
+		result:  result,
+	}
+	i.beaconMu.Unlock()
+
+	return result
+}
+
+func (i *IGate) waitForBeaconOutcome(ch <-chan bool) (bool, bool) {
+	timer := time.NewTimer(beaconCollisionWindow)
+	defer timer.Stop()
+
+	select {
+	case <-i.stop:
+		return false, false
+	case res := <-ch:
+		return res, true
+	case <-timer.C:
+		return false, true
+	}
+}
+
+func (i *IGate) clearBeaconExpectation(ch <-chan bool) {
+	i.beaconMu.Lock()
+	defer i.beaconMu.Unlock()
+
+	if i.beaconWait != nil && i.beaconWait.result == ch {
+		i.beaconWait = nil
+	}
+}
+
+func (i *IGate) observeBeacon(packet *aprs.Packet) {
+	i.beaconMu.Lock()
+	defer i.beaconMu.Unlock()
+
+	if i.beaconWait == nil {
+		return
+	}
+
+	payload := strings.TrimSpace(packet.Payload)
+
+	if strings.EqualFold(packet.Src, i.callSign) && payload == i.beaconWait.payload {
+		select {
+		case i.beaconWait.result <- true:
+		default:
+		}
+		i.beaconWait = nil
+		return
+	}
+
+	if time.Since(i.beaconWait.started) <= beaconCollisionWindow {
+		select {
+		case i.beaconWait.result <- false:
+		default:
+		}
+		i.beaconWait = nil
+	}
+}
+
+func (i *IGate) cancelPendingBeacon() {
+	i.beaconMu.Lock()
+	defer i.beaconMu.Unlock()
+
+	if i.beaconWait == nil {
+		return
+	}
+
+	select {
+	case i.beaconWait.result <- false:
+	default:
+	}
+	i.beaconWait = nil
 }

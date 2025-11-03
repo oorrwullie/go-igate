@@ -19,7 +19,7 @@ func TestIGate_startBeacon(t *testing.T) {
 		tx        *transmitter.Tx
 		logger    *log.Logger
 		Aprsis    *aprs.AprsIs
-		stop      chan bool
+		stop      chan struct{}
 	}
 	tests := []struct {
 		name          string
@@ -36,7 +36,7 @@ func TestIGate_startBeacon(t *testing.T) {
 				enableTx:  false,
 				tx:        &transmitter.Tx{},
 				Aprsis:    &aprs.AprsIs{},
-				stop:      make(chan bool),
+				stop:      make(chan struct{}),
 			},
 			wantErr:       true,
 			wantErrString: "rf-interval cannot be < 10m",
@@ -49,7 +49,7 @@ func TestIGate_startBeacon(t *testing.T) {
 				enableTx:  false,
 				tx:        &transmitter.Tx{},
 				Aprsis:    &aprs.AprsIs{},
-				stop:      make(chan bool),
+				stop:      make(chan struct{}),
 			},
 			wantErr:       true,
 			wantErrString: "beacon call-sign not configured",
