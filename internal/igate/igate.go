@@ -471,6 +471,10 @@ func (i *IGate) observeBeacon(packet *aprs.Packet) {
 		return
 	}
 
+	if i.isSelfPacket(packet) {
+		return
+	}
+
 	if time.Since(i.beaconWait.started) <= beaconCollisionWindow {
 		select {
 		case i.beaconWait.result <- false:
@@ -478,6 +482,34 @@ func (i *IGate) observeBeacon(packet *aprs.Packet) {
 		}
 		i.beaconWait = nil
 	}
+}
+
+func (i *IGate) isSelfPacket(packet *aprs.Packet) bool {
+	if packet == nil {
+		return false
+	}
+
+	if strings.EqualFold(packet.Src, i.callSign) {
+		return true
+	}
+
+	self := strings.ToUpper(strings.TrimSpace(i.callSign))
+	if self == "" {
+		return false
+	}
+
+	for _, hop := range packet.Path {
+		hop = strings.TrimSpace(hop)
+		if hop == "" {
+			continue
+		}
+		hop = strings.TrimSuffix(strings.ToUpper(hop), "*")
+		if hop == self {
+			return true
+		}
+	}
+
+	return false
 }
 
 func (i *IGate) cancelPendingBeacon() {

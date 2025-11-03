@@ -141,6 +141,67 @@ func TestSendBeaconRfSucceedsFirstAttempt(t *testing.T) {
 	close(ig.stop)
 }
 
+func TestSendBeaconRfIgnoresSelfCollision(t *testing.T) {
+	restore := setTestBeaconTimings()
+	defer restore()
+
+	logger, err := log.New()
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	tx := &transmitter.Tx{
+		Chan: make(chan string, 4),
+	}
+
+	ig := &IGate{
+		callSign:    "N0CALL-7",
+		enableTx:    true,
+		tx:          tx,
+		logger:      logger,
+		stop:        make(chan struct{}),
+		forwardChan: make(chan *aprs.Packet, 1),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		ig.sendBeaconRf("N0CALL-7>APRS:SelfAware", "SelfAware")
+		close(done)
+	}()
+
+	first := waitForTx(t, tx, 200*time.Millisecond)
+	if first == "" {
+		t.Fatalf("expected initial beacon transmission")
+	}
+
+	ig.markRx()
+	ig.observeBeacon(&aprs.Packet{
+		Src:     "OTHER-1",
+		Path:    []string{"N0CALL-7*", "WIDE2-1"},
+		Payload: "SelfAware",
+	})
+
+	select {
+	case retry := <-tx.Chan:
+		t.Fatalf("unexpected retry after self-collision: %q", retry)
+	case <-time.After(5 * time.Millisecond):
+	}
+
+	ig.markRx()
+	ig.observeBeacon(&aprs.Packet{
+		Src:     "N0CALL-7",
+		Payload: "SelfAware",
+	})
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatalf("sendBeaconRf did not finish after acknowledging self-collision")
+	}
+
+	close(ig.stop)
+}
+
 func waitForTx(t *testing.T, tx *transmitter.Tx, timeout time.Duration) string {
 	t.Helper()
 
