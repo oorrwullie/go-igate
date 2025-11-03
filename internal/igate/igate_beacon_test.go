@@ -182,21 +182,15 @@ func TestSendBeaconRfIgnoresSelfCollision(t *testing.T) {
 	})
 
 	select {
-	case retry := <-tx.Chan:
-		t.Fatalf("unexpected retry after self-collision: %q", retry)
-	case <-time.After(5 * time.Millisecond):
-	}
-
-	ig.markRx()
-	ig.observeBeacon(&aprs.Packet{
-		Src:     "N0CALL-7",
-		Payload: "SelfAware",
-	})
-
-	select {
 	case <-done:
 	case <-time.After(200 * time.Millisecond):
-		t.Fatalf("sendBeaconRf did not finish after acknowledging self-collision")
+		t.Fatalf("sendBeaconRf did not finish after acknowledging self collision via path")
+	}
+
+	select {
+	case retry := <-tx.Chan:
+		t.Fatalf("unexpected retry after self-collision: %q", retry)
+	default:
 	}
 
 	close(ig.stop)

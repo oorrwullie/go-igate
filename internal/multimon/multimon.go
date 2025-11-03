@@ -15,17 +15,18 @@ import (
 )
 
 type Multimon struct {
-	cache     *cache.Cache
-	cfg       config.Multimon
-	logger    *log.Logger
-	inputChan chan []byte
-	pubsub    *pubsub.PubSub
-	Cmd       *exec.Cmd
-	tx        *transmitter.Tx
+	cache           *cache.Cache
+	cfg             config.Multimon
+	logger          *log.Logger
+	inputChan       chan []byte
+	pubsub          *pubsub.PubSub
+	Cmd             *exec.Cmd
+	tx              *transmitter.Tx
+	stationCallsign string
 }
 
 // New creates a new multimon-ng instance
-func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *cache.Cache, tx *transmitter.Tx, logger *log.Logger) *Multimon {
+func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *cache.Cache, tx *transmitter.Tx, stationCallsign string, logger *log.Logger) *Multimon {
 	requiredArgs := []string{
 		"-a",
 		"AFSK1200",
@@ -46,13 +47,14 @@ func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *c
 	cmd := exec.Command(binary, args...)
 
 	return &Multimon{
-		cache:     cache,
-		cfg:       cfg,
-		logger:    logger,
-		inputChan: inputChan,
-		pubsub:    ps,
-		Cmd:       cmd,
-		tx:        tx,
+		cache:           cache,
+		cfg:             cfg,
+		logger:          logger,
+		inputChan:       inputChan,
+		pubsub:          ps,
+		Cmd:             cmd,
+		tx:              tx,
+		stationCallsign: strings.ToUpper(strings.TrimSpace(stationCallsign)),
 	}
 }
 
@@ -98,19 +100,29 @@ func (m *Multimon) Start() error {
 			for scanner.Scan() {
 				msg := scanner.Text()
 				m.logger.Debug("Got message: ", msg)
-				if exists := m.cache.Set(msg, time.Now()); !exists {
-					m.logger.Info("packet received: ", msg)
 
-					normalized := normalizeMultimonMessage(msg)
-
-					// if m.tx != nil {
-					// 	fmt.Println("initiating tx backoff...")
-					// 	go m.tx.RxBackoff()
-					// }
-					m.pubsub.Publish(normalized)
-				} else {
-					m.logger.Info("Duplicate packet received: ", msg)
+				normalized := normalizeMultimonMessage(msg)
+				if normalized == "" {
+					continue
 				}
+
+				duplicate := m.cache.Set(msg, time.Now())
+				if duplicate && !m.isSelfMessage(normalized) {
+					m.logger.Info("Duplicate packet received: ", msg)
+					continue
+				}
+
+				if duplicate {
+					m.logger.Debug("Allowing duplicate for station beacon: ", normalized)
+				} else {
+					m.logger.Info("packet received: ", msg)
+				}
+
+				// if m.tx != nil {
+				// 	fmt.Println("initiating tx backoff...")
+				// 	go m.tx.RxBackoff()
+				// }
+				m.pubsub.Publish(normalized)
 			}
 
 			if err := scanner.Err(); err != nil {
@@ -127,4 +139,22 @@ func normalizeMultimonMessage(msg string) string {
 	msg = strings.TrimSpace(msg)
 	msg = strings.TrimPrefix(msg, "APRS: ")
 	return msg
+}
+
+func (m *Multimon) isSelfMessage(msg string) bool {
+	if m.stationCallsign == "" {
+		return false
+	}
+
+	frame := strings.TrimSpace(msg)
+	if frame == "" {
+		return false
+	}
+
+	parts := strings.SplitN(frame, ">", 2)
+	if len(parts) == 0 {
+		return false
+	}
+
+	return strings.EqualFold(strings.TrimSpace(parts[0]), m.stationCallsign)
 }

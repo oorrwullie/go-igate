@@ -139,6 +139,44 @@ func TestIGate_startBeacon(t *testing.T) {
 	}
 }
 
+func TestListenForMessagesSkipsSelfForward(t *testing.T) {
+	logger := mustLogger(t)
+	input := make(chan string, 1)
+	forward := make(chan *aprs.Packet, 1)
+	stop := make(chan struct{})
+
+	ig := &IGate{
+		callSign:    "N0CALL-1",
+		inputChan:   input,
+		forwardChan: forward,
+		stop:        stop,
+		logger:      logger,
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_ = ig.listenForMessages()
+		close(done)
+	}()
+
+	frame := "N0CALL-1>APRS,WIDE1-1:=4010.30N/11137.60W#STATUS TEST"
+	input <- frame
+
+	select {
+	case pkt := <-forward:
+		t.Fatalf("expected no forwarded packet, got %#v", pkt)
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	close(stop)
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatalf("listenForMessages did not stop")
+	}
+}
+
 func mustLogger(t *testing.T) *log.Logger {
 	t.Helper()
 

@@ -127,6 +127,12 @@ func (i *IGate) listenForMessages() error {
 				continue
 			}
 
+			if strings.EqualFold(packet.Src, i.callSign) {
+				i.logger.Debug("Skipping APRS-IS forwarding of self-originated packet: ", msg)
+				i.observeBeacon(packet)
+				continue
+			}
+
 			shouldForward := !packet.IsAckMessage() && packet.Type().ForwardToAprsIs()
 			if shouldForward {
 				select {
@@ -472,6 +478,13 @@ func (i *IGate) observeBeacon(packet *aprs.Packet) {
 	}
 
 	if i.isSelfPacket(packet) {
+		if payload == i.beaconWait.payload {
+			select {
+			case i.beaconWait.result <- true:
+			default:
+			}
+			i.beaconWait = nil
+		}
 		return
 	}
 
