@@ -2,43 +2,75 @@ package igate
 
 import (
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/oorrwullie/go-igate/internal/pubsub"
+	"github.com/oorrwullie/go-igate/internal/transmitter"
+	"golang.org/x/sync/errgroup"
 )
 
 type (
 	IGate struct {
-		cfg       config.IGate
-		callSign  string
-		inputChan chan string
-		enableTx  bool
-		txChan    chan string
-		logger    *log.Logger
-		Aprsis    *aprs.AprsIs
-		stop      chan bool
+		cfg         config.IGate
+		callSign    string
+		inputChan   <-chan string
+		enableTx    bool
+		tx          *transmitter.Tx
+		logger      *log.Logger
+		Aprsis      *aprs.AprsIs
+		forwardChan chan *aprs.Packet
+		stop        chan struct{}
+		stopOnce    sync.Once
+		rfBeaconMu  sync.Mutex
+		beaconMu    sync.Mutex
+		beaconWaits map[string]*beaconWait
+		lastRxMu    sync.Mutex
+		lastRx      time.Time
 	}
 )
 
-const minPacketSize = 35
+type beaconWait struct {
+	frame   string
+	payload string
+	started time.Time
+	result  chan bool
+}
 
-func New(cfg config.IGate, inputChan chan string, enableTx bool, txChan chan string, callSign string, logger *log.Logger) (*IGate, error) {
+const minPacketSize = 35
+const forwarderQueueSize = 32
+
+var (
+	beaconChannelQuiet    = 3 * time.Second
+	beaconRetryInterval   = 5 * time.Second
+	beaconCollisionWindow = 5 * time.Second
+	beaconWarmup          = 2 * time.Second
+)
+
+func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx, callSign string, logger *log.Logger) (*IGate, error) {
 	aprsis, err := aprs.New(cfg.Aprsis, callSign, cfg.Beacon.Comment, logger)
 	if err != nil {
 		return nil, fmt.Errorf("Error creating APRS client: %v", err)
 	}
 
+	inputChan := ps.Subscribe()
+
 	ig := &IGate{
-		cfg:       cfg,
-		callSign:  callSign,
-		inputChan: inputChan,
-		enableTx:  enableTx,
-		txChan:    txChan,
-		logger:    logger,
-		stop:      make(chan bool),
-		Aprsis:    aprsis,
+		cfg:         cfg,
+		callSign:    callSign,
+		inputChan:   inputChan,
+		enableTx:    enableTx,
+		tx:          tx,
+		logger:      logger,
+		Aprsis:      aprsis,
+		forwardChan: make(chan *aprs.Packet, forwarderQueueSize),
+		stop:        make(chan struct{}),
+		lastRx:      time.Now(),
+		beaconWaits: make(map[string]*beaconWait),
 	}
 
 	return ig, nil
@@ -52,21 +84,39 @@ func (i *IGate) Run() error {
 		}
 	}
 
-	i.listenForMessages()
+	var g errgroup.Group
 
-	return nil
+	g.Go(func() error {
+		return i.forwardPackets()
+	})
+
+	g.Go(func() error {
+		return i.listenForMessages()
+	})
+
+	return g.Wait()
 }
 
 func (i *IGate) Stop() {
-	i.stop <- true
+	i.stopOnce.Do(func() {
+		close(i.stop)
+		i.cancelPendingBeacon()
+	})
 }
 
-func (i *IGate) listenForMessages() {
+func (i *IGate) listenForMessages() error {
+	defer close(i.forwardChan)
+
 	for {
 		select {
 		case <-i.stop:
-			return
-		case msg := <-i.inputChan:
+			return nil
+		case msg, ok := <-i.inputChan:
+			if !ok {
+				return nil
+			}
+			i.markRx()
+
 			if len(msg) < minPacketSize {
 				i.logger.Error("Packet too short: ", msg)
 				continue
@@ -78,64 +128,487 @@ func (i *IGate) listenForMessages() {
 				continue
 			}
 
-			if !packet.IsAckMessage() && packet.Type().ForwardToAprsIs() {
-				fmt.Printf("uploading APRS-IS packet: %v\n", msg)
-				err = i.Aprsis.Upload(msg)
-				if err != nil {
-					i.logger.Error("Error uploading APRS packet: ", err)
-					continue
-				}
+			if strings.EqualFold(packet.Src, i.callSign) {
+				i.logger.Debug("Skipping APRS-IS forwarding of self-originated packet: ", msg)
+				i.observeBeacon(packet)
+				continue
+			}
 
-				if i.enableTx && packet.Type().NeedsAck() {
-					ackMsg, err := packet.AckString()
-					if err != nil {
-						i.logger.Error("Error creating APRS acknowledgement message: ", err)
-						continue
-					}
-
-					i.txChan <- ackMsg
+			shouldForward := !packet.IsAckMessage() && packet.Type().ForwardToAprsIs()
+			if shouldForward {
+				select {
+				case <-i.stop:
+					return nil
+				case i.forwardChan <- packet:
 				}
+			}
+
+			i.observeBeacon(packet)
+		}
+	}
+}
+
+func (i *IGate) forwardPackets() error {
+	for {
+		select {
+		case <-i.stop:
+			return nil
+		case packet, ok := <-i.forwardChan:
+			if !ok {
+				return nil
+			}
+
+			if packet == nil {
+				continue
+			}
+
+			uploadFrame := formatForAprsIs(packet, i.callSign)
+			fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
+			if err := i.Aprsis.Upload(uploadFrame); err != nil {
+				i.logger.Error("Error uploading APRS packet: ", err)
 			}
 		}
 	}
 }
 
 func (i *IGate) startBeacon() error {
-	if i.cfg.Beacon.Interval < (time.Duration(10) * time.Minute) {
-		return fmt.Errorf("interval cannot be < 10m")
-	}
+	const minInterval = 10 * time.Minute
 
-	if i.callSign == "" {
-		return fmt.Errorf("beacon call-sign not configured")
-	}
+	rfInterval := i.cfg.Beacon.RFInterval
+	isInterval := i.cfg.Beacon.ISInterval
+	extraRF := i.cfg.Beacon.ExtraRF
 
 	if !i.cfg.Beacon.Enabled {
 		fmt.Println("beacon is disabled")
 		return nil
 	}
 
-	i.logger.Info("Starting beacon every ", i.cfg.Beacon.Interval)
+	if !i.cfg.Beacon.DisableRF && rfInterval <= 0 && len(extraRF) == 0 && i.cfg.Beacon.Interval > 0 {
+		rfInterval = i.cfg.Beacon.Interval
+	}
 
-	ticker := time.NewTicker(i.cfg.Beacon.Interval)
+	if !i.cfg.Beacon.DisableTCP && isInterval <= 0 && i.cfg.Beacon.Interval > 0 {
+		isInterval = i.cfg.Beacon.Interval
+	}
 
-	// Send initial beacon
-	b := fmt.Sprintf("%s>BEACON:%s", i.callSign, i.cfg.Beacon.Comment)
-	i.logger.Info(b)
-	i.Aprsis.Conn.PrintfLine(b)
+	if i.cfg.Beacon.DisableRF {
+		rfInterval = 0
+	}
+
+	if i.cfg.Beacon.DisableTCP {
+		isInterval = 0
+	}
+
+	if rfInterval > 0 && rfInterval < minInterval {
+		return fmt.Errorf("rf-interval cannot be < 10m")
+	}
+
+	if isInterval > 0 && isInterval < minInterval {
+		return fmt.Errorf("is-interval cannot be < 10m")
+	}
+
+	type rfSchedule struct {
+		path     string
+		interval time.Duration
+	}
+
+	var rfSchedules []rfSchedule
+
+	if !i.cfg.Beacon.DisableRF {
+		if rfInterval > 0 {
+			rfSchedules = append(rfSchedules, rfSchedule{
+				path:     strings.TrimSpace(i.cfg.Beacon.RFPath),
+				interval: rfInterval,
+			})
+		}
+
+		for _, schedule := range extraRF {
+			if schedule.Interval <= 0 {
+				return fmt.Errorf("additional-rf-beacons interval must be > 0")
+			}
+
+			if schedule.Interval < minInterval {
+				return fmt.Errorf("additional-rf-beacons interval cannot be < 10m")
+			}
+
+			rfSchedules = append(rfSchedules, rfSchedule{
+				path:     schedule.Path,
+				interval: schedule.Interval,
+			})
+		}
+	}
+
+	if len(rfSchedules) == 0 && isInterval <= 0 {
+		if i.cfg.Beacon.DisableRF && i.cfg.Beacon.DisableTCP {
+			fmt.Println("beacon destinations disabled")
+			return nil
+		}
+
+		return fmt.Errorf("beacon interval not configured")
+	}
+
+	if i.callSign == "" {
+		return fmt.Errorf("beacon call-sign not configured")
+	}
+
+	switch {
+	case rfInterval > 0 && isInterval > 0:
+		i.logger.Info("Starting beacon schedule RF every ", rfInterval, " and APRS-IS every ", isInterval)
+	case rfInterval > 0:
+		i.logger.Info("Starting beacon schedule RF every ", rfInterval)
+	case isInterval > 0:
+		i.logger.Info("Starting beacon schedule APRS-IS every ", isInterval)
+	}
+
+	for _, schedule := range rfSchedules {
+		path := schedule.path
+		if path == "" {
+			path = "(direct)"
+		}
+		i.logger.Info("RF beacon path ", path, " every ", schedule.interval)
+	}
+
+	var isTicker *time.Ticker
+	var isChan <-chan time.Time
+	if isInterval > 0 {
+		isTicker = time.NewTicker(isInterval)
+		isChan = isTicker.C
+	}
+
+	sendAprsIs := func() {
+		if !i.cfg.Beacon.DisableTCP && i.Aprsis != nil && i.Aprsis.Conn != nil {
+			isFrame := buildBeaconFrame(i.callSign, i.cfg.Beacon.ISPath, i.cfg.Beacon.Comment)
+			i.logger.Info("Beacon -> APRS-IS: ", isFrame)
+			i.Aprsis.Conn.PrintfLine(isFrame)
+		}
+	}
+
+	sendRF := func(path string) {
+		if !i.cfg.Beacon.DisableRF && i.enableTx && i.tx != nil {
+			rfFrame := buildBeaconFrame(i.callSign, path, i.cfg.Beacon.Comment)
+			go i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment)
+		}
+	}
+
+	// Send initial beacon to each configured destination
+	if isInterval > 0 {
+		sendAprsIs()
+	}
+
+	for _, schedule := range rfSchedules {
+		sendRF(schedule.path)
+	}
 
 	go func() {
+		defer func() {
+			if isTicker != nil {
+				isTicker.Stop()
+			}
+		}()
+
 		for {
 			select {
-			case <-ticker.C:
-				b := fmt.Sprintf("%s>BEACON:%s", i.callSign, i.cfg.Beacon.Comment)
-				i.logger.Info(b)
-				i.Aprsis.Conn.PrintfLine(b)
 			case <-i.stop:
-				ticker.Stop()
 				return
+			case <-isChan:
+				sendAprsIs()
 			}
 		}
 	}()
 
+	for _, schedule := range rfSchedules {
+		s := schedule
+		go func() {
+			ticker := time.NewTicker(s.interval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-i.stop:
+					return
+				case <-ticker.C:
+					sendRF(s.path)
+				}
+			}
+		}()
+	}
+
 	return nil
+}
+
+func buildBeaconFrame(callSign, path, comment string) string {
+	path = strings.TrimSpace(path)
+
+	var builder strings.Builder
+	builder.WriteString(callSign)
+	builder.WriteString(">APRS")
+
+	if path != "" {
+		builder.WriteString(",")
+		builder.WriteString(path)
+	}
+
+	builder.WriteString(":")
+	builder.WriteString(comment)
+
+	return builder.String()
+}
+
+func formatForAprsIs(packet *aprs.Packet, callSign string) string {
+	var builder strings.Builder
+
+	callSign = strings.ToUpper(strings.TrimSpace(callSign))
+
+	builder.WriteString(packet.Src)
+	builder.WriteString(">")
+	builder.WriteString(packet.Dst)
+
+	path := append([]string{}, packet.Path...)
+	if !containsAprsIsHop(path) && callSign != "" {
+		path = append(path, "TCPIP*", "qAR", callSign)
+	}
+
+	if len(path) > 0 {
+		builder.WriteString(",")
+		builder.WriteString(strings.Join(path, ","))
+	}
+
+	builder.WriteString(":")
+	builder.WriteString(packet.Payload)
+
+	return builder.String()
+}
+
+func containsAprsIsHop(path []string) bool {
+	for _, component := range path {
+		c := strings.ToUpper(strings.TrimSpace(component))
+		if strings.HasPrefix(c, "TCPIP") || strings.HasPrefix(c, "TCPXX") || strings.HasPrefix(c, "Q") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (i *IGate) markRx() {
+	i.lastRxMu.Lock()
+	i.lastRx = time.Now()
+	i.lastRxMu.Unlock()
+}
+
+func (i *IGate) channelQuietFor(duration time.Duration) bool {
+	i.lastRxMu.Lock()
+	defer i.lastRxMu.Unlock()
+
+	if i.lastRx.IsZero() {
+		return true
+	}
+
+	return time.Since(i.lastRx) >= duration
+}
+
+func (i *IGate) sendBeaconRf(frame, payload string) {
+	i.rfBeaconMu.Lock()
+	defer i.rfBeaconMu.Unlock()
+
+	for {
+		if !i.waitForQuiet(beaconChannelQuiet) {
+			return
+		}
+
+		if !i.sleepWithStop(beaconWarmup) {
+			return
+		}
+
+		sendStart := time.Now()
+		key, outcomeCh := i.expectBeacon(frame, payload, sendStart)
+
+		i.logger.Info("Beacon -> RF: ", frame)
+		i.tx.Send(frame)
+
+		success, continueRunning := i.waitForBeaconOutcome(outcomeCh)
+		i.clearBeaconExpectation(key, outcomeCh)
+
+		if !continueRunning {
+			return
+		}
+
+		if success {
+			i.logger.Debug("Beacon RF transmission confirmed without collision")
+			return
+		}
+
+		i.logger.Warn("Beacon collision detected; backing off before retry")
+		if !i.sleepWithStop(beaconRetryInterval) {
+			return
+		}
+	}
+}
+
+func (i *IGate) waitForQuiet(duration time.Duration) bool {
+	for {
+		if i.channelQuietFor(duration) {
+			return true
+		}
+
+		if !i.sleepWithStop(beaconRetryInterval) {
+			return false
+		}
+	}
+}
+
+func (i *IGate) sleepWithStop(d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-i.stop:
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (i *IGate) expectBeacon(frame, payload string, started time.Time) (string, <-chan bool) {
+	result := make(chan bool, 1)
+
+	key := strings.TrimSpace(frame)
+	payload = strings.TrimSpace(payload)
+
+	i.beaconMu.Lock()
+	if i.beaconWaits == nil {
+		i.beaconWaits = make(map[string]*beaconWait)
+	}
+	i.beaconWaits[key] = &beaconWait{
+		frame:   key,
+		payload: payload,
+		started: started,
+		result:  result,
+	}
+	i.beaconMu.Unlock()
+
+	return key, result
+}
+
+func (i *IGate) waitForBeaconOutcome(ch <-chan bool) (bool, bool) {
+	timer := time.NewTimer(beaconCollisionWindow)
+	defer timer.Stop()
+
+	select {
+	case <-i.stop:
+		return false, false
+	case res := <-ch:
+		return res, true
+	case <-timer.C:
+		return false, true
+	}
+}
+
+func (i *IGate) clearBeaconExpectation(key string, ch <-chan bool) {
+	i.beaconMu.Lock()
+	defer i.beaconMu.Unlock()
+
+	if i.beaconWaits == nil {
+		return
+	}
+
+	if wait, ok := i.beaconWaits[key]; ok && wait.result == ch {
+		delete(i.beaconWaits, key)
+	}
+}
+
+func (i *IGate) observeBeacon(packet *aprs.Packet) {
+	i.beaconMu.Lock()
+	defer i.beaconMu.Unlock()
+
+	if len(i.beaconWaits) == 0 {
+		return
+	}
+
+	payload := strings.TrimSpace(packet.Payload)
+
+	path := strings.Join(packet.Path, ",")
+	frame := buildBeaconFrame(packet.Src, path, payload)
+
+	if wait, ok := i.beaconWaits[frame]; ok && wait.payload == payload {
+		select {
+		case wait.result <- true:
+		default:
+		}
+		delete(i.beaconWaits, frame)
+		return
+	}
+
+	if i.isSelfPacket(packet) && payload != "" {
+		for key, wait := range i.beaconWaits {
+			if wait.payload == payload {
+				select {
+				case wait.result <- true:
+				default:
+				}
+				delete(i.beaconWaits, key)
+				return
+			}
+		}
+	}
+
+	now := time.Now()
+	for key, wait := range i.beaconWaits {
+		if now.Sub(wait.started) <= beaconCollisionWindow {
+			select {
+			case wait.result <- false:
+			default:
+			}
+			delete(i.beaconWaits, key)
+		}
+	}
+}
+
+func (i *IGate) isSelfPacket(packet *aprs.Packet) bool {
+	if packet == nil {
+		return false
+	}
+
+	if strings.EqualFold(packet.Src, i.callSign) {
+		return true
+	}
+
+	self := strings.ToUpper(strings.TrimSpace(i.callSign))
+	if self == "" {
+		return false
+	}
+
+	for _, hop := range packet.Path {
+		hop = strings.TrimSpace(hop)
+		if hop == "" {
+			continue
+		}
+		hop = strings.TrimSuffix(strings.ToUpper(hop), "*")
+		if hop == self {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (i *IGate) cancelPendingBeacon() {
+	i.beaconMu.Lock()
+	defer i.beaconMu.Unlock()
+
+	if len(i.beaconWaits) == 0 {
+		return
+	}
+
+	for key, wait := range i.beaconWaits {
+		select {
+		case wait.result <- false:
+		default:
+		}
+		delete(i.beaconWaits, key)
+	}
 }

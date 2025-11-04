@@ -1,11 +1,13 @@
 package igate
 
 import (
+	"testing"
+	"time"
+
 	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
-	"testing"
-	"time"
+	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
 func TestIGate_startBeacon(t *testing.T) {
@@ -14,10 +16,10 @@ func TestIGate_startBeacon(t *testing.T) {
 		callSign  string
 		inputChan chan string
 		enableTx  bool
-		txChan    chan string
+		tx        *transmitter.Tx
 		logger    *log.Logger
 		Aprsis    *aprs.AprsIs
-		stop      chan bool
+		stop      chan struct{}
 	}
 	tests := []struct {
 		name          string
@@ -26,31 +28,139 @@ func TestIGate_startBeacon(t *testing.T) {
 		wantErrString string
 	}{
 		{
-			name: "test short beacon interval",
+			name: "test short RF beacon interval",
 			fields: fields{
-				cfg:       config.IGate{Beacon: config.Beacon{Interval: 1}},
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled:  true,
+						Interval: 1,
+					},
+				},
 				callSign:  "N0CALL-10",
 				inputChan: make(chan string),
 				enableTx:  false,
-				txChan:    make(chan string),
+				tx:        &transmitter.Tx{},
 				Aprsis:    &aprs.AprsIs{},
-				stop:      make(chan bool),
+				stop:      make(chan struct{}),
 			},
 			wantErr:       true,
-			wantErrString: "interval cannot be < 10m",
+			wantErrString: "rf-interval cannot be < 10m",
+		},
+		{
+			name: "additional rf beacon interval too short",
+			fields: fields{
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled: true,
+						ExtraRF: []config.RFBeacon{
+							{
+								Path:     "",
+								Interval: 5 * time.Minute,
+							},
+						},
+					},
+				},
+				callSign:  "N0CALL-10",
+				inputChan: make(chan string),
+				enableTx:  false,
+				tx:        &transmitter.Tx{},
+				logger:    mustLogger(t),
+				Aprsis:    &aprs.AprsIs{},
+				stop:      make(chan struct{}),
+			},
+			wantErr:       true,
+			wantErrString: "additional-rf-beacons interval cannot be < 10m",
 		},
 		{
 			name: "test no callsign",
 			fields: fields{
-				cfg:       config.IGate{Beacon: config.Beacon{Interval: 10 * time.Minute}},
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled:  true,
+						Interval: 10 * time.Minute,
+					},
+				},
 				inputChan: make(chan string),
 				enableTx:  false,
-				txChan:    make(chan string),
+				tx:        &transmitter.Tx{},
 				Aprsis:    &aprs.AprsIs{},
-				stop:      make(chan bool),
+				stop:      make(chan struct{}),
 			},
 			wantErr:       true,
 			wantErrString: "beacon call-sign not configured",
+		},
+		{
+			name: "disable aprs-is beacons allows short interval",
+			fields: fields{
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled:    true,
+						RFInterval: 30 * time.Minute,
+						ISInterval: time.Minute,
+						DisableTCP: true,
+						DisableRF:  false,
+						Comment:    "Test",
+						RFPath:     "WIDE1-1",
+						ISPath:     "TCPIP*",
+					},
+					Aprsis: config.AprsIs{Enabled: true},
+				},
+				callSign:  "N0CALL-10",
+				inputChan: make(chan string),
+				enableTx:  false,
+				tx:        &transmitter.Tx{},
+				logger:    mustLogger(t),
+				Aprsis:    &aprs.AprsIs{},
+				stop:      make(chan struct{}),
+			},
+			wantErr: false,
+		},
+		{
+			name: "additional rf beacon without primary",
+			fields: fields{
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled: true,
+						ExtraRF: []config.RFBeacon{
+							{
+								Path:     "",
+								Interval: 10 * time.Minute,
+							},
+						},
+						DisableTCP: true,
+					},
+				},
+				callSign:  "N0CALL-10",
+				inputChan: make(chan string),
+				enableTx:  false,
+				tx:        &transmitter.Tx{},
+				logger:    mustLogger(t),
+				Aprsis:    &aprs.AprsIs{},
+				stop:      make(chan struct{}),
+			},
+			wantErr: false,
+		},
+		{
+			name: "disable both destinations skips beaconing",
+			fields: fields{
+				cfg: config.IGate{
+					Beacon: config.Beacon{
+						Enabled:    true,
+						RFInterval: 30 * time.Minute,
+						ISInterval: 30 * time.Minute,
+						DisableRF:  true,
+						DisableTCP: true,
+					},
+				},
+				callSign:  "N0CALL-10",
+				inputChan: make(chan string),
+				enableTx:  true,
+				tx:        &transmitter.Tx{},
+				logger:    mustLogger(t),
+				Aprsis:    &aprs.AprsIs{},
+				stop:      make(chan struct{}),
+			},
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {
@@ -60,7 +170,7 @@ func TestIGate_startBeacon(t *testing.T) {
 				callSign:  tt.fields.callSign,
 				inputChan: tt.fields.inputChan,
 				enableTx:  tt.fields.enableTx,
-				txChan:    tt.fields.txChan,
+				tx:        tt.fields.tx,
 				logger:    tt.fields.logger,
 				Aprsis:    tt.fields.Aprsis,
 				stop:      tt.fields.stop,
@@ -72,6 +182,58 @@ func TestIGate_startBeacon(t *testing.T) {
 			if tt.wantErr && err.Error() != tt.wantErrString {
 				t.Errorf("startBeacon() errorString = %v, wantErrString %v", err.Error(), tt.wantErrString)
 			}
+			if !tt.wantErr && i.stop != nil {
+				close(i.stop)
+			}
 		})
 	}
+}
+
+func TestListenForMessagesSkipsSelfForward(t *testing.T) {
+	logger := mustLogger(t)
+	input := make(chan string, 1)
+	forward := make(chan *aprs.Packet, 1)
+	stop := make(chan struct{})
+
+	ig := &IGate{
+		callSign:    "N0CALL-1",
+		inputChan:   input,
+		forwardChan: forward,
+		stop:        stop,
+		logger:      logger,
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_ = ig.listenForMessages()
+		close(done)
+	}()
+
+	frame := "N0CALL-1>APRS,WIDE1-1:=4010.30N/11137.60W#STATUS TEST"
+	input <- frame
+
+	select {
+	case pkt := <-forward:
+		t.Fatalf("expected no forwarded packet, got %#v", pkt)
+	case <-time.After(10 * time.Millisecond):
+	}
+
+	close(stop)
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatalf("listenForMessages did not stop")
+	}
+}
+
+func mustLogger(t *testing.T) *log.Logger {
+	t.Helper()
+
+	logger, err := log.New()
+	if err != nil {
+		t.Fatalf("failed to create logger: %v", err)
+	}
+
+	return logger
 }

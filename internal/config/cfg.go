@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v2"
@@ -10,13 +11,16 @@ import (
 
 type (
 	Config struct {
-		Sdr               Sdr         `yaml:"sdr"`
-		Multimon          Multimon    `yaml:"multimon"`
-		Transmitter       Transmitter `yaml:"transmitter"`
-		IGate             IGate       `yaml:"igate"`
-		DigipeaterEnabled bool        `yaml:"enable-digipeater"`
-		CacheSize         int         `yaml:"cache-size"`
-		StationCallsign   string      `yaml:"station-callsign"`
+		Sdr                 Sdr         `yaml:"sdr"`
+		Multimon            Multimon    `yaml:"multimon"`
+		Transmitter         Transmitter `yaml:"transmitter"`
+		IGate               IGate       `yaml:"igate"`
+		DigipeaterEnabled   bool        `yaml:"enable-digipeater"`
+		Digipeater          Digipeater  `yaml:"digipeater"`
+		CacheSize           int         `yaml:"cache-size"`
+		StationCallsign     string      `yaml:"station-callsign"`
+		SoundcardInputName  string      `yaml:"soundcard-input-name"`
+		SoundcardOutputName string      `yaml:"soundcard-output-name"`
 	}
 
 	IGate struct {
@@ -26,6 +30,7 @@ type (
 	}
 
 	Sdr struct {
+		Enabled         bool `yaml:"enabled"`
 		Path            string
 		Frequency       string
 		Device          string
@@ -42,9 +47,16 @@ type (
 	}
 
 	Beacon struct {
-		Enabled  bool
-		Interval time.Duration
-		Comment  string
+		Enabled    bool
+		Interval   time.Duration
+		RFInterval time.Duration `yaml:"rf-interval"`
+		ISInterval time.Duration `yaml:"is-interval"`
+		DisableRF  bool          `yaml:"disable-rf"`
+		DisableTCP bool          `yaml:"disable-tcp"`
+		Comment    string
+		RFPath     string     `yaml:"rf-path"`
+		ISPath     string     `yaml:"is-path"`
+		ExtraRF    []RFBeacon `yaml:"additional-rf-beacons"`
 	}
 
 	AprsIs struct {
@@ -55,14 +67,28 @@ type (
 	}
 
 	Transmitter struct {
-		Enabled     bool   `yaml:"enabled"`
-		BaudRate    int    `yaml:"baud-rate"`
-		ReadTimeout string `yaml:"read-timeout"`
+		Enabled  bool          `yaml:"enabled"`
+		TxDelay  time.Duration `yaml:"tx-delay"`
+		TxTail   time.Duration `yaml:"tx-tail"`
+		UseAplay bool          `yaml:"use-aplay"`
+	}
+
+	Digipeater struct {
+		AliasPatterns []string      `yaml:"alias-patterns"`
+		WidePatterns  []string      `yaml:"wide-patterns"`
+		SSnPrefixes   []string      `yaml:"ssn-prefixes"`
+		DedupeWindow  time.Duration `yaml:"dedupe-window"`
+	}
+
+	RFBeacon struct {
+		Path     string        `yaml:"path"`
+		Interval time.Duration `yaml:"interval"`
 	}
 )
 
 func GetConfig() (Config, error) {
 	var cfg Config
+	const defaultTxDelay = 300 * time.Millisecond
 
 	f, err := os.ReadFile("config.yml")
 	if err != nil {
@@ -72,6 +98,63 @@ func GetConfig() (Config, error) {
 	err = yaml.Unmarshal(f, &cfg)
 	if err != nil {
 		return cfg, fmt.Errorf("Could not parse config file: %v", err)
+	}
+
+	if cfg.Digipeater.DedupeWindow == 0 {
+		cfg.Digipeater.DedupeWindow = 30 * time.Second
+	}
+
+	if len(cfg.Digipeater.AliasPatterns) == 0 {
+		cfg.Digipeater.AliasPatterns = []string{`^WIDE1-1$`}
+	}
+
+	if len(cfg.Digipeater.WidePatterns) == 0 {
+		cfg.Digipeater.WidePatterns = []string{
+			`^WIDE[1-7]-[1-7]$`,
+			`^TRACE[1-7]-[1-7]$`,
+			`^HOP[1-7]-[1-7]$`,
+			`^[A-Z]{2}[1-7]-[1-7]$`,
+		}
+	}
+
+	for idx, prefix := range cfg.Digipeater.SSnPrefixes {
+		cfg.Digipeater.SSnPrefixes[idx] = strings.ToUpper(strings.TrimSpace(prefix))
+	}
+
+	if cfg.IGate.Beacon.RFPath == "" {
+		cfg.IGate.Beacon.RFPath = "WIDE1-1"
+	}
+
+	if cfg.IGate.Beacon.ISPath == "" {
+		cfg.IGate.Beacon.ISPath = "TCPIP*"
+	}
+
+	if cfg.IGate.Beacon.RFInterval <= 0 {
+		cfg.IGate.Beacon.RFInterval = cfg.IGate.Beacon.Interval
+	}
+
+	if cfg.IGate.Beacon.ISInterval <= 0 {
+		cfg.IGate.Beacon.ISInterval = cfg.IGate.Beacon.Interval
+	}
+
+	if cfg.IGate.Beacon.DisableRF {
+		cfg.IGate.Beacon.RFInterval = 0
+	}
+
+	if cfg.IGate.Beacon.DisableTCP {
+		cfg.IGate.Beacon.ISInterval = 0
+	}
+
+	for idx := range cfg.IGate.Beacon.ExtraRF {
+		cfg.IGate.Beacon.ExtraRF[idx].Path = strings.TrimSpace(cfg.IGate.Beacon.ExtraRF[idx].Path)
+	}
+
+	if cfg.Transmitter.TxDelay <= 0 {
+		cfg.Transmitter.TxDelay = defaultTxDelay
+	}
+
+	if cfg.Transmitter.TxTail <= 0 {
+		cfg.Transmitter.TxTail = 100 * time.Millisecond
 	}
 
 	return cfg, nil

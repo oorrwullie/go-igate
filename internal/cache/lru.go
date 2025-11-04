@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"os"
 	"sync"
 )
@@ -261,6 +262,7 @@ func (c *Cache) loadFromFile() error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("Error opening cache file: %v", err)
 		}
+		return nil
 	}
 	defer file.Close()
 
@@ -268,13 +270,14 @@ func (c *Cache) loadFromFile() error {
 
 	err = json.NewDecoder(file).Decode(&data)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("Error decoding cache data from JSON: %v", err)
+		if err == io.EOF {
+			return nil
 		}
+		return fmt.Errorf("Error decoding cache data from JSON: %v", err)
 	}
 
 	for k, v := range data {
-		fmt.Printf("Cache key: %s value: %s\n", k, v)
+		fmt.Printf("Cache key: %s value: %v\n", k, v)
 		c.Set(k, v)
 	}
 

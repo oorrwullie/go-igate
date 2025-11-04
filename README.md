@@ -28,6 +28,7 @@ To run Go-iGate, the following are required.
 * An RTL-SDR compatible device.
 * [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr)
 * [multimon-ng](https://github.com/EliasOenal/multimon-ng)
+* [alsa-utils](https://alsa-project.org/wiki/Main_Page) (`aplay`) when using the soundcard transmitter
  
 - Go version go1.22.5
 
@@ -48,6 +49,14 @@ To run Go-iGate, the following are required.
 ```bash
 go run main.go
 ```
+
+### Beacon configuration tips
+
+- A home fill-in digipeater should advertise itself with the WIDE1-1 overlay. Use the alternate table digipeater symbol paired with the overlay character `S` (e.g. `=latNSlonW#...`) to match [APRS Protocol Reference v1.0.1, Chapter 2](http://www.aprs.org/doc/APRS101.PDF).
+- APRS expects fixed stations to be visible within a 10–30 minute “net cycle.” Configure the primary RF beacon (your wide path) around 30 minutes and add a secondary direct beacon near 10 minutes to refresh local maps without flooding the network.
+- In `config.yml` the `additional-rf-beacons` list lets you schedule those direct packets. Leave the `path` empty to transmit truly direct; adding text like `DIRECT` creates a literal hop and is not recommended.
+- Disable APRS-IS (`disable-tcp: true`) if you only want RF packets on aprs.fi. Re-enable it with a conservative `is-interval` when Internet visibility is important.
+- After editing the configuration, run `make` to rebuild the binary and restart the `aprs` service so the new schedule takes effect.
 
 ## Contributing
 
