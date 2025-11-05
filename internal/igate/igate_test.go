@@ -1,6 +1,7 @@
 package igate
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -225,6 +226,143 @@ func TestListenForMessagesSkipsSelfForward(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatalf("listenForMessages did not stop")
 	}
+}
+
+func TestSendBeaconRfAssumesSuccessAfterTimeout(t *testing.T) {
+	logger := mustLogger(t)
+
+	// Preserve global timing knobs used by sendBeaconRf.
+	oldCollision := beaconCollisionWindow
+	oldWarmup := beaconWarmup
+	oldRetry := beaconRetryInterval
+	oldQuiet := beaconChannelQuiet
+	defer func() {
+		beaconCollisionWindow = oldCollision
+		beaconWarmup = oldWarmup
+		beaconRetryInterval = oldRetry
+		beaconChannelQuiet = oldQuiet
+	}()
+
+	beaconCollisionWindow = 10 * time.Millisecond
+	beaconWarmup = 0
+	beaconRetryInterval = time.Millisecond
+	beaconChannelQuiet = 0
+
+	tx := &transmitter.Tx{
+		Chan: make(chan string, 1),
+	}
+
+	ig := &IGate{
+		cfg: config.IGate{
+			Beacon: config.Beacon{},
+		},
+		enableTx: true,
+		tx:       tx,
+		logger:   logger,
+		stop:     make(chan struct{}),
+	}
+	ig.lastRx = time.Now().Add(-time.Minute)
+
+	done := make(chan struct{})
+	go func() {
+		ig.sendBeaconRf("N0CALL>APRS:Test", "Test")
+		close(done)
+	}()
+
+	select {
+	case <-tx.Chan:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("expected RF beacon transmission")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("sendBeaconRf did not return after timeout")
+	}
+
+	close(ig.stop)
+}
+
+func TestStartBeaconSequencesAprsIsBeforeRf(t *testing.T) {
+	logger := mustLogger(t)
+
+	oldCollision := beaconCollisionWindow
+	oldWarmup := beaconWarmup
+	oldRetry := beaconRetryInterval
+	oldQuiet := beaconChannelQuiet
+	defer func() {
+		beaconCollisionWindow = oldCollision
+		beaconWarmup = oldWarmup
+		beaconRetryInterval = oldRetry
+		beaconChannelQuiet = oldQuiet
+	}()
+
+	beaconCollisionWindow = 10 * time.Millisecond
+	beaconWarmup = 0
+	beaconRetryInterval = 1 * time.Millisecond
+	beaconChannelQuiet = 0
+
+	aprsCalls := make(chan string, 4)
+	var aprsMu sync.Mutex
+	var aprsFrames []string
+
+	tx := &transmitter.Tx{
+		Chan: make(chan string, 1),
+	}
+
+	ig := &IGate{
+		cfg: config.IGate{
+			Beacon: config.Beacon{
+				Enabled:    true,
+				RFInterval: 10 * time.Minute,
+				ISInterval: 10 * time.Minute,
+				DisableRF:  false,
+				DisableTCP: false,
+				Comment:    "Test Comment",
+				RFPath:     "WIDE1-1",
+				ISPath:     "TCPIP*",
+			},
+		},
+		callSign: "N0CALL-1",
+		enableTx: true,
+		tx:       tx,
+		logger:   logger,
+		stop:     make(chan struct{}),
+		aprsisUpload: func(frame string) error {
+			aprsMu.Lock()
+			aprsFrames = append(aprsFrames, frame)
+			aprsMu.Unlock()
+			aprsCalls <- frame
+			return nil
+		},
+	}
+	ig.lastRx = time.Now().Add(-time.Minute)
+
+	if err := ig.startBeacon(); err != nil {
+		t.Fatalf("startBeacon() error = %v", err)
+	}
+
+	select {
+	case <-aprsCalls:
+	case <-time.After(50 * time.Millisecond):
+		t.Fatalf("expected APRS-IS beacon before RF transmission")
+	}
+
+	select {
+	case <-tx.Chan:
+	case <-time.After(50 * time.Millisecond):
+		t.Fatalf("expected RF beacon transmission")
+	}
+
+	aprsMu.Lock()
+	if len(aprsFrames) == 0 {
+		t.Fatalf("expected APRS-IS frame when both destinations enabled")
+	}
+	aprsMu.Unlock()
+
+	close(ig.stop)
+	time.Sleep(10 * time.Millisecond)
 }
 
 func mustLogger(t *testing.T) *log.Logger {
