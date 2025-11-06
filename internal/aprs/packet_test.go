@@ -33,3 +33,32 @@ func TestParsePacketWithThirdPartyPayload(t *testing.T) {
 		t.Fatalf("unexpected payload: got %q want %q", packet.Payload, wantPayload)
 	}
 }
+
+func TestPacketPosition(t *testing.T) {
+	packet, err := ParsePacket("CALL>APRS:!4010.30N/11137.60W#Test")
+	if err != nil {
+		t.Fatalf("ParsePacket returned error: %v", err)
+	}
+
+	lat, lon, ok := packet.Position()
+	if !ok {
+		t.Fatalf("expected position to be parsed")
+	}
+
+	if lat < 40.17 || lat > 40.18 {
+		t.Fatalf("unexpected latitude %f", lat)
+	}
+
+	if lon > -111.62 || lon < -111.64 {
+		t.Fatalf("unexpected longitude %f", lon)
+	}
+
+	msgPacket, err := ParsePacket("CALL>APRS:>Status text")
+	if err != nil {
+		t.Fatalf("ParsePacket returned error: %v", err)
+	}
+
+	if _, _, ok := msgPacket.Position(); ok {
+		t.Fatalf("expected no position for status report")
+	}
+}
