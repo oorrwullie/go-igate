@@ -380,7 +380,7 @@ func TestSendBeaconRfAssumesSuccessAfterTimeout(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL>APRS:Test", "Test")
+		ig.sendBeaconRf("N0CALL>APRS:Test", "Test", true)
 		close(done)
 	}()
 

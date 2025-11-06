@@ -395,7 +395,7 @@ func (i *IGate) startBeacon() error {
 
 		rfFrame := buildBeaconFrame(i.callSign, path, i.cfg.Beacon.Comment)
 		i.logger.Info("Beacon -> RF (", reason, "): ", rfFrame)
-		go i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment)
+		go i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment, true)
 	}
 
 	// Send initial beacon to each configured destination
@@ -513,7 +513,7 @@ func (i *IGate) channelQuietFor(duration time.Duration) bool {
 	return time.Since(i.lastRx) >= duration
 }
 
-func (i *IGate) sendBeaconRf(frame, payload string) {
+func (i *IGate) sendBeaconRf(frame, payload string, allowRetry bool) {
 	i.rfBeaconMu.Lock()
 	defer i.rfBeaconMu.Unlock()
 
@@ -550,13 +550,13 @@ func (i *IGate) sendBeaconRf(frame, payload string) {
 
 		if outcome == beaconOutcomeSuccess {
 			i.logger.Debug("Beacon RF transmission confirmed without collision")
-			i.scheduleAprsFiVerification(sendStart)
+			i.scheduleAprsFiVerification(frame, payload, sendStart, allowRetry)
 			return
 		}
 
 		if outcome == beaconOutcomeTimeout {
 			i.logger.Debug("Beacon RF transmission not observed; assuming success")
-			i.scheduleAprsFiVerification(sendStart)
+			i.scheduleAprsFiVerification(frame, payload, sendStart, allowRetry)
 			return
 		}
 
@@ -738,7 +738,7 @@ func (i *IGate) cancelPendingBeacon() {
 	}
 }
 
-func (i *IGate) scheduleAprsFiVerification(sent time.Time) {
+func (i *IGate) scheduleAprsFiVerification(frame, payload string, sent time.Time, allowRetry bool) {
 	if !i.verifyAprsFi || !i.disableISBeacon {
 		return
 	}
@@ -749,10 +749,10 @@ func (i *IGate) scheduleAprsFiVerification(sent time.Time) {
 		return
 	}
 
-	go i.runAprsFiVerification(sent)
+	go i.runAprsFiVerification(frame, payload, sent, allowRetry)
 }
 
-func (i *IGate) runAprsFiVerification(sent time.Time) {
+func (i *IGate) runAprsFiVerification(frame, payload string, sent time.Time, allowRetry bool) {
 	delay := i.aprsFiDelay
 	if delay <= 0 {
 		delay = 30 * time.Second
@@ -781,7 +781,13 @@ func (i *IGate) runAprsFiVerification(sent time.Time) {
 		wait = aprsFiGracePeriod
 	}
 
-	i.logger.Warn("APRS.fi did not confirm beacon; forcing APRS-IS upload")
+	if allowRetry {
+		i.logger.Warn("APRS.fi did not confirm beacon; retrying RF beacon")
+		go i.sendBeaconRf(frame, payload, false)
+		return
+	}
+
+	i.logger.Warn("APRS.fi did not confirm beacon after RF retry; forcing APRS-IS upload")
 	i.forceAprsIsBeacon()
 }
 

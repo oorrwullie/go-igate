@@ -54,7 +54,7 @@ func TestSendBeaconRfRetriesOnCollision(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-1>APRS:TestBeacon", "TestBeacon")
+		ig.sendBeaconRf("N0CALL-1>APRS:TestBeacon", "TestBeacon", true)
 		close(done)
 	}()
 
@@ -113,7 +113,7 @@ func TestSendBeaconRfSucceedsFirstAttempt(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-5>APRS:Success", "Success")
+		ig.sendBeaconRf("N0CALL-5>APRS:Success", "Success", true)
 		close(done)
 	}()
 
@@ -167,7 +167,7 @@ func TestSendBeaconRfIgnoresSelfCollision(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-7>APRS:SelfAware", "SelfAware")
+		ig.sendBeaconRf("N0CALL-7>APRS:SelfAware", "SelfAware", true)
 		close(done)
 	}()
 
@@ -222,13 +222,13 @@ func TestSendBeaconRfHandlesConcurrentSchedules(t *testing.T) {
 
 	directDone := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-9>APRS:Beacon", "Beacon")
+		ig.sendBeaconRf("N0CALL-9>APRS:Beacon", "Beacon", true)
 		close(directDone)
 	}()
 
 	wideDone := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-9>APRS,WIDE1-1,WIDE2-1:Beacon", "Beacon")
+		ig.sendBeaconRf("N0CALL-9>APRS,WIDE1-1,WIDE2-1:Beacon", "Beacon", true)
 		close(wideDone)
 	}()
 
@@ -339,7 +339,7 @@ func TestSendBeaconRfForcesAprsIsAfterMaxAttempts(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-1>APRS:Test", "Test")
+		ig.sendBeaconRf("N0CALL-1>APRS:Test", "Test", true)
 		close(done)
 	}()
 
