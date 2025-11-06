@@ -292,8 +292,9 @@ func (i *IGate) startBeacon() error {
 	}
 
 	type rfSchedule struct {
-		path     string
-		interval time.Duration
+		path       string
+		interval   time.Duration
+		allowRetry bool
 	}
 
 	var rfSchedules []rfSchedule
@@ -301,24 +302,14 @@ func (i *IGate) startBeacon() error {
 	if !i.cfg.Beacon.DisableRF {
 		if rfInterval > 0 {
 			rfSchedules = append(rfSchedules, rfSchedule{
-				path:     strings.TrimSpace(i.cfg.Beacon.RFPath),
-				interval: rfInterval,
+				path:       strings.TrimSpace(i.cfg.Beacon.RFPath),
+				interval:   rfInterval,
+				allowRetry: true,
 			})
 		}
 
-		for _, schedule := range extraRF {
-			if schedule.Interval <= 0 {
-				return fmt.Errorf("additional-rf-beacons interval must be > 0")
-			}
-
-			if schedule.Interval < minInterval {
-				return fmt.Errorf("additional-rf-beacons interval cannot be < 10m")
-			}
-
-			rfSchedules = append(rfSchedules, rfSchedule{
-				path:     schedule.Path,
-				interval: schedule.Interval,
-			})
+		if len(extraRF) > 0 {
+			i.logger.Warn("Ignoring additional-rf-beacons entries; only primary RF schedule is supported")
 		}
 	}
 
@@ -384,7 +375,7 @@ func (i *IGate) startBeacon() error {
 		}
 	}
 
-	sendRF := func(path, reason string) {
+	sendRF := func(path string, allowRetry bool, reason string) {
 		if i.cfg.Beacon.DisableRF || !i.enableTx || i.tx == nil {
 			return
 		}
@@ -395,7 +386,7 @@ func (i *IGate) startBeacon() error {
 
 		rfFrame := buildBeaconFrame(i.callSign, path, i.cfg.Beacon.Comment)
 		i.logger.Info("Beacon -> RF (", reason, "): ", rfFrame)
-		go i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment, true)
+		go i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment, allowRetry)
 	}
 
 	// Send initial beacon to each configured destination
@@ -404,7 +395,7 @@ func (i *IGate) startBeacon() error {
 	}
 
 	for _, schedule := range rfSchedules {
-		sendRF(schedule.path, "initial")
+		sendRF(schedule.path, schedule.allowRetry, "initial")
 	}
 
 	if isTicker != nil {
@@ -433,7 +424,7 @@ func (i *IGate) startBeacon() error {
 				case <-i.stop:
 					return
 				case <-ticker.C:
-					sendRF(s.path, "scheduled")
+					sendRF(s.path, s.allowRetry, "scheduled")
 				}
 			}
 		}()
@@ -790,8 +781,8 @@ func (i *IGate) runAprsFiVerification(frame, payload string, sent time.Time, all
 		return
 	}
 
-	i.logger.Warn("APRS.fi did not confirm beacon after RF retry; forcing APRS-IS upload")
-	i.forceAprsIsBeacon()
+	//i.logger.Warn("APRS.fi did not confirm beacon after RF retry; forcing APRS-IS upload")
+	//i.forceAprsIsBeacon()
 }
 
 func (i *IGate) queryAprsFi(sent time.Time) (bool, error) {

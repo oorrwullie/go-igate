@@ -73,7 +73,7 @@ func TestIGate_startBeacon(t *testing.T) {
 				stop:      make(chan struct{}),
 			},
 			wantErr:       true,
-			wantErrString: "additional-rf-beacons interval cannot be < 10m",
+			wantErrString: "beacon interval not configured",
 		},
 		{
 			name: "test no callsign",
@@ -168,7 +168,8 @@ func TestIGate_startBeacon(t *testing.T) {
 				Aprsis:    &aprs.AprsIs{},
 				stop:      make(chan struct{}),
 			},
-			wantErr: false,
+			wantErr:       true,
+			wantErrString: "beacon interval not configured",
 		},
 		{
 			name: "disable both destinations skips beaconing",
