@@ -106,7 +106,7 @@ func (m *Multimon) Start() error {
 					continue
 				}
 
-				duplicate := m.cache.Set(msg, time.Now())
+				duplicate := m.cache.Set(normalized, time.Now())
 				if duplicate && !m.isSelfMessage(normalized) {
 					m.logger.Info("Duplicate packet received: ", msg)
 					continue

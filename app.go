@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/oorrwullie/go-igate/internal/cache"
 	"github.com/oorrwullie/go-igate/internal/capture"
@@ -96,7 +97,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		txHandle = tx.Tx
 	}
 
-	appCache := cache.NewCache(cfg.CacheSize, ".cache.json")
+	appCache := cache.NewCache(cfg.CacheSize, ".cache.json", 30*time.Minute)
 
 	multimon = multimonpackage.New(cfg.Multimon, captureOutputChan, ps, appCache, txHandle, cfg.StationCallsign, logger)
 	err = multimon.Start()
