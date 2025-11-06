@@ -73,6 +73,15 @@ igate:
     # set to true to suppress RF beaconing or APRS-IS beaconing respectively.
     disable-rf: false
     disable-tcp: false
+    # set to true to keep APRS-IS connection for gating others but skip your own beacon uploads
+    disable-is-beacon: false
+    max-rf-attempts: 3
+    aprsfi-verification:
+      enabled: false
+      api-key: ""
+      delay: 10s
+      max-attempts: 3
+      timeout: 10s
     # optional legacy interval applied to both RF and APRS-IS when the per-path
     # values above are not provided.
     # interval: 30m
@@ -83,9 +92,7 @@ igate:
     # Path inserted on APRS-IS frames; qAR + your callsign is common.
     is-path: "TCPIP*,qAR,N0CALL-10"
     # Optional secondary RF schedules (e.g. direct beacons). Each must be >=10m.
-    additional-rf-beacons:
-    - path: ""
-      interval: 10m
+    additional-rf-beacons: []
   aprsis:
     # enable to connect to APRS-IS server for iGate
     enabled: false

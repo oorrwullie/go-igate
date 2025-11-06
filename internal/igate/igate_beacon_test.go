@@ -1,12 +1,12 @@
 package igate
 
 import (
-	"testing"
-	"time"
+    "testing"
+    "time"
 
-	"github.com/oorrwullie/go-igate/internal/aprs"
-	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/oorrwullie/go-igate/internal/transmitter"
+    "github.com/oorrwullie/go-igate/internal/aprs"
+    "github.com/oorrwullie/go-igate/internal/log"
+    "github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
 func setTestBeaconTimings() func() {
@@ -52,7 +52,7 @@ func TestSendBeaconRfRetriesOnCollision(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-1>APRS:TestBeacon", "TestBeacon")
+		ig.sendBeaconRf("N0CALL-1>APRS:TestBeacon", "TestBeacon", true)
 		close(done)
 	}()
 
@@ -111,7 +111,7 @@ func TestSendBeaconRfSucceedsFirstAttempt(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-5>APRS:Success", "Success")
+		ig.sendBeaconRf("N0CALL-5>APRS:Success", "Success", true)
 		close(done)
 	}()
 
@@ -165,7 +165,7 @@ func TestSendBeaconRfIgnoresSelfCollision(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-7>APRS:SelfAware", "SelfAware")
+		ig.sendBeaconRf("N0CALL-7>APRS:SelfAware", "SelfAware", true)
 		close(done)
 	}()
 
@@ -220,13 +220,13 @@ func TestSendBeaconRfHandlesConcurrentSchedules(t *testing.T) {
 
 	directDone := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-9>APRS:Beacon", "Beacon")
+		ig.sendBeaconRf("N0CALL-9>APRS:Beacon", "Beacon", true)
 		close(directDone)
 	}()
 
 	wideDone := make(chan struct{})
 	go func() {
-		ig.sendBeaconRf("N0CALL-9>APRS,WIDE1-1,WIDE2-1:Beacon", "Beacon")
+		ig.sendBeaconRf("N0CALL-9>APRS,WIDE1-1,WIDE2-1:Beacon", "Beacon", true)
 		close(wideDone)
 	}()
 
@@ -295,6 +295,91 @@ func TestSendBeaconRfHandlesConcurrentSchedules(t *testing.T) {
 
 	close(ig.stop)
 }
+
+// func TestSendBeaconRfForcesAprsIsAfterMaxAttempts(t *testing.T) {
+//     restore := setTestBeaconTimings()
+//     defer restore()
+//
+//     logger, err := log.New()
+//     if err != nil {
+//         t.Fatalf("failed to create logger: %v", err)
+//     }
+//
+//     tx := &transmitter.Tx{
+//         Chan: make(chan string, 4),
+//     }
+//
+//     forced := make(chan string, 1)
+//
+//     ig := &IGate{
+//         cfg: config.IGate{
+//             Beacon: config.Beacon{
+//                 Comment: "Test",
+//                 ISPath:  "TCPIP*,qAR,N0CALL-1",
+//             },
+//         },
+//         callSign:        "N0CALL-1",
+//         enableTx:        true,
+//         tx:              tx,
+//         logger:          logger,
+//         stop:            make(chan struct{}),
+//         forwardChan:     make(chan *aprs.Packet, 1),
+//         maxRfAttempts:   2,
+//         disableISBeacon: true,
+//         aprsisUpload: func(frame string) error {
+//             select {
+//             case forced <- frame:
+//             default:
+//             }
+//             return nil
+//         },
+//     }
+//
+//     done := make(chan struct{})
+//     go func() {
+//         ig.sendBeaconRf("N0CALL-1>APRS:Test", "Test", true)
+//         close(done)
+//     }()
+//
+//     first := waitForTx(t, tx, 200*time.Millisecond)
+//     if first == "" {
+//         t.Fatalf("expected first beacon transmission")
+//     }
+//
+//     ig.markRx()
+//     ig.observeBeacon(&aprs.Packet{
+//         Src:     "OTHERCALL",
+//         Payload: "Test",
+//     })
+//
+//     second := waitForTx(t, tx, 200*time.Millisecond)
+//     if second == "" || second != first {
+//         t.Fatalf("expected second attempt after collision")
+//     }
+//
+//     ig.markRx()
+//     ig.observeBeacon(&aprs.Packet{
+//         Src:     "OTHERCALL",
+//         Payload: "Test",
+//     })
+//
+//     select {
+//     case <-done:
+//     case <-time.After(300 * time.Millisecond):
+//         t.Fatalf("sendBeaconRf did not finish after exhausting attempts")
+//     }
+//
+//     select {
+//     case frame := <-forced:
+//         if !strings.Contains(frame, "N0CALL-1>APRS") {
+//             t.Fatalf("unexpected forced frame %q", frame)
+//         }
+//     case <-time.After(500 * time.Millisecond):
+//         t.Fatalf("expected forced APRS-IS upload after failed attempts")
+//     }
+//
+//     close(ig.stop)
+// }
 
 func waitForTx(t *testing.T, tx *transmitter.Tx, timeout time.Duration) string {
 	t.Helper()
