@@ -521,8 +521,11 @@ func (i *IGate) sendBeaconRf(frame, payload string, allowRetry bool) {
 
 	for {
 		if i.maxRfAttempts > 0 && attempts >= i.maxRfAttempts {
-			i.logger.Warn("RF beacon failed after ", attempts, " attempts; forcing APRS-IS beacon")
-			i.forceAprsIsBeacon()
+			// TODO - If you want to force a packet to the internet to keep your station on the map,
+			//        uncomment the next two lines. I found in testing it always does it this way and I
+			//        didn't like it. I commented it out.
+			//i.logger.Warn("RF beacon failed after ", attempts, " attempts; forcing APRS-IS beacon")
+			//i.forceAprsIsBeacon()
 			return
 		}
 		attempts++
