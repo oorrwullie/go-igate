@@ -24,9 +24,10 @@ type (
 	}
 
 	IGate struct {
-		Enabled bool   `yaml:"enabled"`
-		Aprsis  AprsIs `yaml:"aprsis"`
-		Beacon  Beacon `yaml:"beacon"`
+		Enabled       bool   `yaml:"enabled"`
+		Aprsis        AprsIs `yaml:"aprsis"`
+		Beacon        Beacon `yaml:"beacon"`
+		ForwardSelfRF bool   `yaml:"forward-self-rf"`
 	}
 
 	Sdr struct {
@@ -47,16 +48,19 @@ type (
 	}
 
 	Beacon struct {
-		Enabled    bool
-		Interval   time.Duration
-		RFInterval time.Duration `yaml:"rf-interval"`
-		ISInterval time.Duration `yaml:"is-interval"`
-		DisableRF  bool          `yaml:"disable-rf"`
-		DisableTCP bool          `yaml:"disable-tcp"`
-		Comment    string
-		RFPath     string     `yaml:"rf-path"`
-		ISPath     string     `yaml:"is-path"`
-		ExtraRF    []RFBeacon `yaml:"additional-rf-beacons"`
+		Enabled         bool
+		Interval        time.Duration
+		RFInterval      time.Duration `yaml:"rf-interval"`
+		ISInterval      time.Duration `yaml:"is-interval"`
+		DisableRF       bool          `yaml:"disable-rf"`
+		DisableTCP      bool          `yaml:"disable-tcp"`
+		DisableISBeacon bool          `yaml:"disable-is-beacon"`
+		MaxRFAttempts   int           `yaml:"max-rf-attempts"`
+		Comment         string
+		RFPath          string             `yaml:"rf-path"`
+		ISPath          string             `yaml:"is-path"`
+		ExtraRF         []RFBeacon         `yaml:"additional-rf-beacons"`
+		AprsFi          AprsFiVerification `yaml:"aprsfi-verification"`
 	}
 
 	AprsIs struct {
@@ -83,6 +87,14 @@ type (
 	RFBeacon struct {
 		Path     string        `yaml:"path"`
 		Interval time.Duration `yaml:"interval"`
+	}
+
+	AprsFiVerification struct {
+		Enabled     bool          `yaml:"enabled"`
+		APIKey      string        `yaml:"api-key"`
+		Delay       time.Duration `yaml:"delay"`
+		MaxAttempts int           `yaml:"max-attempts"`
+		Timeout     time.Duration `yaml:"timeout"`
 	}
 )
 
@@ -141,12 +153,28 @@ func GetConfig() (Config, error) {
 		cfg.IGate.Beacon.RFInterval = 0
 	}
 
-	if cfg.IGate.Beacon.DisableTCP {
+	if cfg.IGate.Beacon.DisableTCP || cfg.IGate.Beacon.DisableISBeacon {
 		cfg.IGate.Beacon.ISInterval = 0
 	}
 
 	for idx := range cfg.IGate.Beacon.ExtraRF {
 		cfg.IGate.Beacon.ExtraRF[idx].Path = strings.TrimSpace(cfg.IGate.Beacon.ExtraRF[idx].Path)
+	}
+
+	if cfg.IGate.Beacon.AprsFi.Delay <= 0 {
+		cfg.IGate.Beacon.AprsFi.Delay = 30 * time.Second
+	}
+
+	if cfg.IGate.Beacon.AprsFi.Timeout <= 0 {
+		cfg.IGate.Beacon.AprsFi.Timeout = 10 * time.Second
+	}
+
+	if cfg.IGate.Beacon.AprsFi.MaxAttempts <= 0 {
+		cfg.IGate.Beacon.AprsFi.MaxAttempts = 3
+	}
+
+	if cfg.IGate.Beacon.MaxRFAttempts <= 0 {
+		cfg.IGate.Beacon.MaxRFAttempts = 3
 	}
 
 	if cfg.Transmitter.TxDelay <= 0 {

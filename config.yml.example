@@ -73,6 +73,15 @@ igate:
     # set to true to suppress RF beaconing or APRS-IS beaconing respectively.
     disable-rf: false
     disable-tcp: false
+    # set to true to keep APRS-IS connection for gating others but skip your own beacon uploads
+    disable-is-beacon: false
+    max-rf-attempts: 3
+    aprsfi-verification:
+      enabled: false
+      api-key: ""
+      delay: 30s
+      max-attempts: 3
+      timeout: 10s
     # optional legacy interval applied to both RF and APRS-IS when the per-path
     # values above are not provided.
     # interval: 30m

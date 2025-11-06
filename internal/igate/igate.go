@@ -1,7 +1,12 @@
 package igate
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,23 +21,31 @@ import (
 
 type (
 	IGate struct {
-		cfg          config.IGate
-		callSign     string
-		inputChan    <-chan string
-		enableTx     bool
-		tx           *transmitter.Tx
-		logger       *log.Logger
-		Aprsis       *aprs.AprsIs
-		aprsisUpload func(string) error
-		forwardChan  chan *aprs.Packet
-		stop         chan struct{}
-		stopOnce     sync.Once
-		rfBeaconMu   sync.Mutex
-		beaconMu     sync.Mutex
-		isBeaconMu   sync.Mutex
-		beaconWaits  map[string]*beaconWait
-		lastRxMu     sync.Mutex
-		lastRx       time.Time
+		cfg             config.IGate
+		callSign        string
+		inputChan       <-chan string
+		enableTx        bool
+		tx              *transmitter.Tx
+		logger          *log.Logger
+		Aprsis          *aprs.AprsIs
+		aprsisUpload    func(string) error
+		httpClient      *http.Client
+		verifyAprsFi    bool
+		aprsFiKey       string
+		aprsFiDelay     time.Duration
+		aprsFiTries     int
+		aprsFiBaseURL   string
+		disableISBeacon bool
+		maxRfAttempts   int
+		forwardChan     chan *aprs.Packet
+		stop            chan struct{}
+		stopOnce        sync.Once
+		rfBeaconMu      sync.Mutex
+		beaconMu        sync.Mutex
+		isBeaconMu      sync.Mutex
+		beaconWaits     map[string]*beaconWait
+		lastRxMu        sync.Mutex
+		lastRx          time.Time
 	}
 )
 
@@ -54,6 +67,18 @@ const (
 
 const minPacketSize = 35
 const forwarderQueueSize = 32
+const defaultAprsFiBaseURL = "https://api.aprs.fi"
+const aprsFiGracePeriod = 5 * time.Second
+
+type aprsFiResponse struct {
+	Result      string        `json:"result"`
+	Description string        `json:"description"`
+	Entries     []aprsFiEntry `json:"entries"`
+}
+
+type aprsFiEntry struct {
+	Lasttime string `json:"lasttime"`
+}
 
 var (
 	beaconChannelQuiet    = 3 * time.Second
@@ -70,19 +95,51 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 
 	inputChan := ps.Subscribe()
 
+	var (
+		httpClient   *http.Client
+		verifyAprsFi bool
+		apiKey       string
+	)
+
+	if cfg.Beacon.AprsFi.Enabled {
+		apiKey = strings.TrimSpace(cfg.Beacon.AprsFi.APIKey)
+		if apiKey == "" {
+			logger.Warn("APRS-IS verification enabled but api-key missing; disabling verification")
+		} else {
+			timeout := cfg.Beacon.AprsFi.Timeout
+			if timeout <= 0 {
+				timeout = 10 * time.Second
+			}
+			httpClient = &http.Client{
+				Timeout: timeout,
+			}
+			verifyAprsFi = true
+		}
+	}
+
+	disableISBeacon := cfg.Beacon.DisableTCP || cfg.Beacon.DisableISBeacon
+
 	ig := &IGate{
-		cfg:          cfg,
-		callSign:     callSign,
-		inputChan:    inputChan,
-		enableTx:     enableTx,
-		tx:           tx,
-		logger:       logger,
-		Aprsis:       aprsis,
-		aprsisUpload: aprsis.Upload,
-		forwardChan:  make(chan *aprs.Packet, forwarderQueueSize),
-		stop:         make(chan struct{}),
-		lastRx:       time.Now(),
-		beaconWaits:  make(map[string]*beaconWait),
+		cfg:             cfg,
+		callSign:        callSign,
+		inputChan:       inputChan,
+		enableTx:        enableTx,
+		tx:              tx,
+		logger:          logger,
+		Aprsis:          aprsis,
+		aprsisUpload:    aprsis.Upload,
+		httpClient:      httpClient,
+		verifyAprsFi:    verifyAprsFi,
+		aprsFiKey:       apiKey,
+		aprsFiDelay:     cfg.Beacon.AprsFi.Delay,
+		aprsFiTries:     cfg.Beacon.AprsFi.MaxAttempts,
+		aprsFiBaseURL:   defaultAprsFiBaseURL,
+		disableISBeacon: disableISBeacon,
+		maxRfAttempts:   cfg.Beacon.MaxRFAttempts,
+		forwardChan:     make(chan *aprs.Packet, forwarderQueueSize),
+		stop:            make(chan struct{}),
+		lastRx:          time.Now(),
+		beaconWaits:     make(map[string]*beaconWait),
 	}
 
 	return ig, nil
@@ -140,14 +197,24 @@ func (i *IGate) listenForMessages() error {
 				continue
 			}
 
-			if strings.EqualFold(packet.Src, i.callSign) {
+			selfPacket := strings.EqualFold(packet.Src, i.callSign)
+			hasPath := len(packet.Path) > 0 && strings.TrimSpace(strings.Join(packet.Path, "")) != ""
+			if selfPacket && !i.cfg.ForwardSelfRF {
 				i.logger.Debug("Skipping APRS-IS forwarding of self-originated packet: ", msg)
+				i.observeBeacon(packet)
+				continue
+			}
+			if selfPacket && i.cfg.ForwardSelfRF && !hasPath {
+				i.logger.Debug("Skipping APRS-IS forwarding of pathless self packet: ", msg)
 				i.observeBeacon(packet)
 				continue
 			}
 
 			shouldForward := !packet.IsAckMessage() && packet.Type().ForwardToAprsIs()
 			if shouldForward {
+				if selfPacket {
+					i.logger.Debug("Forwarding self-originated RF packet to APRS-IS: ", msg)
+				}
 				select {
 				case <-i.stop:
 					return nil
@@ -193,6 +260,7 @@ func (i *IGate) startBeacon() error {
 	rfInterval := i.cfg.Beacon.RFInterval
 	isInterval := i.cfg.Beacon.ISInterval
 	extraRF := i.cfg.Beacon.ExtraRF
+	disableISBeacon := i.disableISBeacon
 
 	if !i.cfg.Beacon.Enabled {
 		fmt.Println("beacon is disabled")
@@ -203,7 +271,7 @@ func (i *IGate) startBeacon() error {
 		rfInterval = i.cfg.Beacon.Interval
 	}
 
-	if !i.cfg.Beacon.DisableTCP && isInterval <= 0 && i.cfg.Beacon.Interval > 0 {
+	if !disableISBeacon && isInterval <= 0 && i.cfg.Beacon.Interval > 0 {
 		isInterval = i.cfg.Beacon.Interval
 	}
 
@@ -211,7 +279,7 @@ func (i *IGate) startBeacon() error {
 		rfInterval = 0
 	}
 
-	if i.cfg.Beacon.DisableTCP {
+	if disableISBeacon {
 		isInterval = 0
 	}
 
@@ -255,7 +323,7 @@ func (i *IGate) startBeacon() error {
 	}
 
 	if len(rfSchedules) == 0 && isInterval <= 0 {
-		if i.cfg.Beacon.DisableRF && i.cfg.Beacon.DisableTCP {
+		if i.cfg.Beacon.DisableRF && disableISBeacon {
 			fmt.Println("beacon destinations disabled")
 			return nil
 		}
@@ -284,7 +352,7 @@ func (i *IGate) startBeacon() error {
 		i.logger.Info("RF beacon path ", path, " every ", schedule.interval)
 	}
 
-	chainIsToRf := !i.cfg.Beacon.DisableTCP && len(rfSchedules) > 0
+	chainIsToRf := !disableISBeacon && len(rfSchedules) > 0
 	if chainIsToRf {
 		i.logger.Info("Sequencing APRS-IS beacon immediately before each RF beacon")
 	}
@@ -297,7 +365,7 @@ func (i *IGate) startBeacon() error {
 	}
 
 	sendAprsIs := func(reason string) {
-		if i.cfg.Beacon.DisableTCP || i.aprsisUpload == nil {
+		if disableISBeacon || i.aprsisUpload == nil {
 			return
 		}
 
@@ -449,7 +517,16 @@ func (i *IGate) sendBeaconRf(frame, payload string) {
 	i.rfBeaconMu.Lock()
 	defer i.rfBeaconMu.Unlock()
 
+	attempts := 0
+
 	for {
+		if i.maxRfAttempts > 0 && attempts >= i.maxRfAttempts {
+			i.logger.Warn("RF beacon failed after ", attempts, " attempts; forcing APRS-IS beacon")
+			i.forceAprsIsBeacon()
+			return
+		}
+		attempts++
+
 		if !i.waitForQuiet(beaconChannelQuiet) {
 			return
 		}
@@ -473,11 +550,13 @@ func (i *IGate) sendBeaconRf(frame, payload string) {
 
 		if outcome == beaconOutcomeSuccess {
 			i.logger.Debug("Beacon RF transmission confirmed without collision")
+			i.scheduleAprsFiVerification(sendStart)
 			return
 		}
 
 		if outcome == beaconOutcomeTimeout {
 			i.logger.Debug("Beacon RF transmission not observed; assuming success")
+			i.scheduleAprsFiVerification(sendStart)
 			return
 		}
 
@@ -657,4 +736,154 @@ func (i *IGate) cancelPendingBeacon() {
 		}
 		delete(i.beaconWaits, key)
 	}
+}
+
+func (i *IGate) scheduleAprsFiVerification(sent time.Time) {
+	if !i.verifyAprsFi || !i.disableISBeacon {
+		return
+	}
+	if i.httpClient == nil || strings.TrimSpace(i.aprsFiKey) == "" {
+		return
+	}
+	if sent.IsZero() {
+		return
+	}
+
+	go i.runAprsFiVerification(sent)
+}
+
+func (i *IGate) runAprsFiVerification(sent time.Time) {
+	delay := i.aprsFiDelay
+	if delay <= 0 {
+		delay = 30 * time.Second
+	}
+
+	attempts := i.aprsFiTries
+	if attempts <= 0 {
+		attempts = 3
+	}
+
+	wait := delay
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if !i.sleepWithStop(wait) {
+			return
+		}
+
+		ok, err := i.queryAprsFi(sent)
+		if err != nil {
+			i.logger.Warn("APRS.fi verification attempt ", attempt, " failed: ", err)
+		}
+		if ok {
+			i.logger.Debug("APRS.fi verification confirmed beacon on attempt ", attempt)
+			return
+		}
+
+		wait = aprsFiGracePeriod
+	}
+
+	i.logger.Warn("APRS.fi did not confirm beacon; forcing APRS-IS upload")
+	i.forceAprsIsBeacon()
+}
+
+func (i *IGate) queryAprsFi(sent time.Time) (bool, error) {
+	if i.httpClient == nil {
+		return false, fmt.Errorf("aprs.fi HTTP client not configured")
+	}
+	if strings.TrimSpace(i.aprsFiKey) == "" {
+		return false, fmt.Errorf("aprs.fi api-key missing")
+	}
+	if sent.IsZero() {
+		return false, fmt.Errorf("sent time not provided")
+	}
+
+	base := strings.TrimSpace(i.aprsFiBaseURL)
+	if base == "" {
+		base = defaultAprsFiBaseURL
+	}
+	base = strings.TrimRight(base, "/")
+
+	params := url.Values{}
+	params.Set("name", strings.ToUpper(strings.TrimSpace(i.callSign)))
+	params.Set("what", "loc")
+	params.Set("format", "json")
+	params.Set("apikey", i.aprsFiKey)
+
+	endpoint := fmt.Sprintf("%s/api/get?%s", base, params.Encode())
+
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return false, err
+	}
+
+	resp, err := i.httpClient.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return false, fmt.Errorf("aprs.fi status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	payload, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, err
+	}
+
+	var result aprsFiResponse
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return false, err
+	}
+	if !strings.EqualFold(result.Result, "ok") {
+		if result.Description != "" {
+			return false, fmt.Errorf("aprs.fi error: %s", result.Description)
+		}
+		return false, fmt.Errorf("aprs.fi returned result %q", result.Result)
+	}
+
+	var latest time.Time
+	for _, entry := range result.Entries {
+		if entry.Lasttime == "" {
+			continue
+		}
+		ts, err := strconv.ParseInt(entry.Lasttime, 10, 64)
+		if err != nil {
+			continue
+		}
+		t := time.Unix(ts, 0)
+		if t.After(latest) {
+			latest = t
+		}
+	}
+
+	if latest.IsZero() {
+		return false, nil
+	}
+
+	threshold := sent.Add(-aprsFiGracePeriod)
+	if !latest.Before(threshold) {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func (i *IGate) forceAprsIsBeacon() {
+	if i.aprsisUpload == nil {
+		i.logger.Warn("Cannot force APRS-IS beacon; upload function not configured")
+		return
+	}
+
+	frame := buildBeaconFrame(i.callSign, i.cfg.Beacon.ISPath, i.cfg.Beacon.Comment)
+
+	i.isBeaconMu.Lock()
+	defer i.isBeaconMu.Unlock()
+
+	if err := i.aprsisUpload(frame); err != nil {
+		i.logger.Error("Error forcing APRS-IS beacon: ", err)
+		return
+	}
+
+	i.logger.Info("Forced APRS-IS beacon upload: ", frame)
 }
