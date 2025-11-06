@@ -68,7 +68,7 @@ const (
 const minPacketSize = 35
 const forwarderQueueSize = 32
 const defaultAprsFiBaseURL = "https://api.aprs.fi"
-const aprsFiGracePeriod = 5 * time.Second
+const aprsFiGracePeriod = 10 * time.Second
 
 type aprsFiResponse struct {
 	Result      string        `json:"result"`

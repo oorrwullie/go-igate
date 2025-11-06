@@ -79,7 +79,7 @@ igate:
     aprsfi-verification:
       enabled: false
       api-key: ""
-      delay: 30s
+      delay: 10s
       max-attempts: 3
       timeout: 10s
     # optional legacy interval applied to both RF and APRS-IS when the per-path

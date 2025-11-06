@@ -162,7 +162,7 @@ func GetConfig() (Config, error) {
 	}
 
 	if cfg.IGate.Beacon.AprsFi.Delay <= 0 {
-		cfg.IGate.Beacon.AprsFi.Delay = 30 * time.Second
+		cfg.IGate.Beacon.AprsFi.Delay = 10 * time.Second
 	}
 
 	if cfg.IGate.Beacon.AprsFi.Timeout <= 0 {
