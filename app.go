@@ -97,7 +97,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		txHandle = tx.Tx
 	}
 
-	appCache := cache.NewCache(cfg.CacheSize, ".cache.json", 30*time.Minute)
+	appCache := cache.NewCache(cfg.CacheSize, ".cache.json", 60*time.Second)
 
 	multimon = multimonpackage.New(cfg.Multimon, captureOutputChan, ps, appCache, txHandle, cfg.StationCallsign, logger)
 	err = multimon.Start()

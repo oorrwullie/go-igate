@@ -4,7 +4,7 @@ An in-memory LRU cache with optional TTL persistence used to suppress duplicate 
 ## Usage Example
 ```golang
 func main() {
-    cache := NewCache(1000, "cache.json", 30*time.Minute)
+    cache := NewCache(1000, "cache.json", 60*time.Second)
 
     entries := []string{
         "N7RIX-7>T0QPSP,WIDE1-1,WIDE2-1:`AYl\"<[/*C0}_3",
