@@ -22,32 +22,34 @@ import (
 
 type (
 	IGate struct {
-		cfg             config.IGate
-		callSign        string
-		inputChan       <-chan string
-		enableTx        bool
-		tx              *transmitter.Tx
-		logger          *log.Logger
-		Aprsis          *aprs.AprsIs
-		aprsisUpload    func(string) error
-		httpClient      *http.Client
-		verifyAprsFi    bool
-		aprsFiKey       string
-		aprsFiDelay     time.Duration
-		aprsFiTries     int
-		aprsFiBaseURL   string
-		disableISBeacon bool
-		maxRfAttempts   int
-		geoFilter       *geoFilter
-		forwardChan     chan *aprs.Packet
-		stop            chan struct{}
-		stopOnce        sync.Once
-		rfBeaconMu      sync.Mutex
-		beaconMu        sync.Mutex
-		isBeaconMu      sync.Mutex
-		beaconWaits     map[string]*beaconWait
-		lastRxMu        sync.Mutex
-		lastRx          time.Time
+		cfg                    config.IGate
+		callSign               string
+		inputChan              <-chan string
+		enableTx               bool
+		tx                     *transmitter.Tx
+		logger                 *log.Logger
+		Aprsis                 *aprs.AprsIs
+		aprsisUpload           func(string) error
+		httpClient             *http.Client
+		verifyAprsFi           bool
+		aprsFiKey              string
+		aprsFiDelay            time.Duration
+		aprsFiTries            int
+		aprsFiBaseURL          string
+		aprsFiWatchdogInterval time.Duration
+		aprsFiWatchdogMaxAge   time.Duration
+		disableISBeacon        bool
+		maxRfAttempts          int
+		geoFilter              *geoFilter
+		forwardChan            chan *aprs.Packet
+		stop                   chan struct{}
+		stopOnce               sync.Once
+		rfBeaconMu             sync.Mutex
+		beaconMu               sync.Mutex
+		isBeaconMu             sync.Mutex
+		beaconWaits            map[string]*beaconWait
+		lastRxMu               sync.Mutex
+		lastRx                 time.Time
 	}
 )
 
@@ -126,27 +128,29 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 	}
 
 	ig := &IGate{
-		cfg:             cfg,
-		callSign:        callSign,
-		inputChan:       inputChan,
-		enableTx:        enableTx,
-		tx:              tx,
-		logger:          logger,
-		Aprsis:          aprsis,
-		aprsisUpload:    aprsis.Upload,
-		httpClient:      httpClient,
-		verifyAprsFi:    verifyAprsFi,
-		aprsFiKey:       apiKey,
-		aprsFiDelay:     cfg.Beacon.AprsFi.Delay,
-		aprsFiTries:     cfg.Beacon.AprsFi.MaxAttempts,
-		aprsFiBaseURL:   defaultAprsFiBaseURL,
-		disableISBeacon: disableISBeacon,
-		maxRfAttempts:   cfg.Beacon.MaxRFAttempts,
-		geoFilter:       rangeFilter,
-		forwardChan:     make(chan *aprs.Packet, forwarderQueueSize),
-		stop:            make(chan struct{}),
-		lastRx:          time.Now(),
-		beaconWaits:     make(map[string]*beaconWait),
+		cfg:                    cfg,
+		callSign:               callSign,
+		inputChan:              inputChan,
+		enableTx:               enableTx,
+		tx:                     tx,
+		logger:                 logger,
+		Aprsis:                 aprsis,
+		aprsisUpload:           aprsis.Upload,
+		httpClient:             httpClient,
+		verifyAprsFi:           verifyAprsFi,
+		aprsFiKey:              apiKey,
+		aprsFiDelay:            cfg.Beacon.AprsFi.Delay,
+		aprsFiTries:            cfg.Beacon.AprsFi.MaxAttempts,
+		aprsFiBaseURL:          defaultAprsFiBaseURL,
+		aprsFiWatchdogInterval: cfg.Beacon.AprsFi.WatchdogInterval,
+		aprsFiWatchdogMaxAge:   cfg.Beacon.AprsFi.WatchdogMaxAge,
+		disableISBeacon:        disableISBeacon,
+		maxRfAttempts:          cfg.Beacon.MaxRFAttempts,
+		geoFilter:              rangeFilter,
+		forwardChan:            make(chan *aprs.Packet, forwarderQueueSize),
+		stop:                   make(chan struct{}),
+		lastRx:                 time.Now(),
+		beaconWaits:            make(map[string]*beaconWait),
 	}
 
 	return ig, nil
@@ -161,6 +165,13 @@ func (i *IGate) Run() error {
 	}
 
 	var g errgroup.Group
+
+	if i.aprsFiWatchdogEnabled() {
+		g.Go(func() error {
+			i.runAprsFiWatchdog()
+			return nil
+		})
+	}
 
 	g.Go(func() error {
 		return i.forwardPackets()
@@ -828,6 +839,90 @@ func degreesToRadians(deg float64) float64 {
 	return deg * (math.Pi / 180)
 }
 
+func (i *IGate) aprsFiWatchdogEnabled() bool {
+	if !i.verifyAprsFi {
+		return false
+	}
+	if i.aprsFiWatchdogInterval <= 0 || i.aprsFiWatchdogMaxAge <= 0 {
+		return false
+	}
+	if i.httpClient == nil || strings.TrimSpace(i.aprsFiKey) == "" {
+		return false
+	}
+	if i.cfg.Beacon.DisableRF || !i.enableTx || i.tx == nil {
+		return false
+	}
+	if strings.TrimSpace(i.callSign) == "" {
+		return false
+	}
+	return true
+}
+
+func (i *IGate) runAprsFiWatchdog() {
+	interval := i.aprsFiWatchdogInterval
+	maxAge := i.aprsFiWatchdogMaxAge
+
+	if interval <= 0 || maxAge <= 0 {
+		return
+	}
+
+	i.logger.Info("Starting APRS.fi watchdog every ", interval, " (max-age ", maxAge, ")")
+	i.aprsFiWatchdogTick(maxAge)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-i.stop:
+			return
+		case <-ticker.C:
+			i.aprsFiWatchdogTick(maxAge)
+		}
+	}
+}
+
+func (i *IGate) aprsFiWatchdogTick(maxAge time.Duration) {
+	if maxAge <= 0 {
+		return
+	}
+
+	latest, err := i.latestAprsFiTimestamp()
+	if err != nil {
+		i.logger.Warn("APRS.fi watchdog query failed: ", err)
+		return
+	}
+
+	if latest.IsZero() {
+		i.logger.Warn("APRS.fi watchdog did not find any recent packets; triggering RF beacon")
+		i.triggerWatchdogBeacon("no aprs.fi entries")
+		return
+	}
+
+	age := time.Since(latest)
+	if age > maxAge {
+		i.logger.Warn("APRS.fi last heard ", age, " ago (max ", maxAge, "); triggering RF beacon")
+		i.triggerWatchdogBeacon("aprs.fi stale entry")
+		return
+	}
+
+	i.logger.Debug("APRS.fi watchdog last heard ", age, " ago; within limits")
+}
+
+func (i *IGate) triggerWatchdogBeacon(reason string) {
+	if i.cfg.Beacon.DisableRF || !i.enableTx || i.tx == nil {
+		return
+	}
+
+	frame := buildBeaconFrame(i.callSign, i.cfg.Beacon.RFPath, i.cfg.Beacon.Comment)
+	if reason != "" {
+		i.logger.Warn("APRS.fi watchdog -> RF (", reason, "): ", frame)
+	} else {
+		i.logger.Warn("APRS.fi watchdog -> RF: ", frame)
+	}
+	go i.sendBeaconRf(frame, i.cfg.Beacon.Comment, true)
+}
+
 func (i *IGate) scheduleAprsFiVerification(frame, payload string, sent time.Time, allowRetry bool) {
 	if !i.verifyAprsFi || !i.disableISBeacon {
 		return
@@ -881,15 +976,15 @@ func (i *IGate) runAprsFiVerification(frame, payload string, sent time.Time, all
 	//i.forceAprsIsBeacon()
 }
 
-func (i *IGate) queryAprsFi(sent time.Time) (bool, error) {
+func (i *IGate) latestAprsFiTimestamp() (time.Time, error) {
 	if i.httpClient == nil {
-		return false, fmt.Errorf("aprs.fi HTTP client not configured")
+		return time.Time{}, fmt.Errorf("aprs.fi HTTP client not configured")
 	}
 	if strings.TrimSpace(i.aprsFiKey) == "" {
-		return false, fmt.Errorf("aprs.fi api-key missing")
+		return time.Time{}, fmt.Errorf("aprs.fi api-key missing")
 	}
-	if sent.IsZero() {
-		return false, fmt.Errorf("sent time not provided")
+	if strings.TrimSpace(i.callSign) == "" {
+		return time.Time{}, fmt.Errorf("aprs.fi call-sign missing")
 	}
 
 	base := strings.TrimSpace(i.aprsFiBaseURL)
@@ -908,34 +1003,34 @@ func (i *IGate) queryAprsFi(sent time.Time) (bool, error) {
 
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
-		return false, err
+		return time.Time{}, err
 	}
 
 	resp, err := i.httpClient.Do(req)
 	if err != nil {
-		return false, err
+		return time.Time{}, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return false, fmt.Errorf("aprs.fi status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return time.Time{}, fmt.Errorf("aprs.fi status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
 	payload, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return false, err
+		return time.Time{}, err
 	}
 
 	var result aprsFiResponse
 	if err := json.Unmarshal(payload, &result); err != nil {
-		return false, err
+		return time.Time{}, err
 	}
 	if !strings.EqualFold(result.Result, "ok") {
 		if result.Description != "" {
-			return false, fmt.Errorf("aprs.fi error: %s", result.Description)
+			return time.Time{}, fmt.Errorf("aprs.fi error: %s", result.Description)
 		}
-		return false, fmt.Errorf("aprs.fi returned result %q", result.Result)
+		return time.Time{}, fmt.Errorf("aprs.fi returned result %q", result.Result)
 	}
 
 	var latest time.Time
@@ -951,6 +1046,19 @@ func (i *IGate) queryAprsFi(sent time.Time) (bool, error) {
 		if t.After(latest) {
 			latest = t
 		}
+	}
+
+	return latest, nil
+}
+
+func (i *IGate) queryAprsFi(sent time.Time) (bool, error) {
+	if sent.IsZero() {
+		return false, fmt.Errorf("sent time not provided")
+	}
+
+	latest, err := i.latestAprsFiTimestamp()
+	if err != nil {
+		return false, err
 	}
 
 	if latest.IsZero() {

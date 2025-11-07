@@ -84,6 +84,10 @@ igate:
       delay: 10s
       max-attempts: 3
       timeout: 10s
+      # optional watchdog: poll aprs.fi and force an RF beacon when your station vanishes
+      watchdog-interval: 0s
+      # watchdog-max-age defaults to 2x interval when omitted
+      watchdog-max-age: 0s
     # optional legacy interval applied to both RF and APRS-IS when the per-path
     # values above are not provided.
     # interval: 30m

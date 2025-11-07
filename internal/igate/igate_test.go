@@ -1,6 +1,7 @@
 package igate
 
 import (
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -598,6 +599,97 @@ func TestForceAprsIsBeacon(t *testing.T) {
 	if !strings.Contains(frames[0], "N0CALL-1>APRS") {
 		t.Fatalf("unexpected frame %q", frames[0])
 	}
+}
+
+func TestAprsFiWatchdogTriggersBeacon(t *testing.T) {
+	restore := setTestBeaconTimings()
+	defer restore()
+
+	logger := mustLogger(t)
+
+	stale := time.Now().Add(-2 * time.Hour).Unix()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"result":"ok","entries":[{"lasttime":"%d"}]}`, stale)
+	}))
+	defer ts.Close()
+
+	tx := &transmitter.Tx{
+		Chan: make(chan string, 1),
+	}
+
+	ig := &IGate{
+		cfg: config.IGate{
+			Beacon: config.Beacon{
+				Comment: "Watchdog",
+				RFPath:  "WIDE2-1",
+			},
+		},
+		callSign:      "N0CALL-9",
+		enableTx:      true,
+		tx:            tx,
+		logger:        logger,
+		stop:          make(chan struct{}),
+		forwardChan:   make(chan *aprs.Packet, 1),
+		verifyAprsFi:  true,
+		httpClient:    ts.Client(),
+		aprsFiKey:     "test-key",
+		aprsFiBaseURL: ts.URL,
+	}
+
+	ig.aprsFiWatchdogTick(time.Minute)
+
+	got := waitForTx(t, tx, 500*time.Millisecond)
+	if !strings.Contains(got, "N0CALL-9>APRS") {
+		t.Fatalf("expected watchdog beacon frame, got %q", got)
+	}
+
+	close(ig.stop)
+}
+
+func TestAprsFiWatchdogSkipsWhenRecent(t *testing.T) {
+	restore := setTestBeaconTimings()
+	defer restore()
+
+	logger := mustLogger(t)
+
+	fresh := time.Now().Unix()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"result":"ok","entries":[{"lasttime":"%d"}]}`, fresh)
+	}))
+	defer ts.Close()
+
+	tx := &transmitter.Tx{
+		Chan: make(chan string, 1),
+	}
+
+	ig := &IGate{
+		cfg: config.IGate{
+			Beacon: config.Beacon{
+				Comment: "Watchdog",
+				RFPath:  "WIDE2-1",
+			},
+		},
+		callSign:      "N0CALL-8",
+		enableTx:      true,
+		tx:            tx,
+		logger:        logger,
+		stop:          make(chan struct{}),
+		forwardChan:   make(chan *aprs.Packet, 1),
+		verifyAprsFi:  true,
+		httpClient:    ts.Client(),
+		aprsFiKey:     "test-key",
+		aprsFiBaseURL: ts.URL,
+	}
+
+	ig.aprsFiWatchdogTick(time.Minute)
+
+	select {
+	case msg := <-tx.Chan:
+		t.Fatalf("unexpected watchdog beacon: %q", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(ig.stop)
 }
 
 func mustLogger(t *testing.T) *log.Logger {
