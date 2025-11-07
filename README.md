@@ -52,7 +52,7 @@ go run main.go
 
 ### Log rotation
 
-Systemd writes APRS logs to `/var/www/aprs.log` by default. Install the logrotate policy to keep the file from growing unbounded:
+Systemd writes APRS logs to `/var/log/aprs.log` by default. Install the logrotate policy to keep the file from growing unbounded:
 
 1. Copy `scripts/aprs.logrotate` to `/etc/logrotate.d/aprs` (requires sudo).
 2. Adjust thresholds (e.g. `size`, `rotate`) if your environment needs different retention.
