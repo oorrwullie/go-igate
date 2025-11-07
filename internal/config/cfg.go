@@ -21,6 +21,7 @@ type (
 		StationCallsign     string      `yaml:"station-callsign"`
 		SoundcardInputName  string      `yaml:"soundcard-input-name"`
 		SoundcardOutputName string      `yaml:"soundcard-output-name"`
+		SoundcardCapture    bool        `yaml:"soundcard-capture-enabled"`
 	}
 
 	IGate struct {

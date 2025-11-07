@@ -26,6 +26,8 @@ digipeater:
 soundcard-input-name: ""
 # soundcard-output-name is the name of the device to use for audio output. If empty, the system default device will be used.
 soundcard-output-name: ""
+# set to true to bypass the SDR and use the soundcard input for receive
+soundcard-capture-enabled: false
 sdr:
   #Set to true to enable using an RTL-SDR dongle
   enabled: true
