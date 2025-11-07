@@ -50,6 +50,8 @@ type (
 		beaconWaits            map[string]*beaconWait
 		lastRxMu               sync.Mutex
 		lastRx                 time.Time
+		lastBeaconAttemptMu    sync.Mutex
+		lastBeaconAttempt      time.Time
 	}
 )
 
@@ -526,6 +528,26 @@ func (i *IGate) channelQuietFor(duration time.Duration) bool {
 	return time.Since(i.lastRx) >= duration
 }
 
+func (i *IGate) recordBeaconAttempt(t time.Time) {
+	if t.IsZero() {
+		t = time.Now()
+	}
+	i.lastBeaconAttemptMu.Lock()
+	i.lastBeaconAttempt = t
+	i.lastBeaconAttemptMu.Unlock()
+}
+
+func (i *IGate) lastBeaconAttemptTime() (time.Time, bool) {
+	i.lastBeaconAttemptMu.Lock()
+	defer i.lastBeaconAttemptMu.Unlock()
+
+	if i.lastBeaconAttempt.IsZero() {
+		return time.Time{}, false
+	}
+
+	return i.lastBeaconAttempt, true
+}
+
 func (i *IGate) sendBeaconRf(frame, payload string, allowRetry bool) {
 	i.rfBeaconMu.Lock()
 	defer i.rfBeaconMu.Unlock()
@@ -552,6 +574,7 @@ func (i *IGate) sendBeaconRf(frame, payload string, allowRetry bool) {
 		}
 
 		sendStart := time.Now()
+		i.recordBeaconAttempt(sendStart)
 		key, outcomeCh := i.expectBeacon(frame, payload, sendStart)
 
 		i.logger.Info("Beacon -> RF: ", frame)
@@ -855,6 +878,7 @@ func (i *IGate) aprsFiWatchdogEnabled() bool {
 	if strings.TrimSpace(i.callSign) == "" {
 		return false
 	}
+
 	return true
 }
 
@@ -882,31 +906,65 @@ func (i *IGate) runAprsFiWatchdog() {
 	}
 }
 
+func (i *IGate) watchdogLocalGap() time.Duration {
+	gap := i.aprsFiWatchdogInterval / 2
+	if gap <= 0 {
+		gap = 5 * time.Minute
+	}
+	return gap
+}
+
 func (i *IGate) aprsFiWatchdogTick(maxAge time.Duration) {
 	if maxAge <= 0 {
 		return
 	}
 
+	lastAttempt, hasAttempt := i.lastBeaconAttemptTime()
+	attemptAge := time.Duration(0)
+	if hasAttempt {
+		attemptAge = time.Since(lastAttempt)
+	}
+	localGap := i.watchdogLocalGap()
+	allowLocalRetry := !hasAttempt || attemptAge >= localGap
+
 	latest, err := i.latestAprsFiTimestamp()
 	if err != nil {
 		i.logger.Warn("APRS.fi watchdog query failed: ", err)
+		if allowLocalRetry && (!hasAttempt || attemptAge >= maxAge) {
+			i.logger.Warn("APRS.fi watchdog falling back to local timer; last beacon attempt ", attemptAge, " ago")
+			i.triggerWatchdogBeacon("aprs.fi query failed")
+		}
 		return
 	}
 
 	if latest.IsZero() {
-		i.logger.Warn("APRS.fi watchdog did not find any recent packets; triggering RF beacon")
-		i.triggerWatchdogBeacon("no aprs.fi entries")
+		if allowLocalRetry {
+			i.logger.Warn("APRS.fi watchdog did not find recent packets; last local attempt ", attemptAge, " ago")
+			i.triggerWatchdogBeacon("no aprs.fi entries")
+		} else {
+			i.logger.Info("APRS.fi watchdog found no entries but last beacon attempt ", attemptAge, " ago (< ", localGap, "), skipping")
+		}
 		return
 	}
 
 	age := time.Since(latest)
 	if age > maxAge {
-		i.logger.Warn("APRS.fi last heard ", age, " ago (max ", maxAge, "); triggering RF beacon")
-		i.triggerWatchdogBeacon("aprs.fi stale entry")
+		if allowLocalRetry {
+			i.logger.Warn("APRS.fi last heard ", age, " ago (max ", maxAge, "); last local attempt ", attemptAge, " ago – triggering RF beacon")
+			i.triggerWatchdogBeacon("aprs.fi stale entry")
+		} else {
+			i.logger.Warn("APRS.fi stale (", age, ") but last local attempt ", attemptAge, " ago (< ", localGap, "); waiting before retry")
+		}
 		return
 	}
 
-	i.logger.Debug("APRS.fi watchdog last heard ", age, " ago; within limits")
+	if hasAttempt && lastAttempt.After(latest.Add(aprsFiGracePeriod)) && allowLocalRetry && attemptAge > maxAge/2 {
+		i.logger.Warn("APRS.fi has not seen the most recent beacon (local age ", attemptAge, ", aprs.fi age ", age, "); triggering RF beacon")
+		i.triggerWatchdogBeacon("aprs.fi missing recent beacon")
+		return
+	}
+
+	i.logger.Debug("APRS.fi watchdog healthy; aprs.fi age ", age, ", local beacon age ", attemptAge)
 }
 
 func (i *IGate) triggerWatchdogBeacon(reason string) {

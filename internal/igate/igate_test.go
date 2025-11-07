@@ -1,6 +1,7 @@
 package igate
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -687,6 +688,160 @@ func TestAprsFiWatchdogSkipsWhenRecent(t *testing.T) {
 	case msg := <-tx.Chan:
 		t.Fatalf("unexpected watchdog beacon: %q", msg)
 	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(ig.stop)
+}
+
+func TestAprsFiWatchdogSkipsDueToRecentAttempt(t *testing.T) {
+	restore := setTestBeaconTimings()
+	defer restore()
+
+	logger := mustLogger(t)
+
+	stale := time.Now().Add(-2 * time.Hour).Unix()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"result":"ok","entries":[{"lasttime":"%d"}]}`, stale)
+	}))
+	defer ts.Close()
+
+	tx := &transmitter.Tx{
+		Chan: make(chan string, 1),
+	}
+
+	ig := &IGate{
+		cfg: config.IGate{
+			Beacon: config.Beacon{
+				Comment: "Watchdog",
+				RFPath:  "WIDE2-1",
+			},
+		},
+		callSign:               "N0CALL-3",
+		enableTx:               true,
+		tx:                     tx,
+		logger:                 logger,
+		stop:                   make(chan struct{}),
+		forwardChan:            make(chan *aprs.Packet, 1),
+		verifyAprsFi:           true,
+		httpClient:             ts.Client(),
+		aprsFiKey:              "test-key",
+		aprsFiBaseURL:          ts.URL,
+		aprsFiWatchdogInterval: 30 * time.Minute,
+	}
+
+	ig.recordBeaconAttempt(time.Now())
+
+	ig.aprsFiWatchdogTick(30 * time.Minute)
+
+	select {
+	case msg := <-tx.Chan:
+		t.Fatalf("expected watchdog to skip due to recent attempt, got %q", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(ig.stop)
+}
+
+func TestAprsFiWatchdogRetriesWhenAprsFiMissesRecentAttempt(t *testing.T) {
+	restore := setTestBeaconTimings()
+	defer restore()
+
+	logger := mustLogger(t)
+
+	now := time.Now()
+	lastAttempt := now.Add(-20 * time.Minute)
+	aprsTimestamp := lastAttempt.Add(-5 * time.Minute).Unix()
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"result":"ok","entries":[{"lasttime":"%d"}]}`, aprsTimestamp)
+	}))
+	defer ts.Close()
+
+	tx := &transmitter.Tx{
+		Chan: make(chan string, 1),
+	}
+
+	ig := &IGate{
+		cfg: config.IGate{
+			Beacon: config.Beacon{
+				Comment: "Watchdog",
+				RFPath:  "WIDE2-1",
+			},
+		},
+		callSign:               "N0CALL-4",
+		enableTx:               true,
+		tx:                     tx,
+		logger:                 logger,
+		stop:                   make(chan struct{}),
+		forwardChan:            make(chan *aprs.Packet, 1),
+		verifyAprsFi:           true,
+		httpClient:             ts.Client(),
+		aprsFiKey:              "test-key",
+		aprsFiBaseURL:          ts.URL,
+		aprsFiWatchdogInterval: 30 * time.Minute,
+	}
+
+	ig.recordBeaconAttempt(lastAttempt)
+
+	ig.aprsFiWatchdogTick(30 * time.Minute)
+
+	got := waitForTx(t, tx, 500*time.Millisecond)
+	if !strings.Contains(got, "N0CALL-4>APRS") {
+		t.Fatalf("expected watchdog beacon when aprs.fi misses recent attempt, got %q", got)
+	}
+
+	close(ig.stop)
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestAprsFiWatchdogFallsBackOnQueryFailure(t *testing.T) {
+	restore := setTestBeaconTimings()
+	defer restore()
+
+	logger := mustLogger(t)
+
+	tx := &transmitter.Tx{
+		Chan: make(chan string, 1),
+	}
+
+	client := &http.Client{
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return nil, errors.New("boom")
+		}),
+	}
+
+	ig := &IGate{
+		cfg: config.IGate{
+			Beacon: config.Beacon{
+				Comment: "Watchdog",
+				RFPath:  "WIDE2-1",
+			},
+		},
+		callSign:               "N0CALL-5",
+		enableTx:               true,
+		tx:                     tx,
+		logger:                 logger,
+		stop:                   make(chan struct{}),
+		forwardChan:            make(chan *aprs.Packet, 1),
+		verifyAprsFi:           true,
+		httpClient:             client,
+		aprsFiKey:              "test-key",
+		aprsFiBaseURL:          "https://api.aprs.fi",
+		aprsFiWatchdogInterval: 15 * time.Minute,
+	}
+
+	ig.recordBeaconAttempt(time.Now().Add(-2 * time.Hour))
+
+	ig.aprsFiWatchdogTick(30 * time.Minute)
+
+	got := waitForTx(t, tx, 500*time.Millisecond)
+	if !strings.Contains(got, "N0CALL-5>APRS") {
+		t.Fatalf("expected watchdog beacon on aprs.fi query failure, got %q", got)
 	}
 
 	close(ig.stop)
