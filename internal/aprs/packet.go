@@ -132,6 +132,79 @@ func (p *Packet) IsAckMessage() bool {
 	return false
 }
 
+// Position returns latitude and longitude in decimal degrees if the payload contains an
+// uncompressed position report (e.g. !DDMM.mmN/DDDMM.mmE). Otherwise ok will be false.
+func (p *Packet) Position() (lat float64, lon float64, ok bool) {
+	if len(p.Payload) < 19 {
+		return 0, 0, false
+	}
+
+	switch p.Payload[0] {
+	case '!', '=', '/', '@':
+	default:
+		return 0, 0, false
+	}
+
+	if len(p.Payload) < 19 {
+		return 0, 0, false
+	}
+
+	latField := p.Payload[1:9] // DDMM.mmN
+	if len(latField) != 8 {
+		return 0, 0, false
+	}
+
+	latDeg, err := strconv.ParseFloat(latField[:2], 64)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	latMin, err := strconv.ParseFloat(latField[2:7], 64)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	latDir := latField[7]
+
+	lonField := p.Payload[10:19] // DDDMM.mmE
+	if len(lonField) != 9 {
+		return 0, 0, false
+	}
+
+	lonDeg, err := strconv.ParseFloat(lonField[:3], 64)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	lonMin, err := strconv.ParseFloat(lonField[3:8], 64)
+	if err != nil {
+		return 0, 0, false
+	}
+
+	lonDir := lonField[8]
+
+	lat = latDeg + latMin/60
+	lon = lonDeg + lonMin/60
+
+	switch latDir {
+	case 'N', 'n':
+	case 'S', 's':
+		lat = -lat
+	default:
+		return 0, 0, false
+	}
+
+	switch lonDir {
+	case 'E', 'e':
+	case 'W', 'w':
+		lon = -lon
+	default:
+		return 0, 0, false
+	}
+
+	return lat, lon, true
+}
+
 // Check whether the packet should be retransmitted by the digipeater and if so, modifies the path.
 func (p *Packet) CheckForRetransmit(stationCallsign string) (bool, error) {
 	alreadyProcessed := false

@@ -1,6 +1,7 @@
 package igate
 
 import (
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -218,6 +219,33 @@ func TestIGate_startBeacon(t *testing.T) {
 				close(i.stop)
 			}
 		})
+	}
+}
+
+func TestParseRangeFilter(t *testing.T) {
+	filter, err := parseRangeFilter("r/40.17/-111.63/200 foo/bar")
+	if err != nil {
+		t.Fatalf("parseRangeFilter returned error: %v", err)
+	}
+
+	if filter == nil {
+		t.Fatalf("expected range filter")
+	}
+
+	if math.Abs(filter.latCenter-40.17) > 1e-6 {
+		t.Fatalf("unexpected lat %f", filter.latCenter)
+	}
+
+	if math.Abs(filter.lonCenter+111.63) > 1e-6 {
+		t.Fatalf("unexpected lon %f", filter.lonCenter)
+	}
+
+	if filter.radiusKm != 200 {
+		t.Fatalf("unexpected radius %f", filter.radiusKm)
+	}
+
+	if _, err := parseRangeFilter("r/invalid"); err == nil {
+		t.Fatalf("expected error for invalid filter")
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -37,6 +38,7 @@ type (
 		aprsFiBaseURL   string
 		disableISBeacon bool
 		maxRfAttempts   int
+		geoFilter       *geoFilter
 		forwardChan     chan *aprs.Packet
 		stop            chan struct{}
 		stopOnce        sync.Once
@@ -118,6 +120,10 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 	}
 
 	disableISBeacon := cfg.Beacon.DisableTCP || cfg.Beacon.DisableISBeacon
+	rangeFilter, err := parseRangeFilter(cfg.Aprsis.Filter)
+	if err != nil {
+		logger.Warn("Failed to parse APRS-IS range filter: ", err)
+	}
 
 	ig := &IGate{
 		cfg:             cfg,
@@ -136,6 +142,7 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		aprsFiBaseURL:   defaultAprsFiBaseURL,
 		disableISBeacon: disableISBeacon,
 		maxRfAttempts:   cfg.Beacon.MaxRFAttempts,
+		geoFilter:       rangeFilter,
 		forwardChan:     make(chan *aprs.Packet, forwarderQueueSize),
 		stop:            make(chan struct{}),
 		lastRx:          time.Now(),
@@ -212,6 +219,10 @@ func (i *IGate) listenForMessages() error {
 
 			shouldForward := !packet.IsAckMessage() && packet.Type().ForwardToAprsIs()
 			if shouldForward {
+				if !selfPacket && !i.allowForward(packet) {
+					i.logger.Debug("Dropping APRS-IS forwarding outside geo filter: ", msg)
+					continue
+				}
 				if selfPacket {
 					i.logger.Debug("Forwarding self-originated RF packet to APRS-IS: ", msg)
 				}
@@ -730,6 +741,91 @@ func (i *IGate) cancelPendingBeacon() {
 		}
 		delete(i.beaconWaits, key)
 	}
+}
+
+func (i *IGate) allowForward(packet *aprs.Packet) bool {
+	if i.geoFilter == nil {
+		return true
+	}
+
+	lat, lon, ok := packet.Position()
+	if !ok {
+		return true
+	}
+
+	return i.geoFilter.contains(lat, lon)
+}
+
+type geoFilter struct {
+	latCenter float64
+	lonCenter float64
+	radiusKm  float64
+}
+
+func (g *geoFilter) contains(lat, lon float64) bool {
+	distance := haversineKm(g.latCenter, g.lonCenter, lat, lon)
+	return distance <= g.radiusKm
+}
+
+func parseRangeFilter(filter string) (*geoFilter, error) {
+	filter = strings.TrimSpace(filter)
+	if filter == "" {
+		return nil, nil
+	}
+
+	tokens := strings.Fields(filter)
+	for _, token := range tokens {
+		if strings.HasPrefix(token, "r/") {
+			parts := strings.Split(token[2:], "/")
+			if len(parts) != 3 {
+				return nil, fmt.Errorf("invalid range filter token %q", token)
+			}
+
+			lat, err := strconv.ParseFloat(parts[0], 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid latitude: %w", err)
+			}
+
+			lon, err := strconv.ParseFloat(parts[1], 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid longitude: %w", err)
+			}
+
+			radius, err := strconv.ParseFloat(parts[2], 64)
+			if err != nil {
+				return nil, fmt.Errorf("invalid radius: %w", err)
+			}
+
+			return &geoFilter{
+				latCenter: lat,
+				lonCenter: lon,
+				radiusKm:  radius,
+			}, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func haversineKm(lat1, lon1, lat2, lon2 float64) float64 {
+	const earthRadiusKm = 6371.0
+
+	dLat := degreesToRadians(lat2 - lat1)
+	dLon := degreesToRadians(lon2 - lon1)
+
+	lat1Rad := degreesToRadians(lat1)
+	lat2Rad := degreesToRadians(lat2)
+
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Sin(dLon/2)*math.Sin(dLon/2)*math.Cos(lat1Rad)*math.Cos(lat2Rad)
+
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusKm * c
+}
+
+func degreesToRadians(deg float64) float64 {
+	return deg * (math.Pi / 180)
 }
 
 func (i *IGate) scheduleAprsFiVerification(frame, payload string, sent time.Time, allowRetry bool) {
