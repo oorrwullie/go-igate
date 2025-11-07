@@ -50,6 +50,16 @@ To run Go-iGate, the following are required.
 go run main.go
 ```
 
+### Log rotation
+
+Systemd writes APRS logs to `/var/log/aprs.log` by default. Install the logrotate policy to keep the file from growing unbounded:
+
+1. Copy `scripts/aprs.logrotate` to `/etc/logrotate.d/aprs` (requires sudo).
+2. Adjust thresholds (e.g. `size`, `rotate`) if your environment needs different retention.
+3. Run `sudo logrotate -f /etc/logrotate.d/aprs` once to verify the policy.
+
+The provided config rotates whenever the log hits 50 MB, keeps 10 compressed archives, skips missing/empty logs, and uses `copytruncate` so the running service keeps logging.
+
 ### Beacon configuration tips
 
 - A home fill-in digipeater should advertise itself with the WIDE1-1 overlay. Use the alternate table digipeater symbol paired with the overlay character `S` (e.g. `=latNSlonW#...`) to match [APRS Protocol Reference v1.0.1, Chapter 2](http://www.aprs.org/doc/APRS101.PDF).

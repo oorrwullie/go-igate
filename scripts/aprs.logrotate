@@ -1,0 +1,9 @@
+/var/log/aprs.log {
+    size 50M
+    rotate 10
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
