@@ -3,6 +3,7 @@ package log
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -41,7 +42,8 @@ func (f *ColorFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		levelColor = white
 	}
 
-	message := fmt.Sprintf("%s[%s] %s%s\n", levelColor, entry.Level, entry.Message, reset)
+	timestamp := entry.Time.Format(time.RFC3339)
+	message := fmt.Sprintf("%s[%s] %s %s%s\n", levelColor, entry.Level, timestamp, entry.Message, reset)
 	return []byte(message), nil
 }
 
