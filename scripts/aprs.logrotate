@@ -1,4 +1,4 @@
-/var/www/aprs.log {
+/var/log/aprs.log {
     size 50M
     rotate 10
     compress
