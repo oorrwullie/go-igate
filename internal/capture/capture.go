@@ -12,9 +12,13 @@ type Capture interface {
 }
 
 func New(cfg config.Config, outputChan chan []byte, logger *log.Logger) (Capture, error) {
-	if cfg.Sdr.Enabled {
-		return NewSdrCapture(cfg.Sdr, outputChan, logger)
-	}
+    if cfg.SoundcardCapture {
+        return NewSoundcardCapture(cfg, outputChan, logger)
+    }
 
-	return NewSoundcardCapture(cfg, outputChan, logger)
+    if cfg.Sdr.Enabled {
+        return NewSdrCapture(cfg.Sdr, outputChan, logger)
+    }
+
+    return NewSoundcardCapture(cfg, outputChan, logger)
 }
