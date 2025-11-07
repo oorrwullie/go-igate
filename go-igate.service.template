@@ -2,7 +2,7 @@
 Description=i-Gate APRS
 
 [Service]
-StandardOutput=append:/var/www/aprs.log
+StandardOutput=append:/var/log/aprs.log
 WorkingDirectory={{WORKING_DIRECTORY}}
 Group=www-data
 ExecStart={{EXEC_START}}
