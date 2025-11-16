@@ -91,11 +91,13 @@ type (
 	}
 
 	AprsFiVerification struct {
-		Enabled     bool          `yaml:"enabled"`
-		APIKey      string        `yaml:"api-key"`
-		Delay       time.Duration `yaml:"delay"`
-		MaxAttempts int           `yaml:"max-attempts"`
-		Timeout     time.Duration `yaml:"timeout"`
+		Enabled          bool          `yaml:"enabled"`
+		APIKey           string        `yaml:"api-key"`
+		Delay            time.Duration `yaml:"delay"`
+		MaxAttempts      int           `yaml:"max-attempts"`
+		Timeout          time.Duration `yaml:"timeout"`
+		WatchdogInterval time.Duration `yaml:"watchdog-interval"`
+		WatchdogMaxAge   time.Duration `yaml:"watchdog-max-age"`
 	}
 )
 
@@ -172,6 +174,14 @@ func GetConfig() (Config, error) {
 
 	if cfg.IGate.Beacon.AprsFi.MaxAttempts <= 0 {
 		cfg.IGate.Beacon.AprsFi.MaxAttempts = 3
+	}
+
+	if cfg.IGate.Beacon.AprsFi.WatchdogInterval < 0 {
+		cfg.IGate.Beacon.AprsFi.WatchdogInterval = 0
+	}
+
+	if cfg.IGate.Beacon.AprsFi.WatchdogInterval > 0 && cfg.IGate.Beacon.AprsFi.WatchdogMaxAge <= 0 {
+		cfg.IGate.Beacon.AprsFi.WatchdogMaxAge = 2 * cfg.IGate.Beacon.AprsFi.WatchdogInterval
 	}
 
 	if cfg.IGate.Beacon.MaxRFAttempts <= 0 {
