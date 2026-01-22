@@ -112,6 +112,18 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		}
 	}
 
+	var gateRewriter *digipeater.Rewriter
+	if cfg.IGate.GateDigipeatedPath {
+		if cfg.DigipeaterEnabled {
+			gateRewriter, err = digipeater.NewRewriter(cfg.StationCallsign, cfg.Digipeater)
+			if err != nil {
+				return nil, fmt.Errorf("Error creating digipeater rewriter: %v", err)
+			}
+		} else {
+			logger.Warn("igate.gate-digipeated-path enabled but digipeater is disabled; using original RF path")
+		}
+	}
+
 	if cfg.DigipeaterEnabled {
 		if txHandle == nil {
 			logger.Warn("Digipeater enabled but transmitter is disabled; skipping digipeater")
@@ -121,6 +133,10 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 				return nil, fmt.Errorf("Error creating digipeater: %v", err)
 			}
 		}
+	}
+
+	if ig != nil && gateRewriter != nil {
+		ig.SetDigiRewriter(gateRewriter)
 	}
 
 	dg := &DigiGate{

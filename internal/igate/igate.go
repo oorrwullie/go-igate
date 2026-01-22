@@ -14,6 +14,7 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/go-igate/internal/digipeater"
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/oorrwullie/go-igate/internal/pubsub"
 	"github.com/oorrwullie/go-igate/internal/transmitter"
@@ -52,6 +53,7 @@ type (
 		lastRx                 time.Time
 		lastBeaconAttemptMu    sync.Mutex
 		lastBeaconAttempt      time.Time
+		digiRewriter           *digipeater.Rewriter
 	}
 )
 
@@ -193,6 +195,10 @@ func (i *IGate) Stop() {
 	})
 }
 
+func (i *IGate) SetDigiRewriter(rewriter *digipeater.Rewriter) {
+	i.digiRewriter = rewriter
+}
+
 func (i *IGate) listenForMessages() error {
 	defer close(i.forwardChan)
 
@@ -239,10 +245,18 @@ func (i *IGate) listenForMessages() error {
 				if selfPacket {
 					i.logger.Debug("Forwarding self-originated RF packet to APRS-IS: ", msg)
 				}
+				forwardPacket := packet
+				if i.cfg.GateDigipeatedPath && i.digiRewriter != nil {
+					packetCopy := *packet
+					packetCopy.Path = append([]string{}, packet.Path...)
+					if i.digiRewriter.Rewrite(&packetCopy) {
+						forwardPacket = &packetCopy
+					}
+				}
 				select {
 				case <-i.stop:
 					return nil
-				case i.forwardChan <- packet:
+				case i.forwardChan <- forwardPacket:
 				}
 			}
 
