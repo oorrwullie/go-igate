@@ -65,6 +65,10 @@ transmitter:
 igate:
   # enabled: set to true to enable DigiGate to act as an iGate.
   enabled: true
+  # gate self-originated RF packets to APRS-IS (disabled by default).
+  forward-self-rf: false
+  # when enabled, APRS-IS gating uses the digipeated path when this station would digipeat.
+  gate-digipeated-path: false
   beacon:
     # enable to send beacon messages
     enabled: false

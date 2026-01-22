@@ -25,10 +25,11 @@ type (
 	}
 
 	IGate struct {
-		Enabled       bool   `yaml:"enabled"`
-		Aprsis        AprsIs `yaml:"aprsis"`
-		Beacon        Beacon `yaml:"beacon"`
-		ForwardSelfRF bool   `yaml:"forward-self-rf"`
+		Enabled            bool   `yaml:"enabled"`
+		Aprsis             AprsIs `yaml:"aprsis"`
+		Beacon             Beacon `yaml:"beacon"`
+		ForwardSelfRF      bool   `yaml:"forward-self-rf"`
+		GateDigipeatedPath bool   `yaml:"gate-digipeated-path"`
 	}
 
 	Sdr struct {
