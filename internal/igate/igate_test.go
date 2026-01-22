@@ -13,6 +13,7 @@ import (
 
 	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/go-igate/internal/digipeater"
 	"github.com/oorrwullie/go-igate/internal/log"
 	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
@@ -371,6 +372,82 @@ func TestListenForMessagesSkipsPathlessSelfEvenWhenEnabled(t *testing.T) {
 	case <-done:
 	case <-time.After(1 * time.Second):
 		t.Fatalf("listenForMessages did not stop")
+	}
+}
+
+func TestListenForMessagesUsesDigipeatedPathWhenEnabled(t *testing.T) {
+	tests := []struct {
+		name     string
+		frame    string
+		wantPath []string
+	}{
+		{
+			name:     "rewrite-wide1-1",
+			frame:    "CALL1>APRS,WIDE1-1:/123456h4903.50N/07201.75W-Test message",
+			wantPath: []string{"N0CALL-1*"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := mustLogger(t)
+			input := make(chan string, 1)
+			forward := make(chan *aprs.Packet, 1)
+			stop := make(chan struct{})
+
+			rewriter, err := digipeater.NewRewriter("N0CALL-1", config.Digipeater{
+				AliasPatterns: []string{`^WIDE1-1$`},
+				WidePatterns:  []string{`^WIDE[1-7]-[1-7]$`},
+			})
+			if err != nil {
+				t.Fatalf("failed to create rewriter: %v", err)
+			}
+
+			ig := &IGate{
+				cfg: config.IGate{
+					GateDigipeatedPath: true,
+				},
+				callSign:     "N0CALL-1",
+				inputChan:    input,
+				forwardChan:  forward,
+				stop:         stop,
+				logger:       logger,
+				digiRewriter: rewriter,
+			}
+
+			done := make(chan struct{})
+			go func() {
+				_ = ig.listenForMessages()
+				close(done)
+			}()
+
+			input <- tt.frame
+
+			select {
+			case pkt := <-forward:
+				if pkt == nil {
+					t.Fatalf("expected forwarded packet")
+				}
+				if len(pkt.Path) != len(tt.wantPath) {
+					t.Fatalf("unexpected forwarded path: %#v", pkt.Path)
+				}
+				for idx, want := range tt.wantPath {
+					if pkt.Path[idx] != want {
+						t.Fatalf("unexpected forwarded path: %#v", pkt.Path)
+					}
+				}
+			case <-time.After(100 * time.Millisecond):
+				t.Fatalf("expected packet to be forwarded")
+			}
+
+			close(stop)
+
+			select {
+			case <-done:
+			case <-time.After(1 * time.Second):
+				t.Fatalf("listenForMessages did not stop")
+			}
+		})
 	}
 }
 
