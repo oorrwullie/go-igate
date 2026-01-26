@@ -258,7 +258,7 @@ func (t PacketType) String() string {
 func (t PacketType) ForwardToAprsIs() bool {
 	switch t {
 	case PositionReport, StatusReport, Message,
-		WeatherReport, ObjectReport, ItemReport:
+		Telemetry, WeatherReport, ObjectReport, ItemReport:
 		return true
 	default:
 		return false
