@@ -456,6 +456,53 @@ func TestListenForMessagesUsesDigipeatedPathWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestFormatForAprsIsQConstruct(t *testing.T) {
+	payload := "!4903.50N/07201.75W-Test"
+	callSign := "N0CALL-10"
+
+	tests := []struct {
+		name string
+		tx   bool
+		path []string
+		want string
+	}{
+		{
+			name: "adds-qao-when-tx-enabled",
+			tx:   true,
+			path: []string{"WIDE1-1"},
+			want: "CALL1>APRS,WIDE1-1,TCPIP*,qAO,N0CALL-10:" + payload,
+		},
+		{
+			name: "adds-qar-when-tx-disabled",
+			tx:   false,
+			path: []string{"WIDE1-1"},
+			want: "CALL1>APRS,WIDE1-1,TCPIP*,qAR,N0CALL-10:" + payload,
+		},
+		{
+			name: "does-not-duplicate-when-aprs-is-hop-present",
+			tx:   true,
+			path: []string{"TCPIP*", "qAO", "N0CALL-1"},
+			want: "CALL1>APRS,TCPIP*,qAO,N0CALL-1:" + payload,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			packet := &aprs.Packet{
+				Src:     "CALL1",
+				Dst:     "APRS",
+				Path:    tt.path,
+				Payload: payload,
+			}
+
+			got := formatForAprsIs(packet, callSign, tt.tx)
+			if got != tt.want {
+				t.Fatalf("unexpected frame\nwant %q\ngot  %q", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestSendBeaconRfAssumesSuccessAfterTimeout(t *testing.T) {
 	logger := mustLogger(t)
 
