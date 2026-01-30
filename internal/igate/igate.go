@@ -279,7 +279,7 @@ func (i *IGate) forwardPackets() error {
 				continue
 			}
 
-			uploadFrame := formatForAprsIs(packet, i.callSign)
+			uploadFrame := formatForAprsIs(packet, i.callSign, i.enableTx)
 			fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
 			if i.aprsisUpload != nil {
 				if err := i.aprsisUpload(uploadFrame); err != nil {
@@ -489,7 +489,7 @@ func buildBeaconFrame(callSign, path, comment string) string {
 	return builder.String()
 }
 
-func formatForAprsIs(packet *aprs.Packet, callSign string) string {
+func formatForAprsIs(packet *aprs.Packet, callSign string, txEnabled bool) string {
 	var builder strings.Builder
 
 	callSign = strings.ToUpper(strings.TrimSpace(callSign))
@@ -500,7 +500,11 @@ func formatForAprsIs(packet *aprs.Packet, callSign string) string {
 
 	path := append([]string{}, packet.Path...)
 	if !containsAprsIsHop(path) && callSign != "" {
-		path = append(path, "TCPIP*", "qAR", callSign)
+		qConstruct := "qAR"
+		if txEnabled {
+			qConstruct = "qAO"
+		}
+		path = append(path, "TCPIP*", qConstruct, callSign)
 	}
 
 	if len(path) > 0 {
