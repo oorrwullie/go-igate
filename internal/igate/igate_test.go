@@ -382,9 +382,14 @@ func TestListenForMessagesUsesDigipeatedPathWhenEnabled(t *testing.T) {
 		wantPath []string
 	}{
 		{
-			name:     "rewrite-wide1-1",
+			name:     "skip-rewrite-when-not-self-hop",
 			frame:    "CALL1>APRS,WIDE1-1:/123456h4903.50N/07201.75W-Test message",
-			wantPath: []string{"N0CALL-1*"},
+			wantPath: []string{"WIDE1-1"},
+		},
+		{
+			name:     "rewrite-when-self-hop-present",
+			frame:    "CALL1>APRS,N0CALL-1*,WIDE1-1:/123456h4903.50N/07201.75W-Test message",
+			wantPath: []string{"N0CALL-1*", "N0CALL-1*"},
 		},
 	}
 

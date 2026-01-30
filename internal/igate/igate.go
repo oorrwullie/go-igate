@@ -246,7 +246,7 @@ func (i *IGate) listenForMessages() error {
 					i.logger.Debug("Forwarding self-originated RF packet to APRS-IS: ", msg)
 				}
 				forwardPacket := packet
-				if i.cfg.GateDigipeatedPath && i.digiRewriter != nil {
+				if i.cfg.GateDigipeatedPath && i.digiRewriter != nil && i.hasSelfHop(packet) {
 					packetCopy := *packet
 					packetCopy.Path = append([]string{}, packet.Path...)
 					if i.digiRewriter.Rewrite(&packetCopy) {
@@ -753,6 +753,30 @@ func (i *IGate) isSelfPacket(packet *aprs.Packet) bool {
 
 	if strings.EqualFold(packet.Src, i.callSign) {
 		return true
+	}
+
+	self := strings.ToUpper(strings.TrimSpace(i.callSign))
+	if self == "" {
+		return false
+	}
+
+	for _, hop := range packet.Path {
+		hop = strings.TrimSpace(hop)
+		if hop == "" {
+			continue
+		}
+		hop = strings.TrimSuffix(strings.ToUpper(hop), "*")
+		if hop == self {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (i *IGate) hasSelfHop(packet *aprs.Packet) bool {
+	if packet == nil {
+		return false
 	}
 
 	self := strings.ToUpper(strings.TrimSpace(i.callSign))
