@@ -246,7 +246,7 @@ func (i *IGate) listenForMessages() error {
 					i.logger.Debug("Forwarding self-originated RF packet to APRS-IS: ", msg)
 				}
 				forwardPacket := packet
-				if i.cfg.GateDigipeatedPath && i.digiRewriter != nil {
+				if i.cfg.GateDigipeatedPath && i.digiRewriter != nil && i.hasSelfHop(packet) {
 					packetCopy := *packet
 					packetCopy.Path = append([]string{}, packet.Path...)
 					if i.digiRewriter.Rewrite(&packetCopy) {
@@ -279,7 +279,7 @@ func (i *IGate) forwardPackets() error {
 				continue
 			}
 
-			uploadFrame := formatForAprsIs(packet, i.callSign)
+			uploadFrame := formatForAprsIs(packet, i.callSign, i.enableTx)
 			fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
 			if i.aprsisUpload != nil {
 				if err := i.aprsisUpload(uploadFrame); err != nil {
@@ -489,7 +489,7 @@ func buildBeaconFrame(callSign, path, comment string) string {
 	return builder.String()
 }
 
-func formatForAprsIs(packet *aprs.Packet, callSign string) string {
+func formatForAprsIs(packet *aprs.Packet, callSign string, txEnabled bool) string {
 	var builder strings.Builder
 
 	callSign = strings.ToUpper(strings.TrimSpace(callSign))
@@ -500,7 +500,11 @@ func formatForAprsIs(packet *aprs.Packet, callSign string) string {
 
 	path := append([]string{}, packet.Path...)
 	if !containsAprsIsHop(path) && callSign != "" {
-		path = append(path, "TCPIP*", "qAR", callSign)
+		qConstruct := "qAR"
+		if txEnabled {
+			qConstruct = "qAO"
+		}
+		path = append(path, "TCPIP*", qConstruct, callSign)
 	}
 
 	if len(path) > 0 {
@@ -753,6 +757,30 @@ func (i *IGate) isSelfPacket(packet *aprs.Packet) bool {
 
 	if strings.EqualFold(packet.Src, i.callSign) {
 		return true
+	}
+
+	self := strings.ToUpper(strings.TrimSpace(i.callSign))
+	if self == "" {
+		return false
+	}
+
+	for _, hop := range packet.Path {
+		hop = strings.TrimSpace(hop)
+		if hop == "" {
+			continue
+		}
+		hop = strings.TrimSuffix(strings.ToUpper(hop), "*")
+		if hop == self {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (i *IGate) hasSelfHop(packet *aprs.Packet) bool {
+	if packet == nil {
+		return false
 	}
 
 	self := strings.ToUpper(strings.TrimSpace(i.callSign))
