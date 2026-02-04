@@ -504,7 +504,7 @@ func formatForAprsIs(packet *aprs.Packet, callSign string, txEnabled bool) strin
 		if txEnabled {
 			qConstruct = "qAO"
 		}
-		path = append(path, "TCPIP*", qConstruct, callSign)
+		path = append(path, qConstruct, callSign)
 	}
 
 	if len(path) > 0 {
