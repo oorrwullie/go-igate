@@ -470,13 +470,13 @@ func TestFormatForAprsIsQConstruct(t *testing.T) {
 			name: "adds-qao-when-tx-enabled",
 			tx:   true,
 			path: []string{"WIDE1-1"},
-			want: "CALL1>APRS,WIDE1-1,TCPIP*,qAO,N0CALL-10:" + payload,
+			want: "CALL1>APRS,WIDE1-1,qAO,N0CALL-10:" + payload,
 		},
 		{
 			name: "adds-qar-when-tx-disabled",
 			tx:   false,
 			path: []string{"WIDE1-1"},
-			want: "CALL1>APRS,WIDE1-1,TCPIP*,qAR,N0CALL-10:" + payload,
+			want: "CALL1>APRS,WIDE1-1,qAR,N0CALL-10:" + payload,
 		},
 		{
 			name: "does-not-duplicate-when-aprs-is-hop-present",
