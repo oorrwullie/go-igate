@@ -54,6 +54,8 @@ type (
 		lastBeaconAttemptMu    sync.Mutex
 		lastBeaconAttempt      time.Time
 		digiRewriter           *digipeater.Rewriter
+		localStationsMu        sync.Mutex
+		localStations          map[string]time.Time
 	}
 )
 
@@ -73,7 +75,6 @@ const (
 	beaconOutcomeStopped
 )
 
-const minPacketSize = 35
 const forwarderQueueSize = 32
 const defaultAprsFiBaseURL = "https://api.aprs.fi"
 const aprsFiGracePeriod = 10 * time.Second
@@ -155,6 +156,7 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		stop:                   make(chan struct{}),
 		lastRx:                 time.Now(),
 		beaconWaits:            make(map[string]*beaconWait),
+		localStations:          make(map[string]time.Time),
 	}
 
 	return ig, nil
@@ -185,6 +187,12 @@ func (i *IGate) Run() error {
 		return i.listenForMessages()
 	})
 
+	if i.cfg.MessageGating && i.enableTx && i.tx != nil && i.Aprsis != nil {
+		g.Go(func() error {
+			return i.gateMessagesToRF()
+		})
+	}
+
 	return g.Wait()
 }
 
@@ -212,15 +220,25 @@ func (i *IGate) listenForMessages() error {
 			}
 			i.markRx()
 
-			if len(msg) < minPacketSize {
-				i.logger.Error("Packet too short: ", msg)
-				continue
-			}
-
 			packet, err := aprs.ParsePacket(msg)
 			if err != nil {
 				i.logger.Error(err, "Could not parse APRS packet: ", msg)
 				continue
+			}
+
+			if packet.HasForbiddenRFPath() {
+				i.logger.Debug("Skipping RF packet with forbidden path marker: ", msg)
+				continue
+			}
+
+			wasThirdParty := packet.Type() == aprs.ThirdPartyTraffic
+			packet, ok := packet.UnwrapThirdPartyForAprsIs()
+			if !ok {
+				i.logger.Debug("Skipping APRS-IS-originated or malformed third-party packet: ", msg)
+				continue
+			}
+			if !wasThirdParty && isDirectRFPacket(packet) {
+				i.rememberLocalStation(packet.Src)
 			}
 
 			selfPacket := strings.EqualFold(packet.Src, i.callSign)
@@ -236,7 +254,7 @@ func (i *IGate) listenForMessages() error {
 				continue
 			}
 
-			shouldForward := !packet.IsAckMessage() && packet.Type().ForwardToAprsIs()
+			shouldForward := packet.Type().ForwardToAprsIs()
 			if shouldForward {
 				if !selfPacket && !i.allowForward(packet) {
 					i.logger.Debug("Dropping APRS-IS forwarding outside geo filter: ", msg)
@@ -265,6 +283,118 @@ func (i *IGate) listenForMessages() error {
 	}
 }
 
+func isDirectRFPacket(packet *aprs.Packet) bool {
+	if packet == nil {
+		return false
+	}
+
+	for _, component := range packet.Path {
+		if strings.Contains(component, "*") {
+			return false
+		}
+	}
+
+	return true
+}
+
+func (i *IGate) rememberLocalStation(callsign string) {
+	callsign = strings.ToUpper(strings.TrimSpace(callsign))
+	if callsign == "" {
+		return
+	}
+
+	i.localStationsMu.Lock()
+	i.localStations[callsign] = time.Now()
+	i.localStationsMu.Unlock()
+}
+
+func (i *IGate) localStationRecentlyHeard(callsign string) bool {
+	callsign = strings.ToUpper(strings.TrimSpace(callsign))
+	if callsign == "" {
+		return false
+	}
+
+	i.localStationsMu.Lock()
+	defer i.localStationsMu.Unlock()
+
+	heard, ok := i.localStations[callsign]
+	if !ok || time.Since(heard) > i.cfg.LocalStationTimeout {
+		if ok {
+			delete(i.localStations, callsign)
+		}
+		return false
+	}
+
+	return true
+}
+
+func (i *IGate) gateMessagesToRF() error {
+	for {
+		select {
+		case <-i.stop:
+			return nil
+		case msg, ok := <-i.Aprsis.Inbound:
+			if !ok {
+				return nil
+			}
+
+			packet, err := aprs.ParsePacket(msg)
+			if err != nil || packet.Type() != aprs.Message {
+				continue
+			}
+
+			if packet.Payload[0] == '}' || strings.EqualFold(packet.Src, i.callSign) {
+				continue
+			}
+
+			destination, ok := packet.MessageDestination()
+			if !ok || !i.localStationRecentlyHeard(destination) {
+				continue
+			}
+
+			if strings.EqualFold(destination, i.callSign) || hasNoGateMarker(packet) {
+				continue
+			}
+
+			frame := formatThirdPartyForRF(packet, i.callSign, i.cfg.MessageRFPath)
+			i.logger.Info("Gating APRS-IS message to RF: ", frame)
+			i.tx.Send(frame)
+		}
+	}
+}
+
+func hasNoGateMarker(packet *aprs.Packet) bool {
+	if packet == nil {
+		return true
+	}
+
+	for _, component := range packet.Path {
+		component = strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(component)), "*")
+		if component == "NOGATE" || component == "RFONLY" {
+			return true
+		}
+	}
+
+	return false
+}
+
+func formatThirdPartyForRF(packet *aprs.Packet, callSign, rfPath string) string {
+	var builder strings.Builder
+	builder.WriteString(strings.ToUpper(strings.TrimSpace(callSign)))
+	builder.WriteString(">APRS")
+	if path := strings.TrimSpace(rfPath); path != "" {
+		builder.WriteString(",")
+		builder.WriteString(path)
+	}
+	builder.WriteString(":}")
+	builder.WriteString(packet.Src)
+	builder.WriteString(">")
+	builder.WriteString(packet.Dst)
+	builder.WriteString(":")
+	builder.WriteString(packet.Payload)
+	return builder.String()
+}
+
 func (i *IGate) forwardPackets() error {
 	for {
 		select {
@@ -279,7 +409,7 @@ func (i *IGate) forwardPackets() error {
 				continue
 			}
 
-			uploadFrame := formatForAprsIs(packet, i.callSign, i.enableTx)
+			uploadFrame := formatForAprsIs(packet, i.callSign)
 			fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
 			if i.aprsisUpload != nil {
 				if err := i.aprsisUpload(uploadFrame); err != nil {
@@ -489,7 +619,7 @@ func buildBeaconFrame(callSign, path, comment string) string {
 	return builder.String()
 }
 
-func formatForAprsIs(packet *aprs.Packet, callSign string, txEnabled bool) string {
+func formatForAprsIs(packet *aprs.Packet, callSign string) string {
 	var builder strings.Builder
 
 	callSign = strings.ToUpper(strings.TrimSpace(callSign))
@@ -500,11 +630,10 @@ func formatForAprsIs(packet *aprs.Packet, callSign string, txEnabled bool) strin
 
 	path := append([]string{}, packet.Path...)
 	if !containsAprsIsHop(path) && callSign != "" {
-		qConstruct := "qAR"
-		if txEnabled {
-			qConstruct = "qAO"
-		}
-		path = append(path, qConstruct, callSign)
+		// This application does not gate APRS-IS messages back to RF. Its
+		// RF-to-Internet packets therefore use qAO, regardless of whether the
+		// transmitter is enabled for beacons or digipeating.
+		path = append(path, "qAO", callSign)
 	}
 
 	if len(path) > 0 {

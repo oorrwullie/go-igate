@@ -25,11 +25,14 @@ type (
 	}
 
 	IGate struct {
-		Enabled            bool   `yaml:"enabled"`
-		Aprsis             AprsIs `yaml:"aprsis"`
-		Beacon             Beacon `yaml:"beacon"`
-		ForwardSelfRF      bool   `yaml:"forward-self-rf"`
-		GateDigipeatedPath bool   `yaml:"gate-digipeated-path"`
+		Enabled             bool          `yaml:"enabled"`
+		Aprsis              AprsIs        `yaml:"aprsis"`
+		Beacon              Beacon        `yaml:"beacon"`
+		ForwardSelfRF       bool          `yaml:"forward-self-rf"`
+		GateDigipeatedPath  bool          `yaml:"gate-digipeated-path"`
+		MessageGating       bool          `yaml:"message-gating"`
+		MessageRFPath       string        `yaml:"message-rf-path"`
+		LocalStationTimeout time.Duration `yaml:"local-station-timeout"`
 	}
 
 	Sdr struct {
@@ -195,6 +198,10 @@ func GetConfig() (Config, error) {
 
 	if cfg.Transmitter.TxTail <= 0 {
 		cfg.Transmitter.TxTail = 100 * time.Millisecond
+	}
+
+	if cfg.IGate.LocalStationTimeout <= 0 {
+		cfg.IGate.LocalStationTimeout = time.Hour
 	}
 
 	return cfg, nil

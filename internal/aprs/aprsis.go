@@ -12,6 +12,7 @@ import (
 
 type AprsIs struct {
 	Callsign  string
+	Inbound   chan string
 	id        string
 	Conn      *textproto.Conn
 	connected bool
@@ -34,6 +35,7 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 
 	a := &AprsIs{
 		Callsign:  callSign,
+		Inbound:   make(chan string, 64),
 		Conn:      nil,
 		connected: false,
 		cfg:       cfg,
@@ -60,16 +62,23 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 						a.Disconnect()
 					}
 					break
-				} else if !isReadReceipt(msg) {
-					logger.Info(
-						fmt.Sprintf(
-							"%s %s",
-							"[APRS-IS DIGIPEAT]",
-							msg,
-						),
-					)
-
 				}
+				continue
+			}
+
+			if !isReadReceipt(msg) {
+				select {
+				case a.Inbound <- msg:
+				default:
+					logger.Warn("Dropping APRS-IS packet: inbound queue full")
+				}
+				logger.Info(
+					fmt.Sprintf(
+						"%s %s",
+						"[APRS-IS DIGIPEAT]",
+						msg,
+					),
+				)
 			}
 		}
 	}()
@@ -102,7 +111,8 @@ func (a *AprsIs) Connect() error {
 		return fmt.Errorf("could not read server response: %v", err)
 	}
 
-	if strings.HasPrefix(resp, fmt.Sprintf("# logresp %s unverified", a.Callsign)) {
+	expected := fmt.Sprintf("# logresp %s verified", a.Callsign)
+	if !strings.HasPrefix(strings.ToLower(resp), strings.ToLower(expected)) {
 		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
 	}
 

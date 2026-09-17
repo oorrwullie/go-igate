@@ -462,25 +462,21 @@ func TestFormatForAprsIsQConstruct(t *testing.T) {
 
 	tests := []struct {
 		name string
-		tx   bool
 		path []string
 		want string
 	}{
 		{
-			name: "adds-qao-when-tx-enabled",
-			tx:   true,
+			name: "adds-qao-for-rf-only-igate",
 			path: []string{"WIDE1-1"},
 			want: "CALL1>APRS,WIDE1-1,qAO,N0CALL-10:" + payload,
 		},
 		{
-			name: "adds-qar-when-tx-disabled",
-			tx:   false,
+			name: "adds-qao-when-transmitter-is-disabled",
 			path: []string{"WIDE1-1"},
-			want: "CALL1>APRS,WIDE1-1,qAR,N0CALL-10:" + payload,
+			want: "CALL1>APRS,WIDE1-1,qAO,N0CALL-10:" + payload,
 		},
 		{
 			name: "does-not-duplicate-when-aprs-is-hop-present",
-			tx:   true,
 			path: []string{"TCPIP*", "qAO", "N0CALL-1"},
 			want: "CALL1>APRS,TCPIP*,qAO,N0CALL-1:" + payload,
 		},
@@ -495,11 +491,23 @@ func TestFormatForAprsIsQConstruct(t *testing.T) {
 				Payload: payload,
 			}
 
-			got := formatForAprsIs(packet, callSign, tt.tx)
+			got := formatForAprsIs(packet, callSign)
 			if got != tt.want {
 				t.Fatalf("unexpected frame\nwant %q\ngot  %q", tt.want, got)
 			}
 		})
+	}
+}
+
+func TestFormatThirdPartyForRF(t *testing.T) {
+	packet, err := aprs.ParsePacket("REMOTE>APRS,qAR,IGATE-1::N0CALL-10:hello{01}")
+	if err != nil {
+		t.Fatalf("ParsePacket returned error: %v", err)
+	}
+
+	want := "IGATE-1>APRS,WIDE1-1:}REMOTE>APRS::N0CALL-10:hello{01}"
+	if got := formatThirdPartyForRF(packet, "IGATE-1", "WIDE1-1"); got != want {
+		t.Fatalf("unexpected third-party RF frame\nwant %q\ngot  %q", want, got)
 	}
 }
 

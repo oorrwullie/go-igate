@@ -65,6 +65,13 @@ transmitter:
 igate:
   # enabled: set to true to enable DigiGate to act as an iGate.
   enabled: true
+  # enable APRS-IS message gating to stations recently heard directly on RF.
+  # This requires a transmitter and uses third-party packet format.
+  message-gating: false
+  # Optional RF path for gated messages; empty sends them direct.
+  message-rf-path: ""
+  # How long a station remains eligible for message gating after direct reception.
+  local-station-timeout: 1h
   # gate self-originated RF packets to APRS-IS (disabled by default).
   forward-self-rf: false
   # when enabled, APRS-IS gating uses the digipeated path when this station would digipeat.

@@ -144,3 +144,13 @@ func TestDigipeaterSSnWithoutAllowedPrefix(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 }
+
+func TestDigipeaterRejectsForbiddenRFPath(t *testing.T) {
+	dp, _ := newTestDigipeater(t)
+
+	for _, path := range []string{"NOGATE", "RFONLY", "TCPIP*", "qAR"} {
+		if msg, ok := dp.prepare("CALL1>APRS," + path + ":!4903.50N/07201.75W-Test"); ok {
+			t.Errorf("expected %q packet to be rejected, got %q", path, msg)
+		}
+	}
+}
