@@ -70,6 +70,8 @@ igate:
   message-gating: false
   # Optional RF path for gated messages; empty sends them direct.
   message-rf-path: ""
+  # Minimum interval between APRS-IS messages gated to RF.
+  message-rf-interval: 5s
   # How long a station remains eligible for message gating after direct reception.
   local-station-timeout: 1h
   # gate self-originated RF packets to APRS-IS (disabled by default).

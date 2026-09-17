@@ -64,7 +64,7 @@ The provided config rotates whenever the log hits 50 MB, keeps 10 compressed a
 
 Message gating is disabled by default. To enable it, set `igate.message-gating: true` and keep the transmitter enabled. The gateway remembers stations heard directly over RF and gates APRS-IS messages only to those stations while they remain within `local-station-timeout` (one hour by default). Messages are sent to RF using APRS third-party packet format and the configured `message-rf-path`.
 
-Because this implementation does not gate arbitrary APRS-IS traffic to RF, RF packets sent back to APRS-IS use the `qAO` receive-only/non-message-gating construct. A transmitter used for beacons or digipeating does not by itself make the gateway bidirectional.
+When message gating is disabled, RF packets sent back to APRS-IS use `qAO`. When it is enabled, they use `qAR` to advertise that the gateway can gate messages to recently heard RF stations. A transmitter used only for beacons or digipeating does not by itself make the gateway bidirectional.
 
 ### Beacon configuration tips
 

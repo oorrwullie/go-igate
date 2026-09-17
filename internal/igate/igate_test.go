@@ -476,6 +476,11 @@ func TestFormatForAprsIsQConstruct(t *testing.T) {
 			want: "CALL1>APRS,WIDE1-1,qAO,N0CALL-10:" + payload,
 		},
 		{
+			name: "adds-qar-for-message-gating-igate",
+			path: []string{"WIDE1-1"},
+			want: "CALL1>APRS,WIDE1-1,qAR,N0CALL-10:" + payload,
+		},
+		{
 			name: "does-not-duplicate-when-aprs-is-hop-present",
 			path: []string{"TCPIP*", "qAO", "N0CALL-1"},
 			want: "CALL1>APRS,TCPIP*,qAO,N0CALL-1:" + payload,
@@ -491,7 +496,8 @@ func TestFormatForAprsIsQConstruct(t *testing.T) {
 				Payload: payload,
 			}
 
-			got := formatForAprsIs(packet, callSign)
+			messageGating := tt.name == "adds-qar-for-message-gating-igate"
+			got := formatForAprsIs(packet, callSign, messageGating)
 			if got != tt.want {
 				t.Fatalf("unexpected frame\nwant %q\ngot  %q", tt.want, got)
 			}
@@ -505,9 +511,63 @@ func TestFormatThirdPartyForRF(t *testing.T) {
 		t.Fatalf("ParsePacket returned error: %v", err)
 	}
 
-	want := "IGATE-1>APRS,WIDE1-1:}REMOTE>APRS::N0CALL-10:hello{01}"
+	want := "IGATE-1>APRS,WIDE1-1:}REMOTE>APRS,TCPIP,IGATE-1*:N0CALL-10:hello{01}"
 	if got := formatThirdPartyForRF(packet, "IGATE-1", "WIDE1-1"); got != want {
 		t.Fatalf("unexpected third-party RF frame\nwant %q\ngot  %q", want, got)
+	}
+}
+
+func TestGateMessagesToRFIncludesRecentPositionAndAppliesEligibility(t *testing.T) {
+	inbound := make(chan string, 4)
+	tx := &transmitter.Tx{Chan: make(chan string, 4)}
+	ig := &IGate{
+		cfg: config.IGate{
+			LocalStationTimeout: time.Hour,
+			MessageRFInterval:   0,
+		},
+		callSign:              "IGATE-1",
+		tx:                    tx,
+		Aprsis:                &aprs.AprsIs{Inbound: inbound},
+		stop:                  make(chan struct{}),
+		localStations:         map[string]time.Time{"N0CALL-10": time.Now()},
+		internetStations:      make(map[string]time.Time),
+		internetPositions:     make(map[string]*aprs.Packet),
+		internetPositionTimes: make(map[string]time.Time),
+		logger:                mustLogger(t),
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- ig.gateMessagesToRF() }()
+
+	inbound <- "REMOTE>APRS:!4903.50N/07201.75W-Test"
+	inbound <- "REMOTE>APRS::N0CALL-10:hello{01}"
+
+	wantPosition := "IGATE-1>APRS:}REMOTE>APRS,TCPIP,IGATE-1*:!4903.50N/07201.75W-Test"
+	wantMessage := "IGATE-1>APRS:}REMOTE>APRS,TCPIP,IGATE-1*::N0CALL-10:hello{01}"
+	for _, want := range []string{wantPosition, wantMessage} {
+		select {
+		case got := <-tx.Chan:
+			if got != want {
+				t.Fatalf("unexpected gated frame\nwant %q\ngot  %q", want, got)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %q", want)
+		}
+	}
+
+	ig.rememberLocalStation("REMOTE")
+	inbound <- "REMOTE>APRS::N0CALL-10:again{02}"
+	select {
+	case got := <-tx.Chan:
+		t.Fatalf("unexpected duplicate gated frame: %q", got)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(ig.stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateMessagesToRF did not stop")
 	}
 }
 

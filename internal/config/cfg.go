@@ -32,6 +32,7 @@ type (
 		GateDigipeatedPath  bool          `yaml:"gate-digipeated-path"`
 		MessageGating       bool          `yaml:"message-gating"`
 		MessageRFPath       string        `yaml:"message-rf-path"`
+		MessageRFInterval   time.Duration `yaml:"message-rf-interval"`
 		LocalStationTimeout time.Duration `yaml:"local-station-timeout"`
 	}
 
@@ -202,6 +203,10 @@ func GetConfig() (Config, error) {
 
 	if cfg.IGate.LocalStationTimeout <= 0 {
 		cfg.IGate.LocalStationTimeout = time.Hour
+	}
+
+	if cfg.IGate.MessageRFInterval <= 0 {
+		cfg.IGate.MessageRFInterval = 5 * time.Second
 	}
 
 	return cfg, nil

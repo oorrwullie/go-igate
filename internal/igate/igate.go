@@ -56,6 +56,10 @@ type (
 		digiRewriter           *digipeater.Rewriter
 		localStationsMu        sync.Mutex
 		localStations          map[string]time.Time
+		internetStations       map[string]time.Time
+		internetPositions      map[string]*aprs.Packet
+		internetPositionTimes  map[string]time.Time
+		lastMessageRF          time.Time
 	}
 )
 
@@ -157,6 +161,9 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		lastRx:                 time.Now(),
 		beaconWaits:            make(map[string]*beaconWait),
 		localStations:          make(map[string]time.Time),
+		internetStations:       make(map[string]time.Time),
+		internetPositions:      make(map[string]*aprs.Packet),
+		internetPositionTimes:  make(map[string]time.Time),
 	}
 
 	return ig, nil
@@ -331,6 +338,62 @@ func (i *IGate) localStationRecentlyHeard(callsign string) bool {
 	return true
 }
 
+func (i *IGate) rememberInternetStation(packet *aprs.Packet) {
+	if packet == nil {
+		return
+	}
+	callsign := strings.ToUpper(strings.TrimSpace(packet.Src))
+	if callsign == "" || strings.EqualFold(callsign, i.callSign) {
+		return
+	}
+	i.localStationsMu.Lock()
+	defer i.localStationsMu.Unlock()
+	if i.internetStations == nil {
+		i.internetStations = make(map[string]time.Time)
+	}
+	i.internetStations[callsign] = time.Now()
+	if packet.Type() == aprs.PositionReport {
+		if i.internetPositions == nil {
+			i.internetPositions = make(map[string]*aprs.Packet)
+		}
+		copy := *packet
+		copy.Path = append([]string(nil), packet.Path...)
+		i.internetPositions[callsign] = &copy
+		if i.internetPositionTimes == nil {
+			i.internetPositionTimes = make(map[string]time.Time)
+		}
+		i.internetPositionTimes[callsign] = time.Now()
+	}
+}
+
+func (i *IGate) internetStationRecentlyHeard(callsign string) bool {
+	callsign = strings.ToUpper(strings.TrimSpace(callsign))
+	i.localStationsMu.Lock()
+	defer i.localStationsMu.Unlock()
+	heard, ok := i.internetStations[callsign]
+	if !ok || time.Since(heard) > i.cfg.LocalStationTimeout {
+		if ok {
+			delete(i.internetStations, callsign)
+			delete(i.internetPositions, callsign)
+			delete(i.internetPositionTimes, callsign)
+		}
+		return false
+	}
+	return true
+}
+
+func (i *IGate) recentInternetPosition(callsign string) *aprs.Packet {
+	i.localStationsMu.Lock()
+	defer i.localStationsMu.Unlock()
+	callsign = strings.ToUpper(strings.TrimSpace(callsign))
+	if time.Since(i.internetPositionTimes[callsign]) > i.cfg.LocalStationTimeout {
+		delete(i.internetPositions, callsign)
+		delete(i.internetPositionTimes, callsign)
+		return nil
+	}
+	return i.internetPositions[callsign]
+}
+
 func (i *IGate) gateMessagesToRF() error {
 	for {
 		select {
@@ -342,7 +405,11 @@ func (i *IGate) gateMessagesToRF() error {
 			}
 
 			packet, err := aprs.ParsePacket(msg)
-			if err != nil || packet.Type() != aprs.Message {
+			if err != nil {
+				continue
+			}
+			i.rememberInternetStation(packet)
+			if packet.Type() != aprs.Message {
 				continue
 			}
 
@@ -351,7 +418,7 @@ func (i *IGate) gateMessagesToRF() error {
 			}
 
 			destination, ok := packet.MessageDestination()
-			if !ok || !i.localStationRecentlyHeard(destination) {
+			if !ok || !i.localStationRecentlyHeard(destination) || i.localStationRecentlyHeard(packet.Src) || i.internetStationRecentlyHeard(destination) {
 				continue
 			}
 
@@ -359,9 +426,25 @@ func (i *IGate) gateMessagesToRF() error {
 				continue
 			}
 
+			if i.cfg.MessageRFInterval > 0 && !i.lastMessageRF.IsZero() {
+				wait := i.cfg.MessageRFInterval - time.Since(i.lastMessageRF)
+				if wait > 0 {
+					timer := time.NewTimer(wait)
+					select {
+					case <-i.stop:
+						timer.Stop()
+						return nil
+					case <-timer.C:
+					}
+				}
+			}
+			if position := i.recentInternetPosition(packet.Src); position != nil {
+				i.tx.Send(formatThirdPartyForRF(position, i.callSign, i.cfg.MessageRFPath))
+			}
 			frame := formatThirdPartyForRF(packet, i.callSign, i.cfg.MessageRFPath)
 			i.logger.Info("Gating APRS-IS message to RF: ", frame)
 			i.tx.Send(frame)
+			i.lastMessageRF = time.Now()
 		}
 	}
 }
@@ -373,7 +456,7 @@ func hasNoGateMarker(packet *aprs.Packet) bool {
 
 	for _, component := range packet.Path {
 		component = strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(component)), "*")
-		if component == "NOGATE" || component == "RFONLY" {
+		if component == "NOGATE" || component == "RFONLY" || component == "TCPXX" {
 			return true
 		}
 	}
@@ -393,6 +476,9 @@ func formatThirdPartyForRF(packet *aprs.Packet, callSign, rfPath string) string 
 	builder.WriteString(packet.Src)
 	builder.WriteString(">")
 	builder.WriteString(packet.Dst)
+	builder.WriteString(",TCPIP,")
+	builder.WriteString(strings.ToUpper(strings.TrimSpace(callSign)))
+	builder.WriteString("*")
 	builder.WriteString(":")
 	builder.WriteString(packet.Payload)
 	return builder.String()
@@ -412,7 +498,7 @@ func (i *IGate) forwardPackets() error {
 				continue
 			}
 
-			uploadFrame := formatForAprsIs(packet, i.callSign)
+			uploadFrame := formatForAprsIs(packet, i.callSign, i.cfg.MessageGating)
 			fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
 			if i.aprsisUpload != nil {
 				if err := i.aprsisUpload(uploadFrame); err != nil {
@@ -622,7 +708,7 @@ func buildBeaconFrame(callSign, path, comment string) string {
 	return builder.String()
 }
 
-func formatForAprsIs(packet *aprs.Packet, callSign string) string {
+func formatForAprsIs(packet *aprs.Packet, callSign string, messageGating bool) string {
 	var builder strings.Builder
 
 	callSign = strings.ToUpper(strings.TrimSpace(callSign))
@@ -633,10 +719,11 @@ func formatForAprsIs(packet *aprs.Packet, callSign string) string {
 
 	path := append([]string{}, packet.Path...)
 	if !containsAprsIsHop(path) && callSign != "" {
-		// This application does not gate APRS-IS messages back to RF. Its
-		// RF-to-Internet packets therefore use qAO, regardless of whether the
-		// transmitter is enabled for beacons or digipeating.
-		path = append(path, "qAO", callSign)
+		qConstruct := "qAO"
+		if messageGating {
+			qConstruct = "qAR"
+		}
+		path = append(path, qConstruct, callSign)
 	}
 
 	if len(path) > 0 {
