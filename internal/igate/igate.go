@@ -304,6 +304,9 @@ func (i *IGate) rememberLocalStation(callsign string) {
 	}
 
 	i.localStationsMu.Lock()
+	if i.localStations == nil {
+		i.localStations = make(map[string]time.Time)
+	}
 	i.localStations[callsign] = time.Now()
 	i.localStationsMu.Unlock()
 }
