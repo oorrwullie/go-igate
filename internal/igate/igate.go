@@ -232,7 +232,7 @@ func (i *IGate) listenForMessages() error {
 			}
 
 			wasThirdParty := packet.Type() == aprs.ThirdPartyTraffic
-			packet, ok := packet.UnwrapThirdPartyForAprsIs()
+			packet, ok = packet.UnwrapThirdPartyForAprsIs()
 			if !ok {
 				i.logger.Debug("Skipping APRS-IS-originated or malformed third-party packet: ", msg)
 				continue
