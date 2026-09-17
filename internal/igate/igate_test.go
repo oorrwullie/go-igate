@@ -511,7 +511,7 @@ func TestFormatThirdPartyForRF(t *testing.T) {
 		t.Fatalf("ParsePacket returned error: %v", err)
 	}
 
-	want := "IGATE-1>APRS,WIDE1-1:}REMOTE>APRS,TCPIP,IGATE-1*:N0CALL-10:hello{01}"
+	want := "IGATE-1>APRS,WIDE1-1:}REMOTE>APRS,TCPIP,IGATE-1*::N0CALL-10:hello{01}"
 	if got := formatThirdPartyForRF(packet, "IGATE-1", "WIDE1-1"); got != want {
 		t.Fatalf("unexpected third-party RF frame\nwant %q\ngot  %q", want, got)
 	}
