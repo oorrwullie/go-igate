@@ -555,6 +555,13 @@ func TestGateMessagesToRFIncludesRecentPositionAndAppliesEligibility(t *testing.
 		}
 	}
 
+	inbound <- "REMOTE>APRS::N0CALL-10:hello{01}"
+	select {
+	case got := <-tx.Chan:
+		t.Fatalf("duplicate message was gated again: %q", got)
+	case <-time.After(25 * time.Millisecond):
+	}
+
 	ig.rememberLocalStation("REMOTE")
 	inbound <- "REMOTE>APRS::N0CALL-10:again{02}"
 	select {

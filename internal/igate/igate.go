@@ -60,6 +60,8 @@ type (
 		internetPositions      map[string]*aprs.Packet
 		internetPositionTimes  map[string]time.Time
 		lastMessageRF          time.Time
+		messageDedupeMu        sync.Mutex
+		messageDedupe          map[string]time.Time
 	}
 )
 
@@ -164,6 +166,7 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		internetStations:       make(map[string]time.Time),
 		internetPositions:      make(map[string]*aprs.Packet),
 		internetPositionTimes:  make(map[string]time.Time),
+		messageDedupe:          make(map[string]time.Time),
 	}
 
 	return ig, nil
@@ -394,6 +397,35 @@ func (i *IGate) recentInternetPosition(callsign string) *aprs.Packet {
 	return i.internetPositions[callsign]
 }
 
+func (i *IGate) alreadyGatedMessage(packet *aprs.Packet, destination string) bool {
+	if packet == nil {
+		return true
+	}
+
+	window := i.cfg.MessageDedupWindow
+	if window <= 0 {
+		window = time.Minute
+	}
+	key := strings.ToUpper(strings.TrimSpace(packet.Src)) + ">" + destination + ":" + packet.Payload
+	now := time.Now()
+
+	i.messageDedupeMu.Lock()
+	defer i.messageDedupeMu.Unlock()
+	if i.messageDedupe == nil {
+		i.messageDedupe = make(map[string]time.Time)
+	}
+	for cachedKey, seen := range i.messageDedupe {
+		if now.Sub(seen) >= window {
+			delete(i.messageDedupe, cachedKey)
+		}
+	}
+	if seen, ok := i.messageDedupe[key]; ok && now.Sub(seen) < window {
+		return true
+	}
+	i.messageDedupe[key] = now
+	return false
+}
+
 func (i *IGate) gateMessagesToRF() error {
 	for {
 		select {
@@ -423,6 +455,10 @@ func (i *IGate) gateMessagesToRF() error {
 			}
 
 			if strings.EqualFold(destination, i.callSign) || hasNoGateMarker(packet) {
+				continue
+			}
+			if i.alreadyGatedMessage(packet, destination) {
+				i.logger.Debug("Skipping duplicate APRS-IS message: ", msg)
 				continue
 			}
 
