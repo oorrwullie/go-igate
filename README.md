@@ -60,6 +60,12 @@ Systemd writes APRS logs to `/var/log/aprs.log` by default. Install the logrotat
 
 The provided config rotates whenever the log hits 50 MB, keeps 10 compressed archives, skips missing/empty logs, and uses `copytruncate` so the running service keeps logging.
 
+### APRS-IS message gating
+
+Message gating is disabled by default. To enable it, set `igate.message-gating: true` and keep the transmitter enabled. The gateway remembers stations heard directly over RF and gates APRS-IS messages only to those stations while they remain within `local-station-timeout` (one hour by default). It also avoids gating when the sender was recently heard on RF or the destination is already visible on APRS-IS, suppresses duplicate Internet deliveries for `message-dedup-window` (one minute by default), includes a recent sender position when available, and spaces RF messages using `message-rf-interval` (five seconds by default). Messages are sent to RF using APRS third-party packet format and the configured `message-rf-path`.
+
+When message gating is disabled, RF packets sent back to APRS-IS use `qAO`. When it is enabled, they use `qAR` to advertise that the gateway can gate messages to recently heard RF stations. A transmitter used only for beacons or digipeating does not by itself make the gateway bidirectional.
+
 ### Beacon configuration tips
 
 - A home fill-in digipeater should advertise itself with the WIDE1-1 overlay. Use the alternate table digipeater symbol paired with the overlay character `S` (e.g. `=latNSlonW#...`) to match [APRS Protocol Reference v1.0.1, Chapter 2](http://www.aprs.org/doc/APRS101.PDF).

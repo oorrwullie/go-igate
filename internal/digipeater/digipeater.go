@@ -15,8 +15,6 @@ import (
 	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
-const minPacketSize = 35
-
 type Digipeater struct {
 	tx            *transmitter.Tx
 	inputChan     <-chan string
@@ -112,15 +110,6 @@ func (d *Digipeater) HandleMessage(msg string) {
 }
 
 func (d *Digipeater) prepare(msg string) (string, bool) {
-	if len(msg) < minPacketSize {
-		if strings.HasPrefix(msg, ":") || strings.Contains(msg, ":ack") {
-			d.logger.Debug("Ignoring ACK message below min size: ", msg)
-		} else {
-			d.logger.Debug("Packet too short to process: ", msg)
-		}
-		return "", false
-	}
-
 	packet, err := aprs.ParsePacket(msg)
 	if err != nil {
 		d.logger.Error(err, "Failed to parse APRS packet: ", msg)
@@ -132,6 +121,11 @@ func (d *Digipeater) prepare(msg string) (string, bool) {
 	}
 
 	if len(packet.Path) == 0 {
+		return "", false
+	}
+
+	if packet.HasForbiddenRFPath() || packet.Type() == aprs.ThirdPartyTraffic {
+		d.logger.Debug("Skipping packet that must not be retransmitted on RF: ", msg)
 		return "", false
 	}
 

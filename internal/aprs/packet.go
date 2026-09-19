@@ -33,12 +33,16 @@ const (
 )
 
 func ParsePacket(p string) (*Packet, error) {
+	p = strings.TrimRight(p, "\r\n")
 	parts := strings.SplitN(p, ">", 2)
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid packet format")
 	}
 
-	src := parts[0]
+	src := strings.TrimSpace(parts[0])
+	if src == "" {
+		return nil, fmt.Errorf("invalid packet format: missing source")
+	}
 	rest := parts[1]
 	pathInfo := strings.SplitN(rest, ":", 2)
 	if len(pathInfo) < 2 {
@@ -46,7 +50,10 @@ func ParsePacket(p string) (*Packet, error) {
 	}
 
 	path := strings.Split(pathInfo[0], ",")
-	dst := path[0]
+	dst := strings.TrimSpace(path[0])
+	if dst == "" {
+		return nil, fmt.Errorf("invalid packet format: missing destination")
+	}
 	path = path[1:]
 	payload := pathInfo[1]
 
@@ -56,6 +63,42 @@ func ParsePacket(p string) (*Packet, error) {
 		Path:    path,
 		Payload: payload,
 	}, nil
+}
+
+// HasForbiddenRFPath reports path markers that identify packets which must not
+// be retransmitted from RF or gated back to APRS-IS. q-constructs are an
+// APRS-IS-only mechanism and must never be placed on RF.
+func (p *Packet) HasForbiddenRFPath() bool {
+	for _, component := range p.Path {
+		component = strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(component)), "*")
+		switch {
+		case component == "NOGATE", component == "RFONLY":
+			return true
+		case strings.HasPrefix(component, "TCPIP"), strings.HasPrefix(component, "TCPXX"):
+			return true
+		case strings.HasPrefix(component, "Q"):
+			return true
+		}
+	}
+
+	return false
+}
+
+// UnwrapThirdPartyForAprsIs removes the third-party data type and RF wrapper
+// when the enclosed packet did not originate on APRS-IS. Packets carrying
+// TCPIP/TCPXX in the enclosed path originated on APRS-IS and must not be
+// injected back into APRS-IS.
+func (p *Packet) UnwrapThirdPartyForAprsIs() (*Packet, bool) {
+	if p.Type() != ThirdPartyTraffic {
+		return p, true
+	}
+
+	inner, err := ParsePacket(strings.TrimPrefix(p.Payload, "}"))
+	if err != nil || inner.HasForbiddenRFPath() {
+		return nil, false
+	}
+
+	return inner, true
 }
 
 func (p *Packet) Type() PacketType {
@@ -69,7 +112,7 @@ func (p *Packet) Type() PacketType {
 		return PositionReport
 	}
 
-	if typeChar == ':' && len(p.Payload) > 9 && p.Payload[9] == ':' {
+	if typeChar == ':' && len(p.Payload) > 10 && p.Payload[10] == ':' {
 		return Message
 	}
 
@@ -86,13 +129,23 @@ func (p *Packet) Type() PacketType {
 		return ItemReport
 	case '?':
 		return Query
-	case '{':
+	case '}':
 		return ThirdPartyTraffic
 	case '$':
 		return RawGPSData
 	default:
 		return Unknown
 	}
+}
+
+// MessageDestination returns the padded nine-character APRS message
+// addressee, normalized for callsign comparisons.
+func (p *Packet) MessageDestination() (string, bool) {
+	if p.Type() != Message || len(p.Payload) < 11 {
+		return "", false
+	}
+
+	return strings.ToUpper(strings.TrimSpace(p.Payload[1:10])), true
 }
 
 // AckString returns a string representation of the packet for sending an acknowledgement
