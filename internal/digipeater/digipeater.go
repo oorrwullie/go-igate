@@ -26,6 +26,7 @@ type Digipeater struct {
 	dedupe        *deduper
 	logger        *log.Logger
 	stop          chan bool
+	sendRF        func(string) bool
 }
 
 func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, cfg config.Digipeater, logger *log.Logger) (*Digipeater, error) {
@@ -75,7 +76,16 @@ func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, cfg config.Digi
 		dedupe:        newDeduper(window),
 		logger:        logger,
 		stop:          make(chan bool),
+		sendRF:        func(msg string) bool { return tx.SendUntil(msg, nil) },
 	}, nil
+}
+
+// SetRFSend installs the shared RF scheduler used by the application. It is
+// optional so the digipeater remains independently testable.
+func (d *Digipeater) SetRFSend(send func(string) bool) {
+	if send != nil {
+		d.sendRF = send
+	}
 }
 
 func (d *Digipeater) Run() error {
@@ -106,7 +116,7 @@ func (d *Digipeater) HandleMessage(msg string) {
 	}
 
 	d.logger.Info("Digipeating packet: ", txMsg)
-	go d.tx.Send(txMsg)
+	go d.sendRF(txMsg)
 }
 
 func (d *Digipeater) prepare(msg string) (string, bool) {

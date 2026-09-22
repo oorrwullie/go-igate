@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,7 @@ type (
 		stop                   chan struct{}
 		stopOnce               sync.Once
 		rfBeaconMu             sync.Mutex
+		rfTxMu                 sync.Mutex
 		beaconMu               sync.Mutex
 		isBeaconMu             sync.Mutex
 		beaconWaits            map[string]*beaconWait
@@ -60,6 +62,8 @@ type (
 		internetPositions      map[string]*aprs.Packet
 		internetPositionTimes  map[string]time.Time
 		internetGatedMessages  map[string]time.Time
+		lastTrackingPrune      time.Time
+		lastInternetMsgPrune   time.Time
 		lastMessageRF          time.Time
 		messageDedupeMu        sync.Mutex
 		messageDedupe          map[string]time.Time
@@ -93,6 +97,8 @@ const forwarderQueueSize = 32
 const defaultAprsFiBaseURL = "https://api.aprs.fi"
 const aprsFiGracePeriod = 10 * time.Second
 
+var rfPathComponentPattern = regexp.MustCompile(`^[A-Z0-9]{1,6}(?:-[A-Z0-9]{1,2})?$`)
+
 type aprsFiResponse struct {
 	Result      string        `json:"result"`
 	Description string        `json:"description"`
@@ -111,6 +117,11 @@ var (
 )
 
 func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx, callSign string, logger *log.Logger) (*IGate, error) {
+	if cfg.MessageGating {
+		if err := validateMessageRFPath(cfg.MessageRFPath); err != nil {
+			return nil, err
+		}
+	}
 	aprsis, err := aprs.New(cfg.Aprsis, callSign, cfg.Beacon.Comment, logger)
 	if err != nil {
 		return nil, fmt.Errorf("Error creating APRS client: %v", err)
@@ -182,7 +193,37 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 	return ig, nil
 }
 
+func validateMessageRFPath(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	components := strings.Split(path, ",")
+	if len(components) > 8 {
+		return fmt.Errorf("message-rf-path contains too many path components")
+	}
+	for _, raw := range components {
+		component := strings.ToUpper(strings.TrimSpace(raw))
+		if component == "" {
+			return fmt.Errorf("message-rf-path contains an empty component")
+		}
+		if component == "I" || strings.HasPrefix(component, "Q") || strings.HasPrefix(component, "TCPIP") || strings.HasPrefix(component, "TCPXX") {
+			return fmt.Errorf("message-rf-path contains APRS-IS-only component %q", raw)
+		}
+		if strings.Contains(component, "*") || !rfPathComponentPattern.MatchString(component) {
+			return fmt.Errorf("message-rf-path contains invalid AX.25 path component %q", raw)
+		}
+	}
+	return nil
+}
+
 func (i *IGate) Run() error {
+	messageGatingActive := i.cfg.MessageGating && i.enableTx && i.tx != nil && i.Aprsis != nil
+	if i.Aprsis != nil {
+		i.Aprsis.SetInboundEnabled(messageGatingActive)
+		defer i.Aprsis.SetInboundEnabled(false)
+	}
+
 	if i.cfg.Beacon.Enabled {
 		err := i.startBeacon()
 		if err != nil {
@@ -207,7 +248,7 @@ func (i *IGate) Run() error {
 		return i.listenForMessages()
 	})
 
-	if i.cfg.MessageGating && i.enableTx && i.tx != nil && i.Aprsis != nil {
+	if messageGatingActive {
 		g.Go(func() error {
 			return i.gateMessagesToRF()
 		})
@@ -324,6 +365,7 @@ func (i *IGate) rememberLocalStation(callsign string) {
 	}
 
 	i.localStationsMu.Lock()
+	i.pruneTrackingLocked(time.Now())
 	if i.localStations == nil {
 		i.localStations = make(map[string]time.Time)
 	}
@@ -339,6 +381,7 @@ func (i *IGate) localStationRecentlyHeard(callsign string) bool {
 
 	i.localStationsMu.Lock()
 	defer i.localStationsMu.Unlock()
+	i.pruneTrackingLocked(time.Now())
 
 	heard, ok := i.localStations[callsign]
 	if !ok || time.Since(heard) > i.cfg.LocalStationTimeout {
@@ -361,6 +404,7 @@ func (i *IGate) rememberInternetStation(packet *aprs.Packet) {
 	}
 	i.localStationsMu.Lock()
 	defer i.localStationsMu.Unlock()
+	i.pruneTrackingLocked(time.Now())
 	if i.internetStations == nil {
 		i.internetStations = make(map[string]time.Time)
 	}
@@ -376,6 +420,30 @@ func (i *IGate) rememberInternetStation(packet *aprs.Packet) {
 			i.internetPositionTimes = make(map[string]time.Time)
 		}
 		i.internetPositionTimes[callsign] = time.Now()
+	}
+}
+
+func (i *IGate) pruneTrackingLocked(now time.Time) {
+	if !i.lastTrackingPrune.IsZero() && now.Sub(i.lastTrackingPrune) < time.Minute {
+		return
+	}
+	i.lastTrackingPrune = now
+	timeout := i.cfg.LocalStationTimeout
+	if timeout <= 0 {
+		timeout = time.Hour
+	}
+	cutoff := now.Add(-timeout)
+	for callsign, heard := range i.localStations {
+		if heard.Before(cutoff) {
+			delete(i.localStations, callsign)
+		}
+	}
+	for callsign, heard := range i.internetStations {
+		if heard.Before(cutoff) {
+			delete(i.internetStations, callsign)
+			delete(i.internetPositions, callsign)
+			delete(i.internetPositionTimes, callsign)
+		}
 	}
 }
 
@@ -398,6 +466,7 @@ func (i *IGate) observeInternetPacket(packet *aprs.Packet) {
 		return
 	}
 	i.rememberInternetStation(packet)
+	i.pruneInternetGatedMessages(time.Now())
 
 	if packet.Type() != aprs.ThirdPartyTraffic {
 		return
@@ -423,10 +492,27 @@ func (i *IGate) observeInternetPacket(packet *aprs.Packet) {
 	}
 }
 
+func (i *IGate) pruneInternetGatedMessages(now time.Time) {
+	if !i.lastInternetMsgPrune.IsZero() && now.Sub(i.lastInternetMsgPrune) < time.Minute {
+		return
+	}
+	i.lastInternetMsgPrune = now
+	window := i.cfg.MessageDedupWindow
+	if window <= 0 {
+		window = time.Minute
+	}
+	for key, seen := range i.internetGatedMessages {
+		if now.Sub(seen) >= window {
+			delete(i.internetGatedMessages, key)
+		}
+	}
+}
+
 func (i *IGate) internetStationRecentlyHeard(callsign string) bool {
 	callsign = strings.ToUpper(strings.TrimSpace(callsign))
 	i.localStationsMu.Lock()
 	defer i.localStationsMu.Unlock()
+	i.pruneTrackingLocked(time.Now())
 	heard, ok := i.internetStations[callsign]
 	if !ok || time.Since(heard) > i.cfg.LocalStationTimeout {
 		if ok {
@@ -442,6 +528,7 @@ func (i *IGate) internetStationRecentlyHeard(callsign string) bool {
 func (i *IGate) recentInternetPosition(callsign string) *aprs.Packet {
 	i.localStationsMu.Lock()
 	defer i.localStationsMu.Unlock()
+	i.pruneTrackingLocked(time.Now())
 	callsign = strings.ToUpper(strings.TrimSpace(callsign))
 	if time.Since(i.internetPositionTimes[callsign]) > i.cfg.LocalStationTimeout {
 		delete(i.internetPositions, callsign)
@@ -544,13 +631,15 @@ func (i *IGate) gateMessagesToRF() error {
 					continue
 				}
 			}
-			if position := i.recentInternetPosition(pending.packet.Src); position != nil {
-				i.tx.Send(formatThirdPartyForRF(position, i.callSign, i.cfg.MessageRFPath))
-			}
 			frame := formatThirdPartyForRF(pending.packet, i.callSign, i.cfg.MessageRFPath)
 			i.logger.Info("Gating APRS-IS message to RF: ", frame)
-			i.tx.Send(frame)
-			i.lastMessageRF = time.Now()
+			frames := []string{frame}
+			if position := i.recentInternetPosition(pending.packet.Src); position != nil {
+				frames = append([]string{formatThirdPartyForRF(position, i.callSign, i.cfg.MessageRFPath)}, frames...)
+			}
+			if i.sendRFFrames(frames) {
+				i.lastMessageRF = time.Now()
+			}
 			delete(i.pendingGatedMessages, dueKey)
 		case msg, ok := <-i.Aprsis.Inbound:
 			if !ok {
@@ -613,6 +702,30 @@ func hasNoGateMarker(packet *aprs.Packet) bool {
 	return false
 }
 
+// SendRF queues a frame through the IGate's shared RF scheduler. Digipeated
+// traffic uses this same path when an IGate is present, so it cannot bypass
+// carrier-sense waiting or the transmitter serialization.
+func (i *IGate) SendRF(frame string) bool {
+	return i.sendRFFrames([]string{frame})
+}
+
+func (i *IGate) sendRFFrames(frames []string) bool {
+	if i.tx == nil || len(frames) == 0 {
+		return false
+	}
+	i.rfTxMu.Lock()
+	defer i.rfTxMu.Unlock()
+	if !i.waitForQuiet(beaconChannelQuiet) {
+		return false
+	}
+	for _, frame := range frames {
+		if !i.tx.SendUntil(frame, i.stop) {
+			return false
+		}
+	}
+	return true
+}
+
 func formatThirdPartyForRF(packet *aprs.Packet, callSign, rfPath string) string {
 	var builder strings.Builder
 	builder.WriteString(strings.ToUpper(strings.TrimSpace(callSign)))
@@ -647,7 +760,8 @@ func (i *IGate) forwardPackets() error {
 				continue
 			}
 
-			bidirectional := i.cfg.MessageGating && i.enableTx && i.tx != nil
+			bidirectional := i.cfg.MessageGating && i.enableTx && i.tx != nil &&
+				isDirectRFPacket(packet) && i.localStationRecentlyHeard(packet.Src)
 			uploadFrame := formatForAprsIs(packet, i.callSign, bidirectional)
 			fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
 			if i.aprsisUpload != nil {
@@ -965,7 +1079,10 @@ func (i *IGate) sendBeaconRf(frame, payload string, allowRetry bool) {
 		key, outcomeCh := i.expectBeacon(frame, payload, sendStart)
 
 		i.logger.Info("Beacon -> RF: ", frame)
-		i.tx.Send(frame)
+		if !i.sendRFFrames([]string{frame}) {
+			i.clearBeaconExpectation(key, outcomeCh)
+			return
+		}
 
 		outcome := i.waitForBeaconOutcome(outcomeCh)
 		i.clearBeaconExpectation(key, outcomeCh)

@@ -138,6 +138,9 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	if ig != nil && gateRewriter != nil {
 		ig.SetDigiRewriter(gateRewriter)
 	}
+	if ig != nil && dp != nil {
+		dp.SetRFSend(ig.SendRF)
+	}
 
 	dg := &DigiGate{
 		cfg:               cfg,
@@ -167,6 +170,16 @@ func (d *DigiGate) Run() error {
 		for {
 			select {
 			case <-d.stop:
+				if d.cfg.IGate.Enabled {
+					d.logger.Info("Stopping IGate client")
+					d.igate.Stop()
+				}
+
+				if d.cfg.DigipeaterEnabled && d.digipeater != nil {
+					d.logger.Info("Stopping digipeater")
+					d.digipeater.Stop()
+				}
+
 				d.logger.Info("Stopping capture device")
 				d.captureDevice.Stop()
 
@@ -176,16 +189,6 @@ func (d *DigiGate) Run() error {
 				if d.transmitter != nil {
 					d.logger.Info("Stopping transmitter")
 					d.transmitter.Stop()
-				}
-
-				if d.cfg.IGate.Enabled {
-					d.logger.Info("Stopping IGate client")
-					d.igate.Stop()
-				}
-
-				if d.cfg.DigipeaterEnabled && d.digipeater != nil {
-					d.logger.Info("Stopping digipeater")
-					d.digipeater.Stop()
 				}
 
 				return

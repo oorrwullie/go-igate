@@ -5,19 +5,21 @@ import (
 	"io"
 	"net/textproto"
 	"strings"
+	"sync/atomic"
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
 )
 
 type AprsIs struct {
-	Callsign  string
-	Inbound   chan string
-	id        string
-	Conn      *textproto.Conn
-	connected bool
-	cfg       config.AprsIs
-	logger    *log.Logger
+	Callsign       string
+	Inbound        chan string
+	id             string
+	Conn           *textproto.Conn
+	connected      bool
+	cfg            config.AprsIs
+	logger         *log.Logger
+	inboundEnabled atomic.Bool
 }
 
 func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger) (*AprsIs, error) {
@@ -66,7 +68,7 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 				continue
 			}
 
-			if !isReadReceipt(msg) {
+			if !isReadReceipt(msg) && a.inboundEnabled.Load() {
 				select {
 				case a.Inbound <- msg:
 				default:
@@ -121,6 +123,13 @@ func (a *AprsIs) Connect() error {
 	a.Conn = conn
 
 	return nil
+}
+
+// SetInboundEnabled controls whether the reader retains APRS-IS packets for
+// consumers. The connection may remain active for uploads even when message
+// gating is disabled, so the reader must not fill an unused inbound queue.
+func (a *AprsIs) SetInboundEnabled(enabled bool) {
+	a.inboundEnabled.Store(enabled)
 }
 
 func (a *AprsIs) Disconnect() {
