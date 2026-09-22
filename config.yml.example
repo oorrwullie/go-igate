@@ -74,6 +74,8 @@ igate:
   message-rf-interval: 5s
   # Suppress duplicate Internet deliveries of the same message for this long.
   message-dedup-window: 1m
+  # Hold an eligible message briefly so another i-gate's RF gate can be observed.
+  message-gate-delay: 2s
   # How long a station remains eligible for message gating after direct reception.
   local-station-timeout: 1h
   # gate self-originated RF packets to APRS-IS (disabled by default).

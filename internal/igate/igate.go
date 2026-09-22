@@ -59,9 +59,11 @@ type (
 		internetStations       map[string]time.Time
 		internetPositions      map[string]*aprs.Packet
 		internetPositionTimes  map[string]time.Time
+		internetGatedMessages  map[string]time.Time
 		lastMessageRF          time.Time
 		messageDedupeMu        sync.Mutex
 		messageDedupe          map[string]time.Time
+		pendingGatedMessages   map[string]pendingGatedMessage
 	}
 )
 
@@ -70,6 +72,12 @@ type beaconWait struct {
 	payload string
 	started time.Time
 	result  chan bool
+}
+
+type pendingGatedMessage struct {
+	packet      *aprs.Packet
+	destination string
+	due         time.Time
 }
 
 type beaconOutcome int
@@ -166,7 +174,9 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		internetStations:       make(map[string]time.Time),
 		internetPositions:      make(map[string]*aprs.Packet),
 		internetPositionTimes:  make(map[string]time.Time),
+		internetGatedMessages:  make(map[string]time.Time),
 		messageDedupe:          make(map[string]time.Time),
+		pendingGatedMessages:   make(map[string]pendingGatedMessage),
 	}
 
 	return ig, nil
@@ -369,6 +379,50 @@ func (i *IGate) rememberInternetStation(packet *aprs.Packet) {
 	}
 }
 
+func hasInternetOrigin(path []string) bool {
+	for _, component := range path {
+		component = strings.TrimSuffix(strings.ToUpper(strings.TrimSpace(component)), "*")
+		if strings.HasPrefix(component, "TCPIP") || strings.HasPrefix(component, "TCPXX") {
+			return true
+		}
+	}
+	return false
+}
+
+func messageKey(packet *aprs.Packet, destination string) string {
+	return strings.ToUpper(strings.TrimSpace(packet.Src)) + ">" + destination + ":" + packet.Payload
+}
+
+func (i *IGate) observeInternetPacket(packet *aprs.Packet) {
+	if packet == nil {
+		return
+	}
+	i.rememberInternetStation(packet)
+
+	if packet.Type() != aprs.ThirdPartyTraffic {
+		return
+	}
+	inner, err := aprs.ParsePacket(strings.TrimPrefix(packet.Payload, "}"))
+	if err != nil || !hasInternetOrigin(inner.Path) {
+		return
+	}
+
+	// A third-party packet with TCPIP/TCPXX in its inner path is evidence that
+	// the inner station has already been gated by another Internet gateway.
+	i.rememberInternetStation(inner)
+	if destination, ok := inner.MessageDestination(); ok {
+		now := time.Now()
+		if i.internetGatedMessages == nil {
+			i.internetGatedMessages = make(map[string]time.Time)
+		}
+		if i.pendingGatedMessages == nil {
+			i.pendingGatedMessages = make(map[string]pendingGatedMessage)
+		}
+		i.internetGatedMessages[messageKey(inner, destination)] = now
+		delete(i.pendingGatedMessages, messageKey(inner, destination))
+	}
+}
+
 func (i *IGate) internetStationRecentlyHeard(callsign string) bool {
 	callsign = strings.ToUpper(strings.TrimSpace(callsign))
 	i.localStationsMu.Lock()
@@ -406,7 +460,7 @@ func (i *IGate) alreadyGatedMessage(packet *aprs.Packet, destination string) boo
 	if window <= 0 {
 		window = time.Minute
 	}
-	key := strings.ToUpper(strings.TrimSpace(packet.Src)) + ">" + destination + ":" + packet.Payload
+	key := messageKey(packet, destination)
 	now := time.Now()
 
 	i.messageDedupeMu.Lock()
@@ -426,11 +480,78 @@ func (i *IGate) alreadyGatedMessage(packet *aprs.Packet, destination string) boo
 	return false
 }
 
+func (i *IGate) internetGatedMessageRecentlySeen(key string) bool {
+	seen, ok := i.internetGatedMessages[key]
+	if !ok {
+		return false
+	}
+	window := i.cfg.MessageDedupWindow
+	if window <= 0 {
+		window = time.Minute
+	}
+	if time.Since(seen) >= window {
+		delete(i.internetGatedMessages, key)
+		return false
+	}
+	return true
+}
+
 func (i *IGate) gateMessagesToRF() error {
 	for {
+		var timer *time.Timer
+		var timerC <-chan time.Time
+		var dueKey string
+		var due time.Time
+		for key, pending := range i.pendingGatedMessages {
+			if dueKey == "" || pending.due.Before(due) {
+				dueKey = key
+				due = pending.due
+			}
+		}
+		if dueKey != "" {
+			wait := time.Until(due)
+			if wait < 0 {
+				wait = 0
+			}
+			timer = time.NewTimer(wait)
+			timerC = timer.C
+		}
+
 		select {
 		case <-i.stop:
+			if timer != nil {
+				timer.Stop()
+			}
 			return nil
+		case <-timerC:
+			pending, ok := i.pendingGatedMessages[dueKey]
+			if !ok {
+				continue
+			}
+			if i.internetGatedMessageRecentlySeen(dueKey) {
+				delete(i.pendingGatedMessages, dueKey)
+				continue
+			}
+			if i.internetStationRecentlyHeard(pending.destination) {
+				delete(i.pendingGatedMessages, dueKey)
+				continue
+			}
+			if i.cfg.MessageRFInterval > 0 && !i.lastMessageRF.IsZero() {
+				wait := i.cfg.MessageRFInterval - time.Since(i.lastMessageRF)
+				if wait > 0 {
+					pending.due = time.Now().Add(wait)
+					i.pendingGatedMessages[dueKey] = pending
+					continue
+				}
+			}
+			if position := i.recentInternetPosition(pending.packet.Src); position != nil {
+				i.tx.Send(formatThirdPartyForRF(position, i.callSign, i.cfg.MessageRFPath))
+			}
+			frame := formatThirdPartyForRF(pending.packet, i.callSign, i.cfg.MessageRFPath)
+			i.logger.Info("Gating APRS-IS message to RF: ", frame)
+			i.tx.Send(frame)
+			i.lastMessageRF = time.Now()
+			delete(i.pendingGatedMessages, dueKey)
 		case msg, ok := <-i.Aprsis.Inbound:
 			if !ok {
 				return nil
@@ -440,7 +561,7 @@ func (i *IGate) gateMessagesToRF() error {
 			if err != nil {
 				continue
 			}
-			i.rememberInternetStation(packet)
+			i.observeInternetPacket(packet)
 			if packet.Type() != aprs.Message {
 				continue
 			}
@@ -461,26 +582,18 @@ func (i *IGate) gateMessagesToRF() error {
 				i.logger.Debug("Skipping duplicate APRS-IS message: ", msg)
 				continue
 			}
-
-			if i.cfg.MessageRFInterval > 0 && !i.lastMessageRF.IsZero() {
-				wait := i.cfg.MessageRFInterval - time.Since(i.lastMessageRF)
-				if wait > 0 {
-					timer := time.NewTimer(wait)
-					select {
-					case <-i.stop:
-						timer.Stop()
-						return nil
-					case <-timer.C:
-					}
-				}
+			key := messageKey(packet, destination)
+			if i.internetGatedMessageRecentlySeen(key) {
+				continue
 			}
-			if position := i.recentInternetPosition(packet.Src); position != nil {
-				i.tx.Send(formatThirdPartyForRF(position, i.callSign, i.cfg.MessageRFPath))
+			if i.pendingGatedMessages == nil {
+				i.pendingGatedMessages = make(map[string]pendingGatedMessage)
 			}
-			frame := formatThirdPartyForRF(packet, i.callSign, i.cfg.MessageRFPath)
-			i.logger.Info("Gating APRS-IS message to RF: ", frame)
-			i.tx.Send(frame)
-			i.lastMessageRF = time.Now()
+			i.pendingGatedMessages[key] = pendingGatedMessage{
+				packet:      packet,
+				destination: destination,
+				due:         time.Now().Add(i.cfg.MessageGateDelay),
+			}
 		}
 	}
 }
@@ -534,7 +647,8 @@ func (i *IGate) forwardPackets() error {
 				continue
 			}
 
-			uploadFrame := formatForAprsIs(packet, i.callSign, i.cfg.MessageGating)
+			bidirectional := i.cfg.MessageGating && i.enableTx && i.tx != nil
+			uploadFrame := formatForAprsIs(packet, i.callSign, bidirectional)
 			fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
 			if i.aprsisUpload != nil {
 				if err := i.aprsisUpload(uploadFrame); err != nil {

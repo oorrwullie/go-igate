@@ -524,6 +524,7 @@ func TestGateMessagesToRFIncludesRecentPositionAndAppliesEligibility(t *testing.
 		cfg: config.IGate{
 			LocalStationTimeout: time.Hour,
 			MessageRFInterval:   0,
+			MessageGateDelay:    0,
 		},
 		callSign:              "IGATE-1",
 		tx:                    tx,
@@ -533,6 +534,8 @@ func TestGateMessagesToRFIncludesRecentPositionAndAppliesEligibility(t *testing.
 		internetStations:      make(map[string]time.Time),
 		internetPositions:     make(map[string]*aprs.Packet),
 		internetPositionTimes: make(map[string]time.Time),
+		internetGatedMessages: make(map[string]time.Time),
+		pendingGatedMessages:  make(map[string]pendingGatedMessage),
 		logger:                mustLogger(t),
 	}
 
@@ -568,6 +571,47 @@ func TestGateMessagesToRFIncludesRecentPositionAndAppliesEligibility(t *testing.
 	case got := <-tx.Chan:
 		t.Fatalf("unexpected duplicate gated frame: %q", got)
 	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(ig.stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateMessagesToRF did not stop")
+	}
+}
+
+func TestGateMessagesToRFCancelsWhenAnotherIGateGatesFirst(t *testing.T) {
+	inbound := make(chan string, 2)
+	tx := &transmitter.Tx{Chan: make(chan string, 1)}
+	ig := &IGate{
+		cfg: config.IGate{
+			LocalStationTimeout: time.Hour,
+			MessageGateDelay:    50 * time.Millisecond,
+		},
+		callSign:              "IGATE-1",
+		tx:                    tx,
+		Aprsis:                &aprs.AprsIs{Inbound: inbound},
+		stop:                  make(chan struct{}),
+		localStations:         map[string]time.Time{"N0CALL-10": time.Now()},
+		internetStations:      make(map[string]time.Time),
+		internetPositions:     make(map[string]*aprs.Packet),
+		internetPositionTimes: make(map[string]time.Time),
+		internetGatedMessages: make(map[string]time.Time),
+		pendingGatedMessages:  make(map[string]pendingGatedMessage),
+		logger:                mustLogger(t),
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- ig.gateMessagesToRF() }()
+
+	inbound <- "REMOTE>APRS::N0CALL-10:hello{01}"
+	inbound <- "OTHER>APRS:}REMOTE>APRS,TCPIP,OTHER*::N0CALL-10:hello{01}"
+
+	select {
+	case got := <-tx.Chan:
+		t.Fatalf("message was gated after another i-gate transmitted it: %q", got)
+	case <-time.After(100 * time.Millisecond):
 	}
 
 	close(ig.stop)

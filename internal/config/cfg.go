@@ -34,6 +34,7 @@ type (
 		MessageRFPath       string        `yaml:"message-rf-path"`
 		MessageRFInterval   time.Duration `yaml:"message-rf-interval"`
 		MessageDedupWindow  time.Duration `yaml:"message-dedup-window"`
+		MessageGateDelay    time.Duration `yaml:"message-gate-delay"`
 		LocalStationTimeout time.Duration `yaml:"local-station-timeout"`
 	}
 
@@ -212,6 +213,10 @@ func GetConfig() (Config, error) {
 
 	if cfg.IGate.MessageDedupWindow <= 0 {
 		cfg.IGate.MessageDedupWindow = time.Minute
+	}
+
+	if cfg.IGate.MessageGateDelay <= 0 {
+		cfg.IGate.MessageGateDelay = 2 * time.Second
 	}
 
 	return cfg, nil
