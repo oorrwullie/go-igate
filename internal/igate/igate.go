@@ -260,6 +260,9 @@ func (i *IGate) Run() error {
 func (i *IGate) Stop() {
 	i.stopOnce.Do(func() {
 		close(i.stop)
+		if i.Aprsis != nil {
+			i.Aprsis.Stop()
+		}
 		i.cancelPendingBeacon()
 	})
 }

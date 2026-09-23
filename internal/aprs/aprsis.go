@@ -2,10 +2,10 @@ package aprs
 
 import (
 	"fmt"
-	"io"
 	"net/textproto"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
@@ -20,6 +20,8 @@ type AprsIs struct {
 	cfg            config.AprsIs
 	logger         *log.Logger
 	inboundEnabled atomic.Bool
+	stop           chan struct{}
+	stopOnce       atomic.Bool
 }
 
 func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger) (*AprsIs, error) {
@@ -41,6 +43,7 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 		Conn:      nil,
 		connected: false,
 		cfg:       cfg,
+		stop:      make(chan struct{}),
 	}
 
 	err := a.Connect()
@@ -55,15 +58,24 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 			msg, err := a.Conn.ReadLine()
 			if err != nil {
 				logger.Error(err, "Error reading from APRS-IS")
-				if err == io.EOF {
-					logger.Info("Reconnecting to APRS-IS server")
-					a.Disconnect()
-					err = a.Connect()
-					if err != nil {
-						logger.Error(err, "Could not reconnect to APRS-IS server.")
-						a.Disconnect()
+				select {
+				case <-a.stop:
+					return
+				default:
+				}
+
+				logger.Info("Reconnecting to APRS-IS server")
+				a.Disconnect()
+				for {
+					if err = a.Connect(); err == nil {
+						break
 					}
-					break
+					logger.Error(err, "Could not reconnect to APRS-IS server.")
+					select {
+					case <-a.stop:
+						return
+					case <-time.After(5 * time.Second):
+					}
 				}
 				continue
 			}
@@ -105,16 +117,19 @@ func (a *AprsIs) Connect() error {
 		a.cfg.Filter,
 	)
 	if err != nil {
+		conn.Close()
 		return err
 	}
 
 	resp, err := conn.ReadLine()
 	if err != nil {
+		conn.Close()
 		return fmt.Errorf("could not read server response: %v", err)
 	}
 
 	expected := fmt.Sprintf("# logresp %s verified", a.Callsign)
 	if !strings.HasPrefix(strings.ToLower(resp), strings.ToLower(expected)) {
+		conn.Close()
 		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
 	}
 
@@ -139,6 +154,14 @@ func (a *AprsIs) Disconnect() {
 
 	a.Conn.Close()
 	a.connected = false
+}
+
+// Stop permanently ends the reader and closes the current connection.
+func (a *AprsIs) Stop() {
+	if a.stopOnce.CompareAndSwap(false, true) {
+		close(a.stop)
+	}
+	a.Disconnect()
 }
 
 func (a *AprsIs) Upload(msg string) error {
