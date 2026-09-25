@@ -25,11 +25,17 @@ type (
 	}
 
 	IGate struct {
-		Enabled            bool   `yaml:"enabled"`
-		Aprsis             AprsIs `yaml:"aprsis"`
-		Beacon             Beacon `yaml:"beacon"`
-		ForwardSelfRF      bool   `yaml:"forward-self-rf"`
-		GateDigipeatedPath bool   `yaml:"gate-digipeated-path"`
+		Enabled             bool          `yaml:"enabled"`
+		Aprsis              AprsIs        `yaml:"aprsis"`
+		Beacon              Beacon        `yaml:"beacon"`
+		ForwardSelfRF       bool          `yaml:"forward-self-rf"`
+		GateDigipeatedPath  bool          `yaml:"gate-digipeated-path"`
+		MessageGating       bool          `yaml:"message-gating"`
+		MessageRFPath       string        `yaml:"message-rf-path"`
+		MessageRFInterval   time.Duration `yaml:"message-rf-interval"`
+		MessageDedupWindow  time.Duration `yaml:"message-dedup-window"`
+		MessageGateDelay    time.Duration `yaml:"message-gate-delay"`
+		LocalStationTimeout time.Duration `yaml:"local-station-timeout"`
 	}
 
 	Sdr struct {
@@ -195,6 +201,22 @@ func GetConfig() (Config, error) {
 
 	if cfg.Transmitter.TxTail <= 0 {
 		cfg.Transmitter.TxTail = 100 * time.Millisecond
+	}
+
+	if cfg.IGate.LocalStationTimeout <= 0 {
+		cfg.IGate.LocalStationTimeout = time.Hour
+	}
+
+	if cfg.IGate.MessageRFInterval <= 0 {
+		cfg.IGate.MessageRFInterval = 5 * time.Second
+	}
+
+	if cfg.IGate.MessageDedupWindow <= 0 {
+		cfg.IGate.MessageDedupWindow = time.Minute
+	}
+
+	if cfg.IGate.MessageGateDelay <= 0 {
+		cfg.IGate.MessageGateDelay = 2 * time.Second
 	}
 
 	return cfg, nil

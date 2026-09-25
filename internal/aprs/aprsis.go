@@ -2,21 +2,26 @@ package aprs
 
 import (
 	"fmt"
-	"io"
 	"net/textproto"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/oorrwullie/go-igate/internal/config"
 	"github.com/oorrwullie/go-igate/internal/log"
 )
 
 type AprsIs struct {
-	Callsign  string
-	id        string
-	Conn      *textproto.Conn
-	connected bool
-	cfg       config.AprsIs
-	logger    *log.Logger
+	Callsign       string
+	Inbound        chan string
+	id             string
+	Conn           *textproto.Conn
+	connected      bool
+	cfg            config.AprsIs
+	logger         *log.Logger
+	inboundEnabled atomic.Bool
+	stop           chan struct{}
+	stopOnce       atomic.Bool
 }
 
 func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger) (*AprsIs, error) {
@@ -34,9 +39,11 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 
 	a := &AprsIs{
 		Callsign:  callSign,
+		Inbound:   make(chan string, 64),
 		Conn:      nil,
 		connected: false,
 		cfg:       cfg,
+		stop:      make(chan struct{}),
 	}
 
 	err := a.Connect()
@@ -51,25 +58,41 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 			msg, err := a.Conn.ReadLine()
 			if err != nil {
 				logger.Error(err, "Error reading from APRS-IS")
-				if err == io.EOF {
-					logger.Info("Reconnecting to APRS-IS server")
-					a.Disconnect()
-					err = a.Connect()
-					if err != nil {
-						logger.Error(err, "Could not reconnect to APRS-IS server.")
-						a.Disconnect()
-					}
-					break
-				} else if !isReadReceipt(msg) {
-					logger.Info(
-						fmt.Sprintf(
-							"%s %s",
-							"[APRS-IS DIGIPEAT]",
-							msg,
-						),
-					)
-
+				select {
+				case <-a.stop:
+					return
+				default:
 				}
+
+				logger.Info("Reconnecting to APRS-IS server")
+				a.Disconnect()
+				for {
+					if err = a.Connect(); err == nil {
+						break
+					}
+					logger.Error(err, "Could not reconnect to APRS-IS server.")
+					select {
+					case <-a.stop:
+						return
+					case <-time.After(5 * time.Second):
+					}
+				}
+				continue
+			}
+
+			if !isReadReceipt(msg) && a.inboundEnabled.Load() {
+				select {
+				case a.Inbound <- msg:
+				default:
+					logger.Warn("Dropping APRS-IS packet: inbound queue full")
+				}
+				logger.Info(
+					fmt.Sprintf(
+						"%s %s",
+						"[APRS-IS DIGIPEAT]",
+						msg,
+					),
+				)
 			}
 		}
 	}()
@@ -94,15 +117,19 @@ func (a *AprsIs) Connect() error {
 		a.cfg.Filter,
 	)
 	if err != nil {
+		conn.Close()
 		return err
 	}
 
 	resp, err := conn.ReadLine()
 	if err != nil {
+		conn.Close()
 		return fmt.Errorf("could not read server response: %v", err)
 	}
 
-	if strings.HasPrefix(resp, fmt.Sprintf("# logresp %s unverified", a.Callsign)) {
+	expected := fmt.Sprintf("# logresp %s verified", a.Callsign)
+	if !strings.HasPrefix(strings.ToLower(resp), strings.ToLower(expected)) {
+		conn.Close()
 		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
 	}
 
@@ -113,6 +140,13 @@ func (a *AprsIs) Connect() error {
 	return nil
 }
 
+// SetInboundEnabled controls whether the reader retains APRS-IS packets for
+// consumers. The connection may remain active for uploads even when message
+// gating is disabled, so the reader must not fill an unused inbound queue.
+func (a *AprsIs) SetInboundEnabled(enabled bool) {
+	a.inboundEnabled.Store(enabled)
+}
+
 func (a *AprsIs) Disconnect() {
 	if !a.connected {
 		return
@@ -120,6 +154,14 @@ func (a *AprsIs) Disconnect() {
 
 	a.Conn.Close()
 	a.connected = false
+}
+
+// Stop permanently ends the reader and closes the current connection.
+func (a *AprsIs) Stop() {
+	if a.stopOnce.CompareAndSwap(false, true) {
+		close(a.stop)
+	}
+	a.Disconnect()
 }
 
 func (a *AprsIs) Upload(msg string) error {

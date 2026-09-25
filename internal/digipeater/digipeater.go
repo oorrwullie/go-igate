@@ -15,8 +15,6 @@ import (
 	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
 
-const minPacketSize = 35
-
 type Digipeater struct {
 	tx            *transmitter.Tx
 	inputChan     <-chan string
@@ -28,6 +26,7 @@ type Digipeater struct {
 	dedupe        *deduper
 	logger        *log.Logger
 	stop          chan bool
+	sendRF        func(string) bool
 }
 
 func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, cfg config.Digipeater, logger *log.Logger) (*Digipeater, error) {
@@ -77,7 +76,16 @@ func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, cfg config.Digi
 		dedupe:        newDeduper(window),
 		logger:        logger,
 		stop:          make(chan bool),
+		sendRF:        func(msg string) bool { return tx.SendUntil(msg, nil) },
 	}, nil
+}
+
+// SetRFSend installs the shared RF scheduler used by the application. It is
+// optional so the digipeater remains independently testable.
+func (d *Digipeater) SetRFSend(send func(string) bool) {
+	if send != nil {
+		d.sendRF = send
+	}
 }
 
 func (d *Digipeater) Run() error {
@@ -108,19 +116,10 @@ func (d *Digipeater) HandleMessage(msg string) {
 	}
 
 	d.logger.Info("Digipeating packet: ", txMsg)
-	go d.tx.Send(txMsg)
+	go d.sendRF(txMsg)
 }
 
 func (d *Digipeater) prepare(msg string) (string, bool) {
-	if len(msg) < minPacketSize {
-		if strings.HasPrefix(msg, ":") || strings.Contains(msg, ":ack") {
-			d.logger.Debug("Ignoring ACK message below min size: ", msg)
-		} else {
-			d.logger.Debug("Packet too short to process: ", msg)
-		}
-		return "", false
-	}
-
 	packet, err := aprs.ParsePacket(msg)
 	if err != nil {
 		d.logger.Error(err, "Failed to parse APRS packet: ", msg)
@@ -132,6 +131,11 @@ func (d *Digipeater) prepare(msg string) (string, bool) {
 	}
 
 	if len(packet.Path) == 0 {
+		return "", false
+	}
+
+	if packet.HasForbiddenRFPath() || packet.Type() == aprs.ThirdPartyTraffic {
+		d.logger.Debug("Skipping packet that must not be retransmitted on RF: ", msg)
 		return "", false
 	}
 

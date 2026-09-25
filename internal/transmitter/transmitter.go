@@ -104,11 +104,25 @@ func (t *Transmitter) generateSineWave(frequency float64, duration time.Duration
 }
 
 func (t *Tx) Send(msg string) {
+	t.SendUntil(msg, nil)
+}
+
+// SendUntil queues a frame unless stop is closed first. A nil stop channel
+// retains the historical blocking behavior used by simple callers.
+func (t *Tx) SendUntil(msg string, stop <-chan struct{}) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.Chan <- msg
-	// time.Sleep(time.Millisecond * 1500)
+	if stop == nil {
+		t.Chan <- msg
+		return true
+	}
+	select {
+	case <-stop:
+		return false
+	case t.Chan <- msg:
+		return true
+	}
 }
 
 func (t *Tx) RxBackoff() {
