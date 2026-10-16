@@ -61,6 +61,8 @@ transmitter:
   tx-delay: 400ms
   # optional mark tone appended after packet to hold VOX/PTT engaged
   tx-tail: 75ms
+  # aplay can handle transmit while PortAudio captures from soundcard-input-name.
+  # Set false to use the PortAudio stream for both input and output.
   use-aplay: true
 igate:
   # enabled: set to true to enable DigiGate to act as an iGate.

@@ -39,13 +39,18 @@ type SoundcardCapture struct {
 	sendChannel     chan string
 	logger          *log.Logger
 	outputChan      chan []byte
+	audioInputChan  chan []float32
 	stationCallsign string
 	txBuffer        []float32
 	preambleFlags   int
 	tailTone        []float32
 	txMu            sync.Mutex
 	stopOnce        sync.Once
+	stream          *portaudio.Stream
+	started         bool
+	streamMu        sync.Mutex
 	useAplay        bool
+	receiveEnabled  bool
 	aplayDevice     string
 }
 
@@ -84,18 +89,19 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		sendChannel:     make(chan string, 10),
 		logger:          logger,
 		outputChan:      outputChan,
+		audioInputChan:  make(chan []float32, 10),
 		stationCallsign: cfg.StationCallsign,
 		preambleFlags:   preambleFlagsForDelay(cfg.Transmitter.TxDelay),
 		tailTone:        generateTone(Tone1200Hz, cfg.Transmitter.TxTail),
 		useAplay:        cfg.Transmitter.UseAplay,
+		receiveEnabled:  cfg.SoundcardCapture || !cfg.Sdr.Enabled,
 		aplayDevice:     cfg.SoundcardOutputName,
 	}
 
 	if sc.useAplay && sc.aplayDevice == "" {
 		sc.aplayDevice = "default"
 	}
-
-	if sc.useAplay {
+	if !sc.receiveEnabled && sc.useAplay {
 		return sc, nil
 	}
 
@@ -109,24 +115,25 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		return nil, err
 	}
 
-	inputDeviceInfo := portaudio.StreamDeviceParameters{
-		Device:   inputDevice,
-		Channels: 1,
-		Latency:  inputDevice.DefaultLowInputLatency,
-	}
-
-	outputDeviceInfo := portaudio.StreamDeviceParameters{
-		Device:   outputDevice,
-		Channels: channelNum,
-		Latency:  time.Duration(time.Millisecond * 5),
-	}
-
 	streamParams := portaudio.StreamParameters{
-		Input:           inputDeviceInfo,
-		Output:          outputDeviceInfo,
 		SampleRate:      float64(SampleRate),
-		FramesPerBuffer: 262144,
+		FramesPerBuffer: 1024,
 		Flags:           portaudio.ClipOff,
+	}
+	if sc.receiveEnabled {
+		streamParams.Input = portaudio.StreamDeviceParameters{
+			Device:   inputDevice,
+			Channels: 1,
+			Latency:  inputDevice.DefaultLowInputLatency,
+		}
+	}
+	if !sc.useAplay {
+		outputDeviceInfo := portaudio.StreamDeviceParameters{
+			Device:   outputDevice,
+			Channels: channelNum,
+			Latency:  time.Duration(time.Millisecond * 5),
+		}
+		streamParams.Output = outputDeviceInfo
 	}
 
 	sc.StreamParams = streamParams
@@ -143,105 +150,120 @@ func Int16ToFloat32(data []int16) []float32 {
 }
 
 func (s *SoundcardCapture) Start() error {
-	if s.useAplay {
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+	if s.started {
+		return nil
+	}
+	if !s.receiveEnabled && s.useAplay {
+		s.started = true
 		go s.runAplayLoop()
 		return nil
 	}
-
 	if err := portaudio.Initialize(); err != nil {
 		return err
 	}
-	defer portaudio.Terminate()
-
-	var audioBuffer []float32
-
-	go func() {
-		for {
-			select {
-			case <-s.stop:
-				return
-			case msg, ok := <-s.sendChannel:
-				if !ok {
-					return
-				}
-
-				msg = strings.TrimSpace(msg)
-				if msg == "" {
-					continue
-				}
-
-				ax25Packet, err := s.aprsToAx25(msg)
-				if err != nil {
-					s.logger.Error("Failed to convert APRS frame: ", err)
-					continue
-				}
-
-				wave, err := s.generateAFSK(ax25Packet)
-				if err != nil {
-					s.logger.Error("Failed to generate AFSK audio: ", err)
-					continue
-				}
-
-				if err := dumpWaveForDebug(wave); err != nil {
-					s.logger.Warn("Failed to write debug wave: ", err)
-				}
-
-				s.txMu.Lock()
-				s.txBuffer = append(s.txBuffer, wave...)
-				s.txMu.Unlock()
-			}
-		}
-	}()
 
 	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
-		if len(audioBuffer) != len(in) {
-			audioBuffer = make([]float32, len(in))
+		if s.receiveEnabled {
+			data := append([]float32(nil), in...)
+			select {
+			case s.audioInputChan <- data:
+			case <-s.stop:
+			default:
+			}
 		}
-		copy(audioBuffer, in)
 
-		go func(data []float32) {
-			bytes, err := s.float32ToBytes(data)
-			if err != nil {
-				s.logger.Error("Error converting float32 to bytes: ", err)
-				return
-			}
-
-			s.outputChan <- bytes
-		}(append([]float32(nil), audioBuffer...))
-
+		if s.useAplay {
+			return
+		}
 		s.txMu.Lock()
-		if len(s.txBuffer) > 0 {
-			n := copy(out, s.txBuffer)
-			if n < len(s.txBuffer) {
-				s.txBuffer = s.txBuffer[n:]
-			} else {
-				s.txBuffer = s.txBuffer[:0]
-			}
-			for i := n; i < len(out); i++ {
-				out[i] = 0
-			}
-			s.logger.Debug("Output played to soundcard.")
+		n := copy(out, s.txBuffer)
+		if n < len(s.txBuffer) {
+			s.txBuffer = s.txBuffer[n:]
 		} else {
-			for i := range out {
-				out[i] = 0
-			}
+			s.txBuffer = s.txBuffer[:0]
+		}
+		for i := n; i < len(out); i++ {
+			out[i] = 0
+		}
+		if n > 0 {
+			s.logger.Debug("Output played to soundcard.")
 		}
 		s.txMu.Unlock()
 	})
 	if err != nil {
+		_ = portaudio.Terminate()
 		return err
 	}
-	defer stream.Close()
 
 	if err := stream.Start(); err != nil {
-		s.logger.Error("failed to start soundcard: ", err)
+		_ = stream.Close()
+		_ = portaudio.Terminate()
+		return fmt.Errorf("start sound-card stream: %w", err)
 	}
-	defer stream.Stop()
+	s.stream = stream
+	s.started = true
+	if s.receiveEnabled {
+		go s.runAudioOutputLoop()
+	}
+	if s.useAplay {
+		go s.runAplayLoop()
+	} else {
+		go s.runPortAudioTxLoop()
+	}
+	return nil
+}
 
+func (s *SoundcardCapture) runAudioOutputLoop() {
 	for {
 		select {
 		case <-s.stop:
-			return nil
+			return
+		case samples := <-s.audioInputChan:
+			data, err := s.float32ToBytes(samples)
+			if err != nil {
+				s.logger.Error("Error converting float32 to bytes: ", err)
+				continue
+			}
+			select {
+			case s.outputChan <- data:
+			case <-s.stop:
+				return
+			}
+		}
+	}
+}
+
+func (s *SoundcardCapture) runPortAudioTxLoop() {
+	for {
+		select {
+		case <-s.stop:
+			return
+		case msg, ok := <-s.sendChannel:
+			if !ok {
+				return
+			}
+			msg = strings.TrimSpace(msg)
+			if msg == "" {
+				continue
+			}
+			ax25Packet, err := s.aprsToAx25(msg)
+			if err != nil {
+				s.logger.Error("Failed to convert APRS frame: ", err)
+				continue
+			}
+			wave, err := s.generateAFSK(ax25Packet)
+			if err != nil {
+				s.logger.Error("Failed to generate AFSK audio: ", err)
+				continue
+			}
+			if err := dumpWaveForDebug(wave); err != nil {
+				s.logger.Warn("Failed to write debug wave: ", err)
+			}
+			s.txMu.Lock()
+			s.txBuffer = append(s.txBuffer, wave...)
+			s.txMu.Unlock()
 		}
 	}
 }
@@ -274,6 +296,20 @@ func (s *SoundcardCapture) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stop)
 		close(s.sendChannel)
+		s.streamMu.Lock()
+		defer s.streamMu.Unlock()
+		if s.stream != nil {
+			if err := s.stream.Stop(); err != nil {
+				s.logger.Warn("Error stopping sound-card stream: ", err)
+			}
+			if err := s.stream.Close(); err != nil {
+				s.logger.Warn("Error closing sound-card stream: ", err)
+			}
+			s.stream = nil
+			if err := portaudio.Terminate(); err != nil {
+				s.logger.Warn("Error terminating PortAudio: ", err)
+			}
+		}
 	})
 }
 
