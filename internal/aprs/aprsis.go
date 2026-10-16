@@ -121,16 +121,9 @@ func (a *AprsIs) Connect() error {
 		return err
 	}
 
-	resp, err := conn.ReadLine()
-	if err != nil {
+	if err := verifyLoginResponse(conn, a.Callsign); err != nil {
 		conn.Close()
-		return fmt.Errorf("could not read server response: %v", err)
-	}
-
-	expected := fmt.Sprintf("# logresp %s verified", a.Callsign)
-	if !strings.HasPrefix(strings.ToLower(resp), strings.ToLower(expected)) {
-		conn.Close()
-		return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
+		return err
 	}
 
 	fmt.Println("Connected to APRS-IS server")
@@ -138,6 +131,32 @@ func (a *AprsIs) Connect() error {
 	a.Conn = conn
 
 	return nil
+}
+
+type lineReader interface {
+	ReadLine() (string, error)
+}
+
+func verifyLoginResponse(reader lineReader, callSign string) error {
+	for i := 0; i < 10; i++ {
+		resp, err := reader.ReadLine()
+		if err != nil {
+			return fmt.Errorf("could not read server response: %v", err)
+		}
+
+		lowerResp := strings.ToLower(resp)
+		if strings.HasPrefix(lowerResp, "# logresp ") {
+			expected := fmt.Sprintf("# logresp %s verified", callSign)
+			if !strings.HasPrefix(lowerResp, strings.ToLower(expected)) {
+				return fmt.Errorf("APRS-IS server rejected connection: %s", resp)
+			}
+			return nil
+		}
+		if !strings.HasPrefix(resp, "#") {
+			return fmt.Errorf("unexpected APRS-IS server response: %s", resp)
+		}
+	}
+	return fmt.Errorf("APRS-IS server did not send a login response after greeting")
 }
 
 // SetInboundEnabled controls whether the reader retains APRS-IS packets for
