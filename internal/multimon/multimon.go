@@ -79,15 +79,33 @@ func (m *Multimon) Start() error {
 			m.logger.Error("Error starting multimon-ng: ", err)
 			return
 		}
+		m.logger.Info("multimon-ng decoder started: ", m.Cmd.Path, " ", strings.Join(m.Cmd.Args[1:], " "))
 
 		// Start goroutines to read from the input channel and write to the output channel
 		go func(in io.WriteCloser) {
 			defer in.Close()
-
-			for data := range m.inputChan {
-				_, err := in.Write(data)
-				if err != nil {
-					m.logger.Error("Error writing to multimon-ng: ", err)
+			ticker := time.NewTicker(15 * time.Second)
+			defer ticker.Stop()
+			var intervalBytes uint64
+			for {
+				select {
+				case data, ok := <-m.inputChan:
+					if !ok {
+						return
+					}
+					n, err := in.Write(data)
+					if err != nil {
+						m.logger.Error("Error writing to multimon-ng: ", err)
+						return
+					}
+					intervalBytes += uint64(n)
+				case <-ticker.C:
+					if intervalBytes == 0 {
+						m.logger.Warn("multimon-ng receive diagnostic: no audio bytes delivered in the last 15s")
+					} else {
+						m.logger.Info("multimon-ng receive diagnostic: audio-bytes=", intervalBytes, " in the last 15s")
+					}
+					intervalBytes = 0
 				}
 			}
 		}(inPipe)

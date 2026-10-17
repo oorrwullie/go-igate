@@ -121,6 +121,8 @@ igate:
   aprsis:
     # enable to connect to APRS-IS server for iGate
     enabled: false
+    # Set true to suppress per-packet [APRS-IS DIGIPEAT] log lines.
+    mute-inbound-log: false
     # server to connect to (noam.aprs2.net:14580 for North America)
     server: "noam.aprs2.net:14580"
     #passcode of iGate can be obtained from https://apps.magicbug.co.uk/passcode/ (do so with your SSID - eg. N0CALL-10)

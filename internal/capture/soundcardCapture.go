@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -53,6 +54,7 @@ type SoundcardCapture struct {
 	useAplay        bool
 	receiveEnabled  bool
 	aplayDevice     string
+	droppedAudio    atomic.Uint64
 }
 
 const (
@@ -177,6 +179,7 @@ func (s *SoundcardCapture) Start() error {
 			case s.audioInputChan <- data:
 			case <-s.stop:
 			default:
+				s.droppedAudio.Add(1)
 			}
 		}
 
@@ -211,6 +214,13 @@ func (s *SoundcardCapture) Start() error {
 	s.stream = stream
 	s.started = true
 	if s.receiveEnabled {
+		deviceName := "unknown"
+		if s.StreamParams.Input.Device != nil {
+			deviceName = s.StreamParams.Input.Device.Name
+		}
+		s.logger.Info("Sound-card receive started: device=", deviceName,
+			" channels=", s.inputChannels, " capture-rate=", SampleRate,
+			" decoder-rate=22050Hz mono")
 		go s.runAudioOutputLoop()
 	}
 	if s.useAplay {
@@ -222,11 +232,37 @@ func (s *SoundcardCapture) Start() error {
 }
 
 func (s *SoundcardCapture) runAudioOutputLoop() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	var samplesSeen uint64
+	var sumSquares float64
+	var peak float32
 	for {
 		select {
 		case <-s.stop:
 			return
+		case <-ticker.C:
+			if samplesSeen == 0 {
+				s.logger.Warn("Sound-card receive diagnostic: no audio buffers captured in the last 15s; check device selection, input jack, and capture mixer")
+				continue
+			}
+			rms := math.Sqrt(sumSquares / float64(samplesSeen))
+			s.logger.Info("Sound-card receive diagnostic: samples=", samplesSeen,
+				" rms=", fmt.Sprintf("%.5f", rms), " peak=", fmt.Sprintf("%.5f", peak),
+				" dropped-buffers=", s.droppedAudio.Swap(0),
+				" multimon-queue=", len(s.outputChan), "/", cap(s.outputChan), " chunks")
+			samplesSeen = 0
+			sumSquares = 0
+			peak = 0
 		case samples := <-s.audioInputChan:
+			for _, sample := range samples {
+				v := float64(sample)
+				sumSquares += v * v
+				if magnitude := float32(math.Abs(v)); magnitude > peak {
+					peak = magnitude
+				}
+				samplesSeen++
+			}
 			decoderSamples := prepareMultimonAudio(samples, s.inputChannels)
 			data, err := s.float32ToBytes(decoderSamples)
 			if err != nil {

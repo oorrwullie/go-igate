@@ -86,13 +86,9 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 				default:
 					logger.Warn("Dropping APRS-IS packet: inbound queue full")
 				}
-				logger.Info(
-					fmt.Sprintf(
-						"%s %s",
-						"[APRS-IS DIGIPEAT]",
-						msg,
-					),
-				)
+				if !a.cfg.MuteInboundLog {
+					logger.Info(fmt.Sprintf("%s %s", "[APRS-IS DIGIPEAT]", msg))
+				}
 			}
 		}
 	}()

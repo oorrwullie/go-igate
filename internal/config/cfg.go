@@ -72,10 +72,11 @@ type (
 	}
 
 	AprsIs struct {
-		Enabled  bool
-		Server   string
-		Passcode string
-		Filter   string
+		Enabled        bool
+		Server         string
+		Passcode       string
+		Filter         string
+		MuteInboundLog bool `yaml:"mute-inbound-log"`
 	}
 
 	Transmitter struct {
