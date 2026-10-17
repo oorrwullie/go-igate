@@ -30,6 +30,7 @@ import (
 type SoundcardCapture struct {
 	StreamParams    portaudio.StreamParameters
 	SampleRate      int
+	inputSampleRate int
 	BaudRate        float64
 	MarkFrequency   float64
 	SpaceFrequency  float64
@@ -84,6 +85,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 
 	sc := &SoundcardCapture{
 		SampleRate:      SampleRate,
+		inputSampleRate: SampleRate,
 		BaudRate:        BaudRate,
 		MarkFrequency:   Tone1200Hz,
 		SpaceFrequency:  Tone2200Hz,
@@ -215,13 +217,16 @@ func (s *SoundcardCapture) Start() error {
 	}
 	s.stream = stream
 	s.started = true
+	if info := stream.Info(); info != nil && info.SampleRate > 0 {
+		s.inputSampleRate = int(math.Round(info.SampleRate))
+	}
 	if s.receiveEnabled {
 		deviceName := "unknown"
 		if s.StreamParams.Input.Device != nil {
 			deviceName = s.StreamParams.Input.Device.Name
 		}
 		s.logger.Info("Sound-card receive started: device=", deviceName,
-			" channels=", s.inputChannels, " capture-rate=", SampleRate,
+			" channels=", s.inputChannels, " capture-rate=", s.inputSampleRate,
 			" decoder-rate=22050Hz mono")
 		go s.runAudioOutputLoop()
 	}
@@ -277,7 +282,7 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 				}
 				samplesSeen++
 			}
-			decoderSamples := prepareMultimonAudio(samples, s.inputChannels)
+			decoderSamples := prepareMultimonAudio(samples, s.inputChannels, s.inputSampleRate)
 			if s.debugRxWavDir != "" {
 				debugSamples = append(debugSamples, decoderSamples...)
 			}
@@ -295,14 +300,38 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 	}
 }
 
-func prepareMultimonAudio(samples []float32, channels int) []float32 {
+func prepareMultimonAudio(samples []float32, channels, inputSampleRate int) []float32 {
 	mono := downmixToMono(samples, channels)
-	if len(mono) < 2 {
+	if len(mono) == 0 || inputSampleRate <= 0 {
 		return nil
 	}
-	resampled := make([]float32, len(mono)/2)
+	if inputSampleRate == SampleRate/2 {
+		return mono
+	}
+	if inputSampleRate == SampleRate {
+		if len(mono) < 2 {
+			return nil
+		}
+		resampled := make([]float32, len(mono)/2)
+		for i := range resampled {
+			resampled[i] = (mono[i*2] + mono[i*2+1]) / 2
+		}
+		return resampled
+	}
+	outputLength := int(math.Round(float64(len(mono)) * float64(SampleRate/2) / float64(inputSampleRate)))
+	if outputLength == 0 {
+		return nil
+	}
+	resampled := make([]float32, outputLength)
 	for i := range resampled {
-		resampled[i] = (mono[i*2] + mono[i*2+1]) / 2
+		position := float64(i) * float64(inputSampleRate) / float64(SampleRate/2)
+		left := int(position)
+		if left >= len(mono) {
+			left = len(mono) - 1
+		}
+		right := min(left+1, len(mono)-1)
+		fraction := float32(position - float64(left))
+		resampled[i] = mono[left]*(1-fraction) + mono[right]*fraction
 	}
 	return resampled
 }
