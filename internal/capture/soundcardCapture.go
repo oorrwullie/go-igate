@@ -35,6 +35,7 @@ type SoundcardCapture struct {
 	ChannelNum      int
 	BitDepth        int
 	BufferSize      int
+	inputChannels   int
 	stop            chan struct{}
 	sendChannel     chan string
 	logger          *log.Logger
@@ -121,9 +122,14 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		Flags:           portaudio.ClipOff,
 	}
 	if sc.receiveEnabled {
+		inputChannels := min(inputDevice.MaxInputChannels, 2)
+		if inputChannels < 1 {
+			return nil, fmt.Errorf("input device %q has no capture channels", inputDevice.Name)
+		}
+		sc.inputChannels = inputChannels
 		streamParams.Input = portaudio.StreamDeviceParameters{
 			Device:   inputDevice,
-			Channels: 1,
+			Channels: inputChannels,
 			Latency:  inputDevice.DefaultLowInputLatency,
 		}
 	}
@@ -221,7 +227,8 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 		case <-s.stop:
 			return
 		case samples := <-s.audioInputChan:
-			data, err := s.float32ToBytes(samples)
+			monoSamples := downmixToMono(samples, s.inputChannels)
+			data, err := s.float32ToBytes(monoSamples)
 			if err != nil {
 				s.logger.Error("Error converting float32 to bytes: ", err)
 				continue
@@ -233,6 +240,22 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 			}
 		}
 	}
+}
+
+func downmixToMono(samples []float32, channels int) []float32 {
+	if channels <= 1 {
+		return samples
+	}
+	frameCount := len(samples) / channels
+	mono := make([]float32, frameCount)
+	for frame := 0; frame < frameCount; frame++ {
+		var total float32
+		for channel := 0; channel < channels; channel++ {
+			total += samples[frame*channels+channel]
+		}
+		mono[frame] = total / float32(channels)
+	}
+	return mono
 }
 
 func (s *SoundcardCapture) runPortAudioTxLoop() {
