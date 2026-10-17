@@ -15,7 +15,7 @@ func TestDownmixToMono(t *testing.T) {
 
 func TestPrepareMultimonAudioDownmixesAndResamples(t *testing.T) {
 	got := prepareMultimonAudio([]float32{1, -1, 0.5, 0.5, 1, 1, -0.5, -0.5}, 2, SampleRate)
-	want := []float32{0, 0.25}
+	want := []float32{0.25, 0.25}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("prepareMultimonAudio() = %v, want %v", got, want)
 	}
