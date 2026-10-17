@@ -44,3 +44,21 @@ func TestIsSelfMessage(t *testing.T) {
 		})
 	}
 }
+
+func TestNormalizeMultimonMessage(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  string
+		want string
+	}{
+		{name: "APRS packet", msg: "APRS: N7RIX-7>T0QPSP:payload", want: "N7RIX-7>T0QPSP:payload"},
+		{name: "startup banner", msg: "Enabled demodulators: AFSK1200", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeMultimonMessage(tt.msg); got != tt.want {
+				t.Fatalf("normalizeMultimonMessage(%q) = %q, want %q", tt.msg, got, tt.want)
+			}
+		})
+	}
+}

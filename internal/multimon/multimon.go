@@ -117,12 +117,11 @@ func (m *Multimon) Start() error {
 			scanner := bufio.NewScanner(out)
 			for scanner.Scan() {
 				msg := scanner.Text()
-				m.logger.Debug("Got message: ", msg)
-
 				normalized := normalizeMultimonMessage(msg)
 				if normalized == "" {
 					continue
 				}
+				m.logger.Debug("Got message: ", msg)
 
 				duplicate := m.cache.Set(normalized, time.Now())
 				if duplicate && !m.isSelfMessage(normalized) {
@@ -156,6 +155,9 @@ func (m *Multimon) Start() error {
 func normalizeMultimonMessage(msg string) string {
 	msg = strings.TrimSpace(msg)
 	msg = strings.TrimPrefix(msg, "APRS: ")
+	if !strings.Contains(msg, ">") {
+		return ""
+	}
 	return msg
 }
 
