@@ -744,7 +744,7 @@ func buildDebugWav(samples []float32) []byte {
 	_ = binary.Write(&wav, binary.LittleEndian, uint32(16))
 	_ = binary.Write(&wav, binary.LittleEndian, uint16(audioFormat))
 	_ = binary.Write(&wav, binary.LittleEndian, uint16(numChannels))
-	_ = binary.Write(&wav, binary.LittleEndian, uint32(sampleRate))
+	_ = binary.Write(&wav, binary.LittleEndian, uint32(SampleRate))
 	_ = binary.Write(&wav, binary.LittleEndian, uint32(byteRate))
 	_ = binary.Write(&wav, binary.LittleEndian, uint16(blockAlign))
 	_ = binary.Write(&wav, binary.LittleEndian, uint16(bitsPerSample))
