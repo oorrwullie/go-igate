@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -27,33 +28,34 @@ import (
 )
 
 type SoundcardCapture struct {
-	StreamParams    portaudio.StreamParameters
-	SampleRate      int
-	inputSampleRate int
-	BaudRate        float64
-	MarkFrequency   float64
-	SpaceFrequency  float64
-	ChannelNum      int
-	BitDepth        int
-	BufferSize      int
-	inputChannels   int
-	stop            chan struct{}
-	sendChannel     chan string
-	logger          *log.Logger
-	outputChan      chan []byte
-	audioInputChan  chan []float32
-	stationCallsign string
-	txBuffer        []float32
-	preambleFlags   int
-	tailTone        []float32
-	txMu            sync.Mutex
-	stopOnce        sync.Once
-	stream          *portaudio.Stream
-	started         bool
-	streamMu        sync.Mutex
-	useAplay        bool
-	receiveEnabled  bool
-	aplayDevice     string
+	StreamParams        portaudio.StreamParameters
+	SampleRate          int
+	inputSampleRate     int
+	BaudRate            float64
+	MarkFrequency       float64
+	SpaceFrequency      float64
+	ChannelNum          int
+	BitDepth            int
+	BufferSize          int
+	inputChannels       int
+	stop                chan struct{}
+	sendChannel         chan string
+	logger              *log.Logger
+	outputChan          chan []byte
+	audioInputChan      chan []float32
+	stationCallsign     string
+	txBuffer            []float32
+	preambleFlags       int
+	tailTone            []float32
+	txMu                sync.Mutex
+	stopOnce            sync.Once
+	stream              *portaudio.Stream
+	started             bool
+	streamMu            sync.Mutex
+	useAplay            bool
+	receiveEnabled      bool
+	aplayDevice         string
+	droppedInputBuffers atomic.Uint64
 }
 
 const (
@@ -179,6 +181,7 @@ func (s *SoundcardCapture) Start() error {
 			case s.audioInputChan <- data:
 			case <-s.stop:
 			default:
+				s.droppedInputBuffers.Add(1)
 			}
 		}
 
@@ -239,10 +242,16 @@ func (s *SoundcardCapture) Start() error {
 }
 
 func (s *SoundcardCapture) runAudioOutputLoop() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-s.stop:
 			return
+		case <-ticker.C:
+			if dropped := s.droppedInputBuffers.Swap(0); dropped > 0 {
+				s.logger.Warn("Sound-card receive dropped ", dropped, " input buffers in the last 15s; APRS audio may be lost")
+			}
 		case samples := <-s.audioInputChan:
 			decoderSamples := prepareMultimonAudio(samples, s.inputChannels, s.inputSampleRate)
 			data, err := s.float32ToBytes(decoderSamples)
