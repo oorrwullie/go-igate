@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -27,33 +28,36 @@ import (
 )
 
 type SoundcardCapture struct {
-	StreamParams    portaudio.StreamParameters
-	SampleRate      int
-	inputSampleRate int
-	BaudRate        float64
-	MarkFrequency   float64
-	SpaceFrequency  float64
-	ChannelNum      int
-	BitDepth        int
-	BufferSize      int
-	inputChannels   int
-	stop            chan struct{}
-	sendChannel     chan string
-	logger          *log.Logger
-	outputChan      chan []byte
-	audioInputChan  chan []float32
-	stationCallsign string
-	txBuffer        []float32
-	preambleFlags   int
-	tailTone        []float32
-	txMu            sync.Mutex
-	stopOnce        sync.Once
-	stream          *portaudio.Stream
-	started         bool
-	streamMu        sync.Mutex
-	useAplay        bool
-	receiveEnabled  bool
-	aplayDevice     string
+	StreamParams            portaudio.StreamParameters
+	SampleRate              int
+	inputSampleRate         int
+	BaudRate                float64
+	MarkFrequency           float64
+	SpaceFrequency          float64
+	ChannelNum              int
+	BitDepth                int
+	BufferSize              int
+	inputChannels           int
+	stop                    chan struct{}
+	sendChannel             chan string
+	logger                  *log.Logger
+	outputChan              chan []byte
+	audioInputChan          chan []float32
+	stationCallsign         string
+	txBuffer                []float32
+	preambleFlags           int
+	tailTone                []float32
+	txMu                    sync.Mutex
+	stopOnce                sync.Once
+	stream                  *portaudio.Stream
+	started                 bool
+	streamMu                sync.Mutex
+	useAplay                bool
+	receiveEnabled          bool
+	aplayDevice             string
+	debugRxWavDir           string
+	droppedAudio            atomic.Uint64
+	portAudioInputOverflows atomic.Uint64
 }
 
 const (
@@ -99,6 +103,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		useAplay:        cfg.Transmitter.UseAplay,
 		receiveEnabled:  cfg.SoundcardCapture || !cfg.Sdr.Enabled,
 		aplayDevice:     cfg.SoundcardOutputName,
+		debugRxWavDir:   os.Getenv("GO_IGATE_DEBUG_RX_WAV_DIR"),
 	}
 
 	if sc.useAplay && sc.aplayDevice == "" {
@@ -172,13 +177,17 @@ func (s *SoundcardCapture) Start() error {
 		return err
 	}
 
-	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
+	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32, _ portaudio.StreamCallbackTimeInfo, flags portaudio.StreamCallbackFlags) {
+		if flags&portaudio.InputOverflow != 0 {
+			s.portAudioInputOverflows.Add(1)
+		}
 		if s.receiveEnabled {
 			data := append([]float32(nil), in...)
 			select {
 			case s.audioInputChan <- data:
 			case <-s.stop:
 			default:
+				s.droppedAudio.Add(1)
 			}
 		}
 
@@ -239,12 +248,62 @@ func (s *SoundcardCapture) Start() error {
 }
 
 func (s *SoundcardCapture) runAudioOutputLoop() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	var samplesSeen uint64
+	var sumSquares float64
+	var peak float32
+	var debugSamples []float32
+	debugSlot := 0
+	windowStarted := time.Now()
 	for {
 		select {
 		case <-s.stop:
 			return
+		case <-ticker.C:
+			if s.debugRxWavDir != "" && len(debugSamples) > 0 {
+				filename, err := dumpReceiveWaveForDebug(s.debugRxWavDir, debugSlot, debugSamples)
+				if err != nil {
+					s.logger.Warn("Failed to write receive debug wave: ", err)
+				} else {
+					s.logger.Info("Saved live multimon input audio to ", filename)
+					debugSlot = (debugSlot + 1) % 4
+				}
+				debugSamples = debugSamples[:0]
+			}
+			if samplesSeen == 0 {
+				s.logger.Warn("Sound-card receive diagnostic: no audio buffers captured; capture-rate=", s.inputSampleRate,
+					" portaudio-input-overflows=", s.portAudioInputOverflows.Swap(0),
+					" check device selection, input jack, and capture mixer")
+				windowStarted = time.Now()
+				continue
+			}
+			rms := math.Sqrt(sumSquares / float64(samplesSeen))
+			elapsed := time.Since(windowStarted).Seconds()
+			measuredRate := float64(samplesSeen) / float64(max(s.inputChannels, 1)) / elapsed
+			s.logger.Info("Sound-card receive diagnostic: samples=", samplesSeen,
+				" rms=", fmt.Sprintf("%.5f", rms), " peak=", fmt.Sprintf("%.5f", peak),
+				" capture-rate=", s.inputSampleRate, " measured-input-rate=", fmt.Sprintf("%.0f", measuredRate),
+				" portaudio-input-overflows=", s.portAudioInputOverflows.Swap(0),
+				" dropped-buffers=", s.droppedAudio.Swap(0),
+				" multimon-queue=", len(s.outputChan), "/", cap(s.outputChan), " chunks")
+			samplesSeen = 0
+			sumSquares = 0
+			peak = 0
+			windowStarted = time.Now()
 		case samples := <-s.audioInputChan:
+			for _, sample := range samples {
+				v := float64(sample)
+				sumSquares += v * v
+				if magnitude := float32(math.Abs(v)); magnitude > peak {
+					peak = magnitude
+				}
+				samplesSeen++
+			}
 			decoderSamples := prepareMultimonAudio(samples, s.inputChannels, s.inputSampleRate)
+			if s.debugRxWavDir != "" {
+				debugSamples = append(debugSamples, decoderSamples...)
+			}
 			data, err := s.float32ToBytes(decoderSamples)
 			if err != nil {
 				s.logger.Error("Error converting float32 to bytes: ", err)
@@ -713,14 +772,29 @@ func dumpWaveForDebug(samples []float32) error {
 	return os.WriteFile(filename, buildDebugWav(samples), 0o644)
 }
 
+func dumpReceiveWaveForDebug(dir string, slot int, samples []float32) (string, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create receive debug directory: %w", err)
+	}
+	filename := filepath.Join(dir, fmt.Sprintf("rx_%d.wav", slot))
+	if err := os.WriteFile(filename, buildDebugWavAtRate(samples, SampleRate/2), 0o644); err != nil {
+		return "", fmt.Errorf("write receive debug wave: %w", err)
+	}
+	return filename, nil
+}
+
 func buildDebugWav(samples []float32) []byte {
+	return buildDebugWavAtRate(samples, SampleRate)
+}
+
+func buildDebugWavAtRate(samples []float32, sampleRate int) []byte {
 	const (
 		audioFormat   = 1
 		numChannels   = 1
 		bitsPerSample = 16
 		blockAlign    = numChannels * bitsPerSample / 8
 	)
-	byteRate := SampleRate * numChannels * bitsPerSample / 8
+	byteRate := sampleRate * numChannels * bitsPerSample / 8
 
 	var pcm bytes.Buffer
 	for _, sample := range samples {
