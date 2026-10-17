@@ -227,8 +227,8 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 		case <-s.stop:
 			return
 		case samples := <-s.audioInputChan:
-			monoSamples := downmixToMono(samples, s.inputChannels)
-			data, err := s.float32ToBytes(monoSamples)
+			decoderSamples := prepareMultimonAudio(samples, s.inputChannels)
+			data, err := s.float32ToBytes(decoderSamples)
 			if err != nil {
 				s.logger.Error("Error converting float32 to bytes: ", err)
 				continue
@@ -240,6 +240,18 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 			}
 		}
 	}
+}
+
+func prepareMultimonAudio(samples []float32, channels int) []float32 {
+	mono := downmixToMono(samples, channels)
+	if len(mono) < 2 {
+		return nil
+	}
+	resampled := make([]float32, len(mono)/2)
+	for i := range resampled {
+		resampled[i] = (mono[i*2] + mono[i*2+1]) / 2
+	}
+	return resampled
 }
 
 func downmixToMono(samples []float32, channels int) []float32 {

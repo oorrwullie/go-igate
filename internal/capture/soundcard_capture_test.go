@@ -12,3 +12,11 @@ func TestDownmixToMono(t *testing.T) {
 		t.Fatalf("downmixToMono() = %v, want %v", got, want)
 	}
 }
+
+func TestPrepareMultimonAudioDownmixesAndResamples(t *testing.T) {
+	got := prepareMultimonAudio([]float32{1, -1, 0.5, 0.5, 1, 1, -0.5, -0.5}, 2)
+	want := []float32{0, 0.25}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("prepareMultimonAudio() = %v, want %v", got, want)
+	}
+}
