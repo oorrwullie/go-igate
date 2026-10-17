@@ -28,35 +28,36 @@ import (
 )
 
 type SoundcardCapture struct {
-	StreamParams    portaudio.StreamParameters
-	SampleRate      int
-	inputSampleRate int
-	BaudRate        float64
-	MarkFrequency   float64
-	SpaceFrequency  float64
-	ChannelNum      int
-	BitDepth        int
-	BufferSize      int
-	inputChannels   int
-	stop            chan struct{}
-	sendChannel     chan string
-	logger          *log.Logger
-	outputChan      chan []byte
-	audioInputChan  chan []float32
-	stationCallsign string
-	txBuffer        []float32
-	preambleFlags   int
-	tailTone        []float32
-	txMu            sync.Mutex
-	stopOnce        sync.Once
-	stream          *portaudio.Stream
-	started         bool
-	streamMu        sync.Mutex
-	useAplay        bool
-	receiveEnabled  bool
-	aplayDevice     string
-	debugRxWavDir   string
-	droppedAudio    atomic.Uint64
+	StreamParams            portaudio.StreamParameters
+	SampleRate              int
+	inputSampleRate         int
+	BaudRate                float64
+	MarkFrequency           float64
+	SpaceFrequency          float64
+	ChannelNum              int
+	BitDepth                int
+	BufferSize              int
+	inputChannels           int
+	stop                    chan struct{}
+	sendChannel             chan string
+	logger                  *log.Logger
+	outputChan              chan []byte
+	audioInputChan          chan []float32
+	stationCallsign         string
+	txBuffer                []float32
+	preambleFlags           int
+	tailTone                []float32
+	txMu                    sync.Mutex
+	stopOnce                sync.Once
+	stream                  *portaudio.Stream
+	started                 bool
+	streamMu                sync.Mutex
+	useAplay                bool
+	receiveEnabled          bool
+	aplayDevice             string
+	debugRxWavDir           string
+	droppedAudio            atomic.Uint64
+	portAudioInputOverflows atomic.Uint64
 }
 
 const (
@@ -176,7 +177,10 @@ func (s *SoundcardCapture) Start() error {
 		return err
 	}
 
-	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
+	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32, _ portaudio.StreamCallbackTimeInfo, flags portaudio.StreamCallbackFlags) {
+		if flags&portaudio.InputOverflow != 0 {
+			s.portAudioInputOverflows.Add(1)
+		}
 		if s.receiveEnabled {
 			data := append([]float32(nil), in...)
 			select {
@@ -246,6 +250,7 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 	var peak float32
 	var debugSamples []float32
 	debugSlot := 0
+	windowStarted := time.Now()
 	for {
 		select {
 		case <-s.stop:
@@ -262,17 +267,25 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 				debugSamples = debugSamples[:0]
 			}
 			if samplesSeen == 0 {
-				s.logger.Warn("Sound-card receive diagnostic: no audio buffers captured in the last 15s; check device selection, input jack, and capture mixer")
+				s.logger.Warn("Sound-card receive diagnostic: no audio buffers captured; capture-rate=", s.inputSampleRate,
+					" portaudio-input-overflows=", s.portAudioInputOverflows.Swap(0),
+					" check device selection, input jack, and capture mixer")
+				windowStarted = time.Now()
 				continue
 			}
 			rms := math.Sqrt(sumSquares / float64(samplesSeen))
+			elapsed := time.Since(windowStarted).Seconds()
+			measuredRate := float64(samplesSeen) / float64(max(s.inputChannels, 1)) / elapsed
 			s.logger.Info("Sound-card receive diagnostic: samples=", samplesSeen,
 				" rms=", fmt.Sprintf("%.5f", rms), " peak=", fmt.Sprintf("%.5f", peak),
+				" capture-rate=", s.inputSampleRate, " measured-input-rate=", fmt.Sprintf("%.0f", measuredRate),
+				" portaudio-input-overflows=", s.portAudioInputOverflows.Swap(0),
 				" dropped-buffers=", s.droppedAudio.Swap(0),
 				" multimon-queue=", len(s.outputChan), "/", cap(s.outputChan), " chunks")
 			samplesSeen = 0
 			sumSquares = 0
 			peak = 0
+			windowStarted = time.Now()
 		case samples := <-s.audioInputChan:
 			for _, sample := range samples {
 				v := float64(sample)
