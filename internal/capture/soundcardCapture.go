@@ -125,7 +125,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 
 	streamParams := portaudio.StreamParameters{
 		SampleRate:      float64(SampleRate),
-		FramesPerBuffer: 1024,
+		FramesPerBuffer: portaudio.FramesPerBufferUnspecified,
 		Flags:           portaudio.ClipOff,
 	}
 	if sc.receiveEnabled {
@@ -137,7 +137,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		streamParams.Input = portaudio.StreamDeviceParameters{
 			Device:   inputDevice,
 			Channels: inputChannels,
-			Latency:  inputDevice.DefaultLowInputLatency,
+			Latency:  inputDevice.DefaultHighInputLatency,
 		}
 	}
 	if !sc.useAplay {
@@ -221,17 +221,22 @@ func (s *SoundcardCapture) Start() error {
 	}
 	s.stream = stream
 	s.started = true
-	if info := stream.Info(); info != nil && info.SampleRate > 0 {
-		s.inputSampleRate = int(math.Round(info.SampleRate))
+	streamInfo := stream.Info()
+	if streamInfo != nil && streamInfo.SampleRate > 0 {
+		s.inputSampleRate = int(math.Round(streamInfo.SampleRate))
 	}
 	if s.receiveEnabled {
 		deviceName := "unknown"
+		inputLatency := time.Duration(0)
 		if s.StreamParams.Input.Device != nil {
 			deviceName = s.StreamParams.Input.Device.Name
 		}
+		if streamInfo != nil {
+			inputLatency = streamInfo.InputLatency
+		}
 		s.logger.Info("Sound-card receive started: device=", deviceName,
 			" channels=", s.inputChannels, " capture-rate=", s.inputSampleRate,
-			" decoder-rate=22050Hz mono")
+			" input-latency=", inputLatency, " decoder-rate=22050Hz mono")
 		go s.runAudioOutputLoop()
 	}
 	if s.useAplay {
