@@ -54,6 +54,7 @@ type SoundcardCapture struct {
 	useAplay        bool
 	receiveEnabled  bool
 	aplayDevice     string
+	debugRxWavDir   string
 	droppedAudio    atomic.Uint64
 }
 
@@ -99,6 +100,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		useAplay:        cfg.Transmitter.UseAplay,
 		receiveEnabled:  cfg.SoundcardCapture || !cfg.Sdr.Enabled,
 		aplayDevice:     cfg.SoundcardOutputName,
+		debugRxWavDir:   os.Getenv("GO_IGATE_DEBUG_RX_WAV_DIR"),
 	}
 
 	if sc.useAplay && sc.aplayDevice == "" {
@@ -237,11 +239,23 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 	var samplesSeen uint64
 	var sumSquares float64
 	var peak float32
+	var debugSamples []float32
+	debugSlot := 0
 	for {
 		select {
 		case <-s.stop:
 			return
 		case <-ticker.C:
+			if s.debugRxWavDir != "" && len(debugSamples) > 0 {
+				filename, err := dumpReceiveWaveForDebug(s.debugRxWavDir, debugSlot, debugSamples)
+				if err != nil {
+					s.logger.Warn("Failed to write receive debug wave: ", err)
+				} else {
+					s.logger.Info("Saved live multimon input audio to ", filename)
+					debugSlot = (debugSlot + 1) % 4
+				}
+				debugSamples = debugSamples[:0]
+			}
 			if samplesSeen == 0 {
 				s.logger.Warn("Sound-card receive diagnostic: no audio buffers captured in the last 15s; check device selection, input jack, and capture mixer")
 				continue
@@ -264,6 +278,9 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 				samplesSeen++
 			}
 			decoderSamples := prepareMultimonAudio(samples, s.inputChannels)
+			if s.debugRxWavDir != "" {
+				debugSamples = append(debugSamples, decoderSamples...)
+			}
 			data, err := s.float32ToBytes(decoderSamples)
 			if err != nil {
 				s.logger.Error("Error converting float32 to bytes: ", err)
@@ -708,15 +725,29 @@ func dumpWaveForDebug(samples []float32) error {
 	return os.WriteFile(filename, buildDebugWav(samples), 0o644)
 }
 
+func dumpReceiveWaveForDebug(dir string, slot int, samples []float32) (string, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("create receive debug directory: %w", err)
+	}
+	filename := filepath.Join(dir, fmt.Sprintf("rx_%d.wav", slot))
+	if err := os.WriteFile(filename, buildDebugWavAtRate(samples, SampleRate/2), 0o644); err != nil {
+		return "", fmt.Errorf("write receive debug wave: %w", err)
+	}
+	return filename, nil
+}
+
 func buildDebugWav(samples []float32) []byte {
+	return buildDebugWavAtRate(samples, SampleRate)
+}
+
+func buildDebugWavAtRate(samples []float32, sampleRate int) []byte {
 	const (
 		audioFormat   = 1
 		numChannels   = 1
-		sampleRate    = SampleRate
 		bitsPerSample = 16
-		byteRate      = sampleRate * numChannels * bitsPerSample / 8
 		blockAlign    = numChannels * bitsPerSample / 8
 	)
+	byteRate := sampleRate * numChannels * bitsPerSample / 8
 
 	var pcm bytes.Buffer
 	for _, sample := range samples {
