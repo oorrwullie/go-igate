@@ -54,6 +54,7 @@ type SoundcardCapture struct {
 	streamMu            sync.Mutex
 	useAplay            bool
 	receiveEnabled      bool
+	receiveDiagnostics  bool
 	aplayDevice         string
 	droppedInputBuffers atomic.Uint64
 	capturedFrames      atomic.Uint64
@@ -88,24 +89,25 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 	)
 
 	sc := &SoundcardCapture{
-		SampleRate:      SampleRate,
-		inputSampleRate: SampleRate,
-		BaudRate:        BaudRate,
-		MarkFrequency:   Tone1200Hz,
-		SpaceFrequency:  Tone2200Hz,
-		ChannelNum:      channelNum,
-		BitDepth:        bitDepth,
-		stop:            make(chan struct{}),
-		sendChannel:     make(chan string, 10),
-		logger:          logger,
-		outputChan:      outputChan,
-		audioInputChan:  make(chan []float32, 10),
-		stationCallsign: cfg.StationCallsign,
-		preambleFlags:   preambleFlagsForDelay(cfg.Transmitter.TxDelay),
-		tailTone:        generateTone(Tone1200Hz, cfg.Transmitter.TxTail),
-		useAplay:        cfg.Transmitter.UseAplay,
-		receiveEnabled:  cfg.SoundcardCapture || !cfg.Sdr.Enabled,
-		aplayDevice:     cfg.SoundcardOutputName,
+		SampleRate:         SampleRate,
+		inputSampleRate:    SampleRate,
+		BaudRate:           BaudRate,
+		MarkFrequency:      Tone1200Hz,
+		SpaceFrequency:     Tone2200Hz,
+		ChannelNum:         channelNum,
+		BitDepth:           bitDepth,
+		stop:               make(chan struct{}),
+		sendChannel:        make(chan string, 10),
+		logger:             logger,
+		outputChan:         outputChan,
+		audioInputChan:     make(chan []float32, 10),
+		stationCallsign:    cfg.StationCallsign,
+		preambleFlags:      preambleFlagsForDelay(cfg.Transmitter.TxDelay),
+		tailTone:           generateTone(Tone1200Hz, cfg.Transmitter.TxTail),
+		useAplay:           cfg.Transmitter.UseAplay,
+		receiveEnabled:     cfg.SoundcardCapture || !cfg.Sdr.Enabled,
+		receiveDiagnostics: cfg.Multimon.ReceiveDiagnostics,
+		aplayDevice:        cfg.SoundcardOutputName,
 	}
 
 	if sc.useAplay && sc.aplayDevice == "" {
@@ -181,7 +183,7 @@ func (s *SoundcardCapture) Start() error {
 
 	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
 		if s.receiveEnabled {
-			if s.inputChannels > 0 {
+			if s.receiveDiagnostics && s.inputChannels > 0 {
 				s.capturedFrames.Add(uint64(len(in) / s.inputChannels))
 			}
 			data := append([]float32(nil), in...)
@@ -256,25 +258,27 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 		case <-s.stop:
 			return
 		case samples := <-s.audioInputChan:
-			var squares uint64
-			var peak uint64
-			for _, sample := range samples {
-				amplitude := math.Abs(float64(sample))
-				if math.IsNaN(amplitude) || math.IsInf(amplitude, 0) {
-					continue
+			if s.receiveDiagnostics {
+				var squares uint64
+				var peak uint64
+				for _, sample := range samples {
+					amplitude := math.Abs(float64(sample))
+					if math.IsNaN(amplitude) || math.IsInf(amplitude, 0) {
+						continue
+					}
+					const metricScale = 1_000_000
+					scaled := uint64(amplitude * metricScale)
+					squares += scaled * scaled
+					if scaled > peak {
+						peak = scaled
+					}
 				}
-				const metricScale = 1_000_000
-				scaled := uint64(amplitude * metricScale)
-				squares += scaled * scaled
-				if scaled > peak {
-					peak = scaled
-				}
-			}
-			s.processedSamples.Add(uint64(len(samples)))
-			s.inputSquares.Add(squares)
-			for current := s.inputPeak.Load(); peak > current; current = s.inputPeak.Load() {
-				if s.inputPeak.CompareAndSwap(current, peak) {
-					break
+				s.processedSamples.Add(uint64(len(samples)))
+				s.inputSquares.Add(squares)
+				for current := s.inputPeak.Load(); peak > current; current = s.inputPeak.Load() {
+					if s.inputPeak.CompareAndSwap(current, peak) {
+						break
+					}
 				}
 			}
 			decoderSamples := prepareMultimonAudio(samples, s.inputChannels, s.inputSampleRate)
@@ -285,7 +289,9 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 			}
 			select {
 			case s.outputChan <- data:
-				s.decoderBytes.Add(uint64(len(data)))
+				if s.receiveDiagnostics {
+					s.decoderBytes.Add(uint64(len(data)))
+				}
 			case <-s.stop:
 				return
 			}
@@ -301,12 +307,18 @@ func (s *SoundcardCapture) runReceiveDiagnostics() {
 		case <-s.stop:
 			return
 		case <-ticker.C:
+			dropped := s.droppedInputBuffers.Swap(0)
+			if dropped > 0 {
+				s.logger.Warn("Sound-card receive dropped ", dropped, " input buffers in the last 15s; APRS audio may be lost")
+			}
+			if !s.receiveDiagnostics {
+				continue
+			}
 			frames := s.capturedFrames.Swap(0)
 			samples := s.processedSamples.Swap(0)
 			squares := s.inputSquares.Swap(0)
 			peak := s.inputPeak.Swap(0)
 			decoderBytes := s.decoderBytes.Swap(0)
-			dropped := s.droppedInputBuffers.Swap(0)
 			rms := 0.0
 			if samples > 0 {
 				rms = math.Sqrt(float64(squares) / float64(samples) / 1_000_000_000_000)
@@ -318,9 +330,6 @@ func (s *SoundcardCapture) runReceiveDiagnostics() {
 				" capture-queue=", len(s.audioInputChan), "/", cap(s.audioInputChan),
 				" decoder-queue=", len(s.outputChan), "/", cap(s.outputChan),
 				" dropped-buffers=", dropped)
-			if dropped > 0 {
-				s.logger.Warn("Sound-card receive dropped ", dropped, " input buffers in the last 15s; APRS audio may be lost")
-			}
 		}
 	}
 }

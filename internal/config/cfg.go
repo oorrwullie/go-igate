@@ -51,8 +51,9 @@ type (
 	}
 
 	Multimon struct {
-		Path            string
-		AdditionalFlags string `yaml:"additional-flags"`
+		Path               string
+		AdditionalFlags    string `yaml:"additional-flags"`
+		ReceiveDiagnostics bool   `yaml:"receive-diagnostics"`
 	}
 
 	Beacon struct {

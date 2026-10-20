@@ -86,7 +86,9 @@ func (m *Multimon) Start() error {
 			return
 		}
 		m.logger.Info("multimon-ng decoder started: ", m.Cmd.Path, " ", strings.Join(m.Cmd.Args[1:], " "))
-		go m.logInputHealth()
+		if m.cfg.ReceiveDiagnostics {
+			go m.logInputHealth()
+		}
 
 		// Start goroutines to read from the input channel and write to the output channel
 		go func(in io.WriteCloser) {
@@ -97,7 +99,7 @@ func (m *Multimon) Start() error {
 					return
 				}
 				written, err := in.Write(data)
-				if written > 0 {
+				if written > 0 && m.cfg.ReceiveDiagnostics {
 					m.inputBytes.Add(uint64(written))
 				}
 				if err != nil {

@@ -50,6 +50,8 @@ multimon:
   # multimon-ng binary
   path: "multimon-ng"
   additional-flags: ""
+  # log sound-card capture levels and decoder input bytes every 15 seconds
+  receive-diagnostics: false
 transmitter:
   # enabled: set to true to enable tx functionality
   enabled: true
