@@ -56,6 +56,11 @@ type SoundcardCapture struct {
 	receiveEnabled      bool
 	aplayDevice         string
 	droppedInputBuffers atomic.Uint64
+	capturedFrames      atomic.Uint64
+	processedSamples    atomic.Uint64
+	inputSquares        atomic.Uint64
+	inputPeak           atomic.Uint64
+	decoderBytes        atomic.Uint64
 }
 
 const (
@@ -176,6 +181,9 @@ func (s *SoundcardCapture) Start() error {
 
 	stream, err := portaudio.OpenStream(s.StreamParams, func(in []float32, out []float32) {
 		if s.receiveEnabled {
+			if s.inputChannels > 0 {
+				s.capturedFrames.Add(uint64(len(in) / s.inputChannels))
+			}
 			data := append([]float32(nil), in...)
 			select {
 			case s.audioInputChan <- data:
@@ -232,6 +240,7 @@ func (s *SoundcardCapture) Start() error {
 			" channels=", s.inputChannels, " capture-rate=", s.inputSampleRate,
 			" input-latency=", inputLatency, " decoder-rate=22050Hz mono")
 		go s.runAudioOutputLoop()
+		go s.runReceiveDiagnostics()
 	}
 	if s.useAplay {
 		go s.runAplayLoop()
@@ -242,17 +251,32 @@ func (s *SoundcardCapture) Start() error {
 }
 
 func (s *SoundcardCapture) runAudioOutputLoop() {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
 	for {
 		select {
 		case <-s.stop:
 			return
-		case <-ticker.C:
-			if dropped := s.droppedInputBuffers.Swap(0); dropped > 0 {
-				s.logger.Warn("Sound-card receive dropped ", dropped, " input buffers in the last 15s; APRS audio may be lost")
-			}
 		case samples := <-s.audioInputChan:
+			var squares uint64
+			var peak uint64
+			for _, sample := range samples {
+				amplitude := math.Abs(float64(sample))
+				if math.IsNaN(amplitude) || math.IsInf(amplitude, 0) {
+					continue
+				}
+				const metricScale = 1_000_000
+				scaled := uint64(amplitude * metricScale)
+				squares += scaled * scaled
+				if scaled > peak {
+					peak = scaled
+				}
+			}
+			s.processedSamples.Add(uint64(len(samples)))
+			s.inputSquares.Add(squares)
+			for current := s.inputPeak.Load(); peak > current; current = s.inputPeak.Load() {
+				if s.inputPeak.CompareAndSwap(current, peak) {
+					break
+				}
+			}
 			decoderSamples := prepareMultimonAudio(samples, s.inputChannels, s.inputSampleRate)
 			data, err := s.float32ToBytes(decoderSamples)
 			if err != nil {
@@ -261,8 +285,41 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 			}
 			select {
 			case s.outputChan <- data:
+				s.decoderBytes.Add(uint64(len(data)))
 			case <-s.stop:
 				return
+			}
+		}
+	}
+}
+
+func (s *SoundcardCapture) runReceiveDiagnostics() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stop:
+			return
+		case <-ticker.C:
+			frames := s.capturedFrames.Swap(0)
+			samples := s.processedSamples.Swap(0)
+			squares := s.inputSquares.Swap(0)
+			peak := s.inputPeak.Swap(0)
+			decoderBytes := s.decoderBytes.Swap(0)
+			dropped := s.droppedInputBuffers.Swap(0)
+			rms := 0.0
+			if samples > 0 {
+				rms = math.Sqrt(float64(squares) / float64(samples) / 1_000_000_000_000)
+			}
+			s.logger.Info("Sound-card receive health: captured-frames=", frames,
+				" processed-samples=", samples, " rms=", fmt.Sprintf("%.5f", rms),
+				" peak=", fmt.Sprintf("%.5f", float64(peak)/1_000_000),
+				" decoder-bytes=", decoderBytes,
+				" capture-queue=", len(s.audioInputChan), "/", cap(s.audioInputChan),
+				" decoder-queue=", len(s.outputChan), "/", cap(s.outputChan),
+				" dropped-buffers=", dropped)
+			if dropped > 0 {
+				s.logger.Warn("Sound-card receive dropped ", dropped, " input buffers in the last 15s; APRS audio may be lost")
 			}
 		}
 	}
