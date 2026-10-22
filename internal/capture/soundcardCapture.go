@@ -53,6 +53,7 @@ type SoundcardCapture struct {
 	started             bool
 	streamMu            sync.Mutex
 	useAplay            bool
+	txAudioLevel        float32
 	receiveEnabled      bool
 	receiveDiagnostics  bool
 	aplayDevice         string
@@ -105,6 +106,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		preambleFlags:      preambleFlagsForDelay(cfg.Transmitter.TxDelay),
 		tailTone:           generateTone(Tone1200Hz, cfg.Transmitter.TxTail),
 		useAplay:           cfg.Transmitter.UseAplay,
+		txAudioLevel:       float32(cfg.Transmitter.AudioLevel),
 		receiveEnabled:     cfg.SoundcardCapture || !cfg.Sdr.Enabled,
 		receiveDiagnostics: cfg.Multimon.ReceiveDiagnostics,
 		aplayDevice:        cfg.SoundcardOutputName,
@@ -701,7 +703,7 @@ func (s *SoundcardCapture) generateAFSK(frame []byte) ([]float32, error) {
 		total = append(total, s.tailTone...)
 	}
 	completeWave := removeDCOffset(total)
-	return normalizeSignal(completeWave), nil
+	return normalizeSignal(completeWave, s.txAudioLevel), nil
 }
 
 func (s *SoundcardCapture) runAplayLoop() {
@@ -918,7 +920,11 @@ func bitsToAFSK(bits []int) []float32 {
 	return wave
 }
 
-func normalizeSignal(signal []float32) []float32 {
+func normalizeSignal(signal []float32, targetLevel float32) []float32 {
+	if targetLevel <= 0 || targetLevel > 1 {
+		targetLevel = 0.5
+	}
+
 	maxAmplitude := float32(0)
 	for _, sample := range signal {
 		if math.Abs(float64(sample)) > float64(maxAmplitude) {
@@ -926,9 +932,8 @@ func normalizeSignal(signal []float32) []float32 {
 		}
 	}
 	if maxAmplitude > 0 {
-		safetyMargin := float32(0.9) // Scale down the signal slightly
 		for i := range signal {
-			signal[i] = signal[i] / maxAmplitude * safetyMargin
+			signal[i] = signal[i] / maxAmplitude * targetLevel
 		}
 	}
 	return signal
