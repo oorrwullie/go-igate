@@ -207,7 +207,7 @@ func GetConfig() (Config, error) {
 	}
 
 	if cfg.Transmitter.AudioLevel == 0 {
-		cfg.Transmitter.AudioLevel = 0.5
+		cfg.Transmitter.AudioLevel = 0.9
 	}
 	if cfg.Transmitter.AudioLevel < 0 || cfg.Transmitter.AudioLevel > 1 {
 		return cfg, fmt.Errorf("transmitter audio-level must be between 0 and 1")

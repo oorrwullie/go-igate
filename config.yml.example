@@ -64,7 +64,7 @@ transmitter:
   # optional mark tone appended after packet to hold VOX/PTT engaged
   tx-tail: 75ms
   # peak AFSK audio level sent to the radio input (0.0-1.0); lower if the radio keys but does not decode
-  audio-level: 0.5
+  audio-level: 0.9
   # aplay can handle transmit while PortAudio captures from soundcard-input-name.
   # Set false to use the PortAudio stream for both input and output.
   use-aplay: true
