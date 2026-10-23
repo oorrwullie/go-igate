@@ -5,6 +5,8 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oorrwullie/go-igate/internal/cache"
@@ -23,6 +25,9 @@ type Multimon struct {
 	Cmd             *exec.Cmd
 	tx              *transmitter.Tx
 	stationCallsign string
+	inputBytes      atomic.Uint64
+	stopHealth      chan struct{}
+	stopHealthOnce  sync.Once
 }
 
 // New creates a new multimon-ng instance
@@ -55,6 +60,7 @@ func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *c
 		Cmd:             cmd,
 		tx:              tx,
 		stationCallsign: strings.ToUpper(strings.TrimSpace(stationCallsign)),
+		stopHealth:      make(chan struct{}),
 	}
 }
 
@@ -79,15 +85,26 @@ func (m *Multimon) Start() error {
 			m.logger.Error("Error starting multimon-ng: ", err)
 			return
 		}
+		m.logger.Info("multimon-ng decoder started: ", m.Cmd.Path, " ", strings.Join(m.Cmd.Args[1:], " "))
+		if m.cfg.ReceiveDiagnostics {
+			go m.logInputHealth()
+		}
 
 		// Start goroutines to read from the input channel and write to the output channel
 		go func(in io.WriteCloser) {
 			defer in.Close()
-
-			for data := range m.inputChan {
-				_, err := in.Write(data)
+			for {
+				data, ok := <-m.inputChan
+				if !ok {
+					return
+				}
+				written, err := in.Write(data)
+				if written > 0 && m.cfg.ReceiveDiagnostics {
+					m.inputBytes.Add(uint64(written))
+				}
 				if err != nil {
 					m.logger.Error("Error writing to multimon-ng: ", err)
+					return
 				}
 			}
 		}(inPipe)
@@ -96,15 +113,15 @@ func (m *Multimon) Start() error {
 		// This is where the APRS packets are read from multimon-ng
 		// and sent to the output channel
 		go func(out io.ReadCloser) {
+			defer m.stopInputHealth()
 			scanner := bufio.NewScanner(out)
 			for scanner.Scan() {
 				msg := scanner.Text()
-				m.logger.Debug("Got message: ", msg)
-
 				normalized := normalizeMultimonMessage(msg)
 				if normalized == "" {
 					continue
 				}
+				m.logger.Debug("Got message: ", msg)
 
 				duplicate := m.cache.Set(normalized, time.Now())
 				if duplicate && !m.isSelfMessage(normalized) {
@@ -135,9 +152,29 @@ func (m *Multimon) Start() error {
 	return nil
 }
 
+func (m *Multimon) logInputHealth() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-m.stopHealth:
+			return
+		case <-ticker.C:
+			m.logger.Info("multimon-ng input diagnostic: audio-bytes=", m.inputBytes.Swap(0), " in the last 15s")
+		}
+	}
+}
+
+func (m *Multimon) stopInputHealth() {
+	m.stopHealthOnce.Do(func() { close(m.stopHealth) })
+}
+
 func normalizeMultimonMessage(msg string) string {
 	msg = strings.TrimSpace(msg)
 	msg = strings.TrimPrefix(msg, "APRS: ")
+	if !strings.Contains(msg, ">") {
+		return ""
+	}
 	return msg
 }
 

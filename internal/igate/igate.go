@@ -1101,7 +1101,7 @@ func (i *IGate) sendBeaconRf(frame, payload string, allowRetry bool) {
 		}
 
 		if outcome == beaconOutcomeTimeout {
-			i.logger.Debug("Beacon RF transmission not observed; assuming success")
+			i.logger.Debug("Beacon RF transmission not locally decoded; transmission outcome is unknown")
 			i.scheduleAprsFiVerification(frame, payload, sendStart, allowRetry)
 			return
 		}

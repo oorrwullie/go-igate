@@ -50,6 +50,8 @@ multimon:
   # multimon-ng binary
   path: "multimon-ng"
   additional-flags: ""
+  # log sound-card capture levels and decoder input bytes every 15 seconds
+  receive-diagnostics: false
 transmitter:
   # enabled: set to true to enable tx functionality
   enabled: true
@@ -58,9 +60,13 @@ transmitter:
   # time to wait for serial connection to the radio
   read-timeout: "5s"
   # duration of HDLC flag preamble before payload (helps VOX/PTT settle)
-  tx-delay: 400ms
+  tx-delay: 1s
   # optional mark tone appended after packet to hold VOX/PTT engaged
   tx-tail: 75ms
+  # peak AFSK audio level sent to the radio input (0.0-1.0); lower if the radio keys but does not decode
+  audio-level: 0.9
+  # aplay can handle transmit while PortAudio captures from soundcard-input-name.
+  # Set false to use the PortAudio stream for both input and output.
   use-aplay: true
 igate:
   # enabled: set to true to enable DigiGate to act as an iGate.
@@ -119,6 +125,8 @@ igate:
   aprsis:
     # enable to connect to APRS-IS server for iGate
     enabled: false
+    # Set true to suppress per-packet [APRS-IS DIGIPEAT] log lines.
+    mute-inbound-log: false
     # server to connect to (noam.aprs2.net:14580 for North America)
     server: "noam.aprs2.net:14580"
     #passcode of iGate can be obtained from https://apps.magicbug.co.uk/passcode/ (do so with your SSID - eg. N0CALL-10)

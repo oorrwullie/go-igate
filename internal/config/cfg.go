@@ -51,8 +51,9 @@ type (
 	}
 
 	Multimon struct {
-		Path            string
-		AdditionalFlags string `yaml:"additional-flags"`
+		Path               string
+		AdditionalFlags    string `yaml:"additional-flags"`
+		ReceiveDiagnostics bool   `yaml:"receive-diagnostics"`
 	}
 
 	Beacon struct {
@@ -72,17 +73,19 @@ type (
 	}
 
 	AprsIs struct {
-		Enabled  bool
-		Server   string
-		Passcode string
-		Filter   string
+		Enabled        bool
+		Server         string
+		Passcode       string
+		Filter         string
+		MuteInboundLog bool `yaml:"mute-inbound-log"`
 	}
 
 	Transmitter struct {
-		Enabled  bool          `yaml:"enabled"`
-		TxDelay  time.Duration `yaml:"tx-delay"`
-		TxTail   time.Duration `yaml:"tx-tail"`
-		UseAplay bool          `yaml:"use-aplay"`
+		Enabled    bool          `yaml:"enabled"`
+		TxDelay    time.Duration `yaml:"tx-delay"`
+		TxTail     time.Duration `yaml:"tx-tail"`
+		AudioLevel float64       `yaml:"audio-level"`
+		UseAplay   bool          `yaml:"use-aplay"`
 	}
 
 	Digipeater struct {
@@ -110,7 +113,7 @@ type (
 
 func GetConfig() (Config, error) {
 	var cfg Config
-	const defaultTxDelay = 300 * time.Millisecond
+	const defaultTxDelay = time.Second
 
 	f, err := os.ReadFile("config.yml")
 	if err != nil {
@@ -201,6 +204,13 @@ func GetConfig() (Config, error) {
 
 	if cfg.Transmitter.TxTail <= 0 {
 		cfg.Transmitter.TxTail = 100 * time.Millisecond
+	}
+
+	if cfg.Transmitter.AudioLevel == 0 {
+		cfg.Transmitter.AudioLevel = 0.9
+	}
+	if cfg.Transmitter.AudioLevel < 0 || cfg.Transmitter.AudioLevel > 1 {
+		return cfg, fmt.Errorf("transmitter audio-level must be between 0 and 1")
 	}
 
 	if cfg.IGate.LocalStationTimeout <= 0 {
