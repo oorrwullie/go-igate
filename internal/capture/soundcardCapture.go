@@ -124,7 +124,12 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 	}
 	defer portaudio.Terminate()
 
-	inputDevice, outputDevice, err := getDevicesByName(cfg.SoundcardInputName, cfg.SoundcardOutputName)
+	inputDevice, outputDevice, err := getDevicesByName(
+		cfg.SoundcardInputName,
+		cfg.SoundcardOutputName,
+		sc.receiveEnabled,
+		!sc.useAplay,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +260,7 @@ func (s *SoundcardCapture) Start() error {
 }
 
 func (s *SoundcardCapture) runAudioOutputLoop() {
+	resampler := newMultimonResampler(s.inputChannels, s.inputSampleRate)
 	for {
 		select {
 		case <-s.stop:
@@ -283,7 +289,7 @@ func (s *SoundcardCapture) runAudioOutputLoop() {
 					}
 				}
 			}
-			decoderSamples := prepareMultimonAudio(samples, s.inputChannels, s.inputSampleRate)
+			decoderSamples := resampler.Process(samples)
 			data, err := s.float32ToBytes(decoderSamples)
 			if err != nil {
 				s.logger.Error("Error converting float32 to bytes: ", err)
@@ -336,38 +342,69 @@ func (s *SoundcardCapture) runReceiveDiagnostics() {
 	}
 }
 
-func prepareMultimonAudio(samples []float32, channels, inputSampleRate int) []float32 {
-	mono := downmixToMono(samples, channels)
-	if len(mono) == 0 || inputSampleRate <= 0 {
+type multimonResampler struct {
+	channels  int
+	inputRate int
+	pending   []float32
+	position  float64
+	inputStep float64
+}
+
+func newMultimonResampler(channels, inputRate int) *multimonResampler {
+	return &multimonResampler{
+		channels:  channels,
+		inputRate: inputRate,
+		inputStep: float64(inputRate) / float64(SampleRate/2),
+	}
+}
+
+// Process downmixes and resamples one callback while retaining samples and
+// phase needed to make output independent of callback boundaries.
+func (r *multimonResampler) Process(samples []float32) []float32 {
+	mono := downmixToMono(samples, r.channels)
+	if len(mono) == 0 || r.inputRate <= 0 {
 		return nil
 	}
-	if inputSampleRate == SampleRate/2 {
+	if r.inputRate == SampleRate/2 {
 		return mono
 	}
-	if inputSampleRate == SampleRate {
-		if len(mono) < 2 {
+	r.pending = append(r.pending, mono...)
+
+	// Preserve the existing pair averaging at 44.1 kHz, carrying an odd
+	// trailing sample into the next callback rather than dropping it.
+	if r.inputRate == SampleRate {
+		count := len(r.pending) / 2
+		if count == 0 {
 			return nil
 		}
-		resampled := make([]float32, len(mono)/2)
+		resampled := make([]float32, count)
 		for i := range resampled {
-			resampled[i] = (mono[i*2] + mono[i*2+1]) / 2
+			resampled[i] = (r.pending[i*2] + r.pending[i*2+1]) / 2
 		}
+		r.pending = r.pending[count*2:]
 		return resampled
 	}
-	outputLength := int(math.Round(float64(len(mono)) * float64(SampleRate/2) / float64(inputSampleRate)))
-	if outputLength == 0 {
+
+	if r.inputStep <= 0 {
 		return nil
 	}
-	resampled := make([]float32, outputLength)
-	for i := range resampled {
-		position := float64(i) * float64(inputSampleRate) / float64(SampleRate/2)
-		left := int(position)
-		if left >= len(mono) {
-			left = len(mono) - 1
+	resampled := make([]float32, 0, int(float64(len(r.pending))/r.inputStep)+1)
+	for r.position+1 < float64(len(r.pending)) {
+		left := int(r.position)
+		fraction := float32(r.position - float64(left))
+		resampled = append(resampled,
+			r.pending[left]*(1-fraction)+r.pending[left+1]*fraction)
+		r.position += r.inputStep
+	}
+	consumed := int(r.position)
+	if consumed > 0 {
+		// Keep the last sample available as the left endpoint for the next
+		// interpolated output.
+		if consumed >= len(r.pending) {
+			consumed = len(r.pending) - 1
 		}
-		right := min(left+1, len(mono)-1)
-		fraction := float32(position - float64(left))
-		resampled[i] = mono[left]*(1-fraction) + mono[right]*fraction
+		r.pending = r.pending[consumed:]
+		r.position -= float64(consumed)
 	}
 	return resampled
 }
@@ -497,13 +534,13 @@ func (s *SoundcardCapture) float32ToBytes(data []float32) ([]byte, error) {
 	return buf, nil
 }
 
-func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *portaudio.DeviceInfo, err error) {
+func getDevicesByName(inputName, outputName string, needInput, needOutput bool) (inputDevice, outputDevice *portaudio.DeviceInfo, err error) {
 	devices, err := portaudio.Devices()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	if inputName == "" {
+	if needInput && inputName == "" {
 		fmt.Println("No device name for input specified, setting to the system default.")
 		fmt.Println("Please specify a device name in the config.yml file if you want to select a specific device.")
 		fmt.Println("Available devices:")
@@ -516,7 +553,7 @@ func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *
 		if err != nil {
 			return nil, nil, fmt.Errorf("Error getting default input device: %v", err)
 		}
-	} else {
+	} else if needInput {
 		for _, device := range devices {
 			if device.Name == inputName {
 				inputDevice = device
@@ -533,7 +570,7 @@ func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *
 		}
 	}
 
-	if outputName == "" {
+	if needOutput && outputName == "" {
 		fmt.Println("No device name for output specified, setting to the system default.")
 		fmt.Println("Please specify a device name in the config.yml file if you want to select a specific device.")
 		fmt.Println("Available devices:")
@@ -546,7 +583,7 @@ func getDevicesByName(inputName, outputName string) (inputDevice, outputDevice *
 		if err != nil {
 			return nil, nil, fmt.Errorf("Error getting default output device: %v", err)
 		}
-	} else {
+	} else if needOutput {
 		for _, device := range devices {
 			if device.Name == outputName {
 				outputDevice = device
