@@ -1,13 +1,65 @@
 package igate
 
 import (
-    "testing"
-    "time"
+	"testing"
+	"time"
 
-    "github.com/oorrwullie/go-igate/internal/aprs"
-    "github.com/oorrwullie/go-igate/internal/log"
-    "github.com/oorrwullie/go-igate/internal/transmitter"
+	"github.com/oorrwullie/go-igate/internal/aprs"
+	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/oorrwullie/go-igate/internal/transmitter"
 )
+
+func TestWaitForQuietUsesQuietDeadlineNotRetryInterval(t *testing.T) {
+	oldQuiet := beaconChannelQuiet
+	oldRetry := beaconRetryInterval
+	defer func() {
+		beaconChannelQuiet = oldQuiet
+		beaconRetryInterval = oldRetry
+	}()
+	beaconChannelQuiet = 25 * time.Millisecond
+	beaconRetryInterval = 5 * time.Second
+
+	ig := &IGate{
+		lastRx: time.Now(),
+		stop:   make(chan struct{}),
+	}
+	started := time.Now()
+	if !ig.waitForQuiet(beaconChannelQuiet) {
+		t.Fatal("waitForQuiet() returned false")
+	}
+	if elapsed := time.Since(started); elapsed > 250*time.Millisecond {
+		t.Fatalf("waitForQuiet() took %s; expected it to wait only for the quiet interval", elapsed)
+	}
+}
+
+func TestSendRFDoesNotWaitForBeaconQuiet(t *testing.T) {
+	oldQuiet := beaconChannelQuiet
+	defer func() { beaconChannelQuiet = oldQuiet }()
+	beaconChannelQuiet = 5 * time.Second
+
+	tx := &transmitter.Tx{Chan: make(chan string, 1)}
+	ig := &IGate{
+		tx:     tx,
+		stop:   make(chan struct{}),
+		lastRx: time.Now(),
+	}
+	done := make(chan bool, 1)
+	go func() { done <- ig.SendRF("N0CALL>APRS,WIDE1-1*:test") }()
+
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("SendRF() returned false")
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("digipeater RF send waited for the beacon quiet interval")
+	}
+	select {
+	case <-tx.Chan:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("digipeater RF frame was not queued")
+	}
+}
 
 func setTestBeaconTimings() func() {
 	origQuiet := beaconChannelQuiet

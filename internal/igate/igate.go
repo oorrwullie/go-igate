@@ -58,6 +58,8 @@ type (
 		digiRewriter           *digipeater.Rewriter
 		localStationsMu        sync.Mutex
 		localStations          map[string]time.Time
+		rfMessagesMu           sync.Mutex
+		rfMessages             map[string]time.Time
 		internetStations       map[string]time.Time
 		internetPositions      map[string]*aprs.Packet
 		internetPositionTimes  map[string]time.Time
@@ -182,6 +184,7 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		lastRx:                 time.Now(),
 		beaconWaits:            make(map[string]*beaconWait),
 		localStations:          make(map[string]time.Time),
+		rfMessages:             make(map[string]time.Time),
 		internetStations:       make(map[string]time.Time),
 		internetPositions:      make(map[string]*aprs.Packet),
 		internetPositionTimes:  make(map[string]time.Time),
@@ -289,6 +292,9 @@ func (i *IGate) listenForMessages() error {
 				i.logger.Error(err, "Could not parse APRS packet: ", msg)
 				continue
 			}
+			if packet.Type() != aprs.ThirdPartyTraffic {
+				i.rememberRFMessage(packet)
+			}
 
 			if packet.HasForbiddenRFPath() {
 				i.logger.Debug("Skipping RF packet with forbidden path marker: ", msg)
@@ -395,6 +401,51 @@ func (i *IGate) localStationRecentlyHeard(callsign string) bool {
 	}
 
 	return true
+}
+
+func (i *IGate) rememberRFMessage(packet *aprs.Packet) {
+	if packet == nil {
+		return
+	}
+	destination, ok := packet.MessageDestination()
+	if !ok {
+		return
+	}
+	key := messageKey(packet, destination)
+	now := time.Now()
+	window := i.cfg.MessageDedupWindow
+	if window <= 0 {
+		window = time.Minute
+	}
+
+	i.rfMessagesMu.Lock()
+	defer i.rfMessagesMu.Unlock()
+	if i.rfMessages == nil {
+		i.rfMessages = make(map[string]time.Time)
+	}
+	for cachedKey, seen := range i.rfMessages {
+		if now.Sub(seen) >= window {
+			delete(i.rfMessages, cachedKey)
+		}
+	}
+	i.rfMessages[key] = now
+}
+
+func (i *IGate) rfMessageRecentlyHeard(key string) bool {
+	window := i.cfg.MessageDedupWindow
+	if window <= 0 {
+		window = time.Minute
+	}
+	now := time.Now()
+	i.rfMessagesMu.Lock()
+	defer i.rfMessagesMu.Unlock()
+	for cachedKey, seen := range i.rfMessages {
+		if now.Sub(seen) >= window {
+			delete(i.rfMessages, cachedKey)
+		}
+	}
+	seen, ok := i.rfMessages[key]
+	return ok && now.Sub(seen) < window
 }
 
 func (i *IGate) rememberInternetStation(packet *aprs.Packet) {
@@ -618,6 +669,11 @@ func (i *IGate) gateMessagesToRF() error {
 			if !ok {
 				continue
 			}
+			if i.rfMessageRecentlyHeard(dueKey) {
+				i.logger.Debug("Skipping APRS-IS message already heard on RF: ", dueKey)
+				delete(i.pendingGatedMessages, dueKey)
+				continue
+			}
 			if i.internetGatedMessageRecentlySeen(dueKey) {
 				delete(i.pendingGatedMessages, dueKey)
 				continue
@@ -675,6 +731,10 @@ func (i *IGate) gateMessagesToRF() error {
 				continue
 			}
 			key := messageKey(packet, destination)
+			if i.rfMessageRecentlyHeard(key) {
+				i.logger.Debug("Skipping APRS-IS message already heard on RF: ", key)
+				continue
+			}
 			if i.internetGatedMessageRecentlySeen(key) {
 				continue
 			}
@@ -705,9 +765,8 @@ func hasNoGateMarker(packet *aprs.Packet) bool {
 	return false
 }
 
-// SendRF queues a frame through the IGate's shared RF scheduler. Digipeated
-// traffic uses this same path when an IGate is present, so it cannot bypass
-// carrier-sense waiting or the transmitter serialization.
+// SendRF queues an RF frame immediately. RF digipeats have already been
+// received locally and should not wait for the beacon channel-quiet policy.
 func (i *IGate) SendRF(frame string) bool {
 	return i.sendRFFrames([]string{frame})
 }
@@ -718,9 +777,26 @@ func (i *IGate) sendRFFrames(frames []string) bool {
 	}
 	i.rfTxMu.Lock()
 	defer i.rfTxMu.Unlock()
+	return i.queueRFFrames(frames)
+}
+
+func (i *IGate) sendRFFramesWhenQuiet(frames []string) bool {
+	if i.tx == nil || len(frames) == 0 {
+		return false
+	}
+	waitStarted := time.Now()
 	if !i.waitForQuiet(beaconChannelQuiet) {
 		return false
 	}
+	if waited := time.Since(waitStarted); waited >= 250*time.Millisecond {
+		i.logger.Debug("Waited ", waited, " for RF channel quiet before queuing ", len(frames), " frame(s)")
+	}
+	i.rfTxMu.Lock()
+	defer i.rfTxMu.Unlock()
+	return i.queueRFFrames(frames)
+}
+
+func (i *IGate) queueRFFrames(frames []string) bool {
 	for _, frame := range frames {
 		if !i.tx.SendUntil(frame, i.stop) {
 			return false
@@ -1032,6 +1108,20 @@ func (i *IGate) channelQuietFor(duration time.Duration) bool {
 	return time.Since(i.lastRx) >= duration
 }
 
+func (i *IGate) channelQuietRemaining(duration time.Duration) time.Duration {
+	i.lastRxMu.Lock()
+	defer i.lastRxMu.Unlock()
+
+	if i.lastRx.IsZero() {
+		return 0
+	}
+	remaining := duration - time.Since(i.lastRx)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
 func (i *IGate) recordBeaconAttempt(t time.Time) {
 	if t.IsZero() {
 		t = time.Now()
@@ -1082,7 +1172,7 @@ func (i *IGate) sendBeaconRf(frame, payload string, allowRetry bool) {
 		key, outcomeCh := i.expectBeacon(frame, payload, sendStart)
 
 		i.logger.Info("Beacon -> RF: ", frame)
-		if !i.sendRFFrames([]string{frame}) {
+		if !i.sendRFFramesWhenQuiet([]string{frame}) {
 			i.clearBeaconExpectation(key, outcomeCh)
 			return
 		}
@@ -1115,11 +1205,11 @@ func (i *IGate) sendBeaconRf(frame, payload string, allowRetry bool) {
 
 func (i *IGate) waitForQuiet(duration time.Duration) bool {
 	for {
-		if i.channelQuietFor(duration) {
+		remaining := i.channelQuietRemaining(duration)
+		if remaining == 0 && i.channelQuietFor(duration) {
 			return true
 		}
-
-		if !i.sleepWithStop(beaconRetryInterval) {
+		if !i.sleepWithStop(remaining) {
 			return false
 		}
 	}

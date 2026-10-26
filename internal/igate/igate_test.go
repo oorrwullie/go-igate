@@ -622,6 +622,52 @@ func TestGateMessagesToRFCancelsWhenAnotherIGateGatesFirst(t *testing.T) {
 	}
 }
 
+func TestGateMessagesToRFCancelsWhenMessageWasHeardOnRF(t *testing.T) {
+	inbound := make(chan string, 1)
+	tx := &transmitter.Tx{Chan: make(chan string, 1)}
+	ig := &IGate{
+		cfg: config.IGate{
+			LocalStationTimeout: time.Hour,
+			MessageGateDelay:    100 * time.Millisecond,
+			MessageDedupWindow:  time.Minute,
+		},
+		callSign:              "IGATE-1",
+		tx:                    tx,
+		Aprsis:                &aprs.AprsIs{Inbound: inbound},
+		stop:                  make(chan struct{}),
+		localStations:         map[string]time.Time{"N0CALL-10": time.Now()},
+		internetStations:      make(map[string]time.Time),
+		internetPositions:     make(map[string]*aprs.Packet),
+		internetPositionTimes: make(map[string]time.Time),
+		internetGatedMessages: make(map[string]time.Time),
+		pendingGatedMessages:  make(map[string]pendingGatedMessage),
+		logger:                mustLogger(t),
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- ig.gateMessagesToRF() }()
+	inbound <- "REMOTE>APRS::N0CALL-10:hello{01}"
+
+	rfPacket, err := aprs.ParsePacket("REMOTE>APRS::N0CALL-10:hello{01}")
+	if err != nil {
+		t.Fatalf("failed to parse RF message: %v", err)
+	}
+	ig.rememberRFMessage(rfPacket)
+
+	select {
+	case got := <-tx.Chan:
+		t.Fatalf("message heard locally on RF was gated again: %q", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(ig.stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateMessagesToRF did not stop")
+	}
+}
+
 func TestSendBeaconRfAssumesSuccessAfterTimeout(t *testing.T) {
 	logger := mustLogger(t)
 
