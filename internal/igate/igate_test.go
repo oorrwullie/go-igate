@@ -646,13 +646,18 @@ func TestGateMessagesToRFCancelsWhenMessageWasHeardOnRF(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() { done <- ig.gateMessagesToRF() }()
+	// Block RF admission until after the message's configured gate delay. This
+	// forces the RF duplicate to arrive after the initial timer check but before
+	// the message can enter the transmitter queue.
+	ig.rfTxMu.Lock()
 	inbound <- "REMOTE>APRS::N0CALL-10:hello{01}"
-
 	rfPacket, err := aprs.ParsePacket("REMOTE>APRS::N0CALL-10:hello{01}")
 	if err != nil {
 		t.Fatalf("failed to parse RF message: %v", err)
 	}
+	time.Sleep(150 * time.Millisecond)
 	ig.rememberRFMessage(rfPacket)
+	ig.rfTxMu.Unlock()
 
 	select {
 	case got := <-tx.Chan:
@@ -665,6 +670,31 @@ func TestGateMessagesToRFCancelsWhenMessageWasHeardOnRF(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("gateMessagesToRF did not stop")
+	}
+}
+
+func TestRememberRFMessageFromThirdPartyPacket(t *testing.T) {
+	ig := &IGate{cfg: config.IGate{MessageDedupWindow: time.Minute}}
+	key := "REMOTE>N0CALL-10::N0CALL-10:hello{01}"
+
+	packet, err := aprs.ParsePacket("OTHER>APRS,WIDE1-1:}REMOTE>APRS,TCPIP,OTHER*::N0CALL-10:hello{01}")
+	if err != nil {
+		t.Fatalf("failed to parse third-party RF packet: %v", err)
+	}
+	ig.rememberRFMessageFromRFPacket(packet)
+	if !ig.rfMessageRecentlyHeard(key) {
+		t.Fatal("message wrapped by another i-gate was not remembered from RF")
+	}
+
+	// A third-party packet without an Internet-origin marker must not be
+	// treated as proof that an APRS-IS message was already sent over RF.
+	other, err := aprs.ParsePacket("OTHER>APRS,WIDE1-1:}OTHER2>APRS,WIDE1-1::N0CALL-10:other{02}")
+	if err != nil {
+		t.Fatalf("failed to parse unrelated third-party RF packet: %v", err)
+	}
+	ig.rememberRFMessageFromRFPacket(other)
+	if ig.rfMessageRecentlyHeard("OTHER2>N0CALL-10::N0CALL-10:other{02}") {
+		t.Fatal("third-party packet without TCPIP path was incorrectly remembered")
 	}
 }
 

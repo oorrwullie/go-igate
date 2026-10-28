@@ -61,6 +61,48 @@ func TestSendRFDoesNotWaitForBeaconQuiet(t *testing.T) {
 	}
 }
 
+func TestSendRFWhenQuietRechecksAfterWaitingForTransmitter(t *testing.T) {
+	oldQuiet := beaconChannelQuiet
+	defer func() { beaconChannelQuiet = oldQuiet }()
+	beaconChannelQuiet = 80 * time.Millisecond
+
+	tx := &transmitter.Tx{Chan: make(chan string, 1)}
+	ig := &IGate{
+		tx:     tx,
+		stop:   make(chan struct{}),
+		lastRx: time.Now().Add(-time.Second),
+	}
+
+	// Hold transmitter admission so a reception can make the earlier quiet
+	// result stale before the beacon is admitted.
+	ig.rfTxMu.Lock()
+	done := make(chan bool, 1)
+	go func() { done <- ig.sendRFFramesWhenQuiet([]string{"N0CALL>APRS:beacon"}) }()
+	time.Sleep(20 * time.Millisecond)
+	ig.lastRxMu.Lock()
+	ig.lastRx = time.Now()
+	ig.lastRxMu.Unlock()
+	unlockAt := time.Now()
+	ig.rfTxMu.Unlock()
+
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("sendRFFramesWhenQuiet() returned false")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("beacon was not admitted after the fresh quiet interval")
+	}
+	if elapsed := time.Since(unlockAt); elapsed < beaconChannelQuiet-10*time.Millisecond {
+		t.Fatalf("beacon was admitted after %s; expected a fresh quiet interval", elapsed)
+	}
+	select {
+	case <-tx.Chan:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("beacon frame was not queued")
+	}
+}
+
 func setTestBeaconTimings() func() {
 	origQuiet := beaconChannelQuiet
 	origRetry := beaconRetryInterval
