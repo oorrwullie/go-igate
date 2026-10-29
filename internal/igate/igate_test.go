@@ -673,6 +673,65 @@ func TestGateMessagesToRFCancelsWhenMessageWasHeardOnRF(t *testing.T) {
 	}
 }
 
+func TestGateMessagesToRFCancelsWhenRFMessageArrivesWhileQueueIsFull(t *testing.T) {
+	inbound := make(chan string, 1)
+	tx := &transmitter.Tx{Chan: make(chan string, 1)}
+	tx.Chan <- "already queued"
+	ig := &IGate{
+		cfg: config.IGate{
+			LocalStationTimeout: time.Hour,
+			MessageGateDelay:    40 * time.Millisecond,
+			MessageDedupWindow:  time.Minute,
+		},
+		callSign:              "IGATE-1",
+		tx:                    tx,
+		Aprsis:                &aprs.AprsIs{Inbound: inbound},
+		stop:                  make(chan struct{}),
+		localStations:         map[string]time.Time{"N0CALL-10": time.Now()},
+		internetStations:      make(map[string]time.Time),
+		internetPositions:     make(map[string]*aprs.Packet),
+		internetPositionTimes: make(map[string]time.Time),
+		internetGatedMessages: make(map[string]time.Time),
+		pendingGatedMessages:  make(map[string]pendingGatedMessage),
+		logger:                mustLogger(t),
+	}
+	done := make(chan error, 1)
+	go func() { done <- ig.gateMessagesToRF() }()
+	inbound <- "REMOTE>APRS::N0CALL-10:hello{01}"
+
+	// Let the APRS-IS message reach the full transmitter queue before recording
+	// the same message from RF. The receiver must remain able to record it while
+	// the gated send waits for queue space.
+	time.Sleep(120 * time.Millisecond)
+	rfPacket, err := aprs.ParsePacket("REMOTE>APRS::N0CALL-10:hello{01}")
+	if err != nil {
+		t.Fatalf("failed to parse RF message: %v", err)
+	}
+	recorded := make(chan struct{})
+	go func() {
+		ig.rememberRFMessage(rfPacket)
+		close(recorded)
+	}()
+	select {
+	case <-recorded:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("RF reception could not record a duplicate while the transmit queue was full")
+	}
+	<-tx.Chan
+
+	select {
+	case got := <-tx.Chan:
+		t.Fatalf("message heard on RF while the queue was full was gated: %q", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(ig.stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateMessagesToRF did not stop")
+	}
+}
+
 func TestRememberRFMessageFromThirdPartyPacket(t *testing.T) {
 	ig := &IGate{cfg: config.IGate{MessageDedupWindow: time.Minute}}
 	key := "REMOTE>N0CALL-10::N0CALL-10:hello{01}"

@@ -804,20 +804,34 @@ func (i *IGate) sendRFFramesUnlessRFMessage(frames []string, key string) (sent, 
 	if i.tx == nil || len(frames) == 0 {
 		return false, false
 	}
-	i.rfTxMu.Lock()
-	defer i.rfTxMu.Unlock()
 	window := i.cfg.MessageDedupWindow
 	if window <= 0 {
 		window = time.Minute
 	}
-	// Keep the RF-message lock through queue admission so reception cannot
-	// record a duplicate between the final check and queueing the frame.
-	i.rfMessagesMu.Lock()
-	defer i.rfMessagesMu.Unlock()
-	if i.rfMessageRecentlyHeardLocked(key, time.Now(), window) {
-		return false, true
+	for _, frame := range frames {
+		for {
+			i.rfTxMu.Lock()
+			// The queue attempt is nonblocking, so checking and queueing while
+			// holding the RF-message lock leaves reception free whenever space is
+			// unavailable.
+			i.rfMessagesMu.Lock()
+			if i.rfMessageRecentlyHeardLocked(key, time.Now(), window) {
+				i.rfMessagesMu.Unlock()
+				i.rfTxMu.Unlock()
+				return false, true
+			}
+			queued := i.tx.TrySend(frame)
+			i.rfMessagesMu.Unlock()
+			i.rfTxMu.Unlock()
+			if queued {
+				break
+			}
+			if !i.waitForTransmitQueueSlot() {
+				return false, false
+			}
+		}
 	}
-	return i.queueRFFrames(frames), false
+	return true, false
 }
 
 func (i *IGate) sendRFFramesWhenQuiet(frames []string) bool {
@@ -825,24 +839,45 @@ func (i *IGate) sendRFFramesWhenQuiet(frames []string) bool {
 		return false
 	}
 	waitStarted := time.Now()
-	for {
-		if !i.waitForQuiet(beaconChannelQuiet) {
-			return false
-		}
-		i.rfTxMu.Lock()
-		// The wait can go stale while we wait for another RF sender to finish.
-		// Recheck while holding the admission lock before putting the beacon in
-		// the transmitter queue.
-		if !i.channelQuietFor(beaconChannelQuiet) {
+	for _, frame := range frames {
+		for {
+			if !i.waitForQuiet(beaconChannelQuiet) {
+				return false
+			}
+			i.rfTxMu.Lock()
+			// Hold the receive timestamp only around a nonblocking enqueue. This
+			// makes the quiet check current at admission without blocking RX while
+			// the transmitter queue is full.
+			i.lastRxMu.Lock()
+			quiet := i.lastRx.IsZero() || time.Since(i.lastRx) >= beaconChannelQuiet
+			queued := quiet && i.tx.TrySend(frame)
+			i.lastRxMu.Unlock()
 			i.rfTxMu.Unlock()
-			continue
+			if queued {
+				if waited := time.Since(waitStarted); waited >= 250*time.Millisecond {
+					i.logger.Debug("Waited ", waited, " for RF channel quiet before queuing ", len(frames), " frame(s)")
+				}
+				break
+			}
+			if !quiet {
+				continue
+			}
+			if !i.waitForTransmitQueueSlot() {
+				return false
+			}
 		}
-		if waited := time.Since(waitStarted); waited >= 250*time.Millisecond {
-			i.logger.Debug("Waited ", waited, " for RF channel quiet before queuing ", len(frames), " frame(s)")
-		}
-		queued := i.queueRFFrames(frames)
-		i.rfTxMu.Unlock()
-		return queued
+	}
+	return true
+}
+
+func (i *IGate) waitForTransmitQueueSlot() bool {
+	timer := time.NewTimer(10 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-i.stop:
+		return false
+	case <-timer.C:
+		return true
 	}
 }
 
