@@ -110,18 +110,33 @@ func (t *Tx) Send(msg string) {
 // SendUntil queues a frame unless stop is closed first. A nil stop channel
 // retains the historical blocking behavior used by simple callers.
 func (t *Tx) SendUntil(msg string, stop <-chan struct{}) bool {
+	for {
+		if t.TrySend(msg) {
+			return true
+		}
+		timer := time.NewTimer(10 * time.Millisecond)
+		if stop == nil {
+			<-timer.C
+			continue
+		}
+		select {
+		case <-stop:
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+	}
+}
+
+// TrySend queues msg only when a channel slot is immediately available.
+func (t *Tx) TrySend(msg string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-
-	if stop == nil {
-		t.Chan <- msg
-		return true
-	}
 	select {
-	case <-stop:
-		return false
 	case t.Chan <- msg:
 		return true
+	default:
+		return false
 	}
 }
 
