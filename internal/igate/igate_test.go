@@ -622,6 +622,141 @@ func TestGateMessagesToRFCancelsWhenAnotherIGateGatesFirst(t *testing.T) {
 	}
 }
 
+func TestGateMessagesToRFCancelsWhenMessageWasHeardOnRF(t *testing.T) {
+	inbound := make(chan string, 1)
+	tx := &transmitter.Tx{Chan: make(chan string, 1)}
+	ig := &IGate{
+		cfg: config.IGate{
+			LocalStationTimeout: time.Hour,
+			MessageGateDelay:    100 * time.Millisecond,
+			MessageDedupWindow:  time.Minute,
+		},
+		callSign:              "IGATE-1",
+		tx:                    tx,
+		Aprsis:                &aprs.AprsIs{Inbound: inbound},
+		stop:                  make(chan struct{}),
+		localStations:         map[string]time.Time{"N0CALL-10": time.Now()},
+		internetStations:      make(map[string]time.Time),
+		internetPositions:     make(map[string]*aprs.Packet),
+		internetPositionTimes: make(map[string]time.Time),
+		internetGatedMessages: make(map[string]time.Time),
+		pendingGatedMessages:  make(map[string]pendingGatedMessage),
+		logger:                mustLogger(t),
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- ig.gateMessagesToRF() }()
+	// Block RF admission until after the message's configured gate delay. This
+	// forces the RF duplicate to arrive after the initial timer check but before
+	// the message can enter the transmitter queue.
+	ig.rfTxMu.Lock()
+	inbound <- "REMOTE>APRS::N0CALL-10:hello{01}"
+	rfPacket, err := aprs.ParsePacket("REMOTE>APRS::N0CALL-10:hello{01}")
+	if err != nil {
+		t.Fatalf("failed to parse RF message: %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	ig.rememberRFMessage(rfPacket)
+	ig.rfTxMu.Unlock()
+
+	select {
+	case got := <-tx.Chan:
+		t.Fatalf("message heard locally on RF was gated again: %q", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(ig.stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateMessagesToRF did not stop")
+	}
+}
+
+func TestGateMessagesToRFCancelsWhenRFMessageArrivesWhileQueueIsFull(t *testing.T) {
+	inbound := make(chan string, 1)
+	tx := &transmitter.Tx{Chan: make(chan string, 1)}
+	tx.Chan <- "already queued"
+	ig := &IGate{
+		cfg: config.IGate{
+			LocalStationTimeout: time.Hour,
+			MessageGateDelay:    40 * time.Millisecond,
+			MessageDedupWindow:  time.Minute,
+		},
+		callSign:              "IGATE-1",
+		tx:                    tx,
+		Aprsis:                &aprs.AprsIs{Inbound: inbound},
+		stop:                  make(chan struct{}),
+		localStations:         map[string]time.Time{"N0CALL-10": time.Now()},
+		internetStations:      make(map[string]time.Time),
+		internetPositions:     make(map[string]*aprs.Packet),
+		internetPositionTimes: make(map[string]time.Time),
+		internetGatedMessages: make(map[string]time.Time),
+		pendingGatedMessages:  make(map[string]pendingGatedMessage),
+		logger:                mustLogger(t),
+	}
+	done := make(chan error, 1)
+	go func() { done <- ig.gateMessagesToRF() }()
+	inbound <- "REMOTE>APRS::N0CALL-10:hello{01}"
+
+	// Let the APRS-IS message reach the full transmitter queue before recording
+	// the same message from RF. The receiver must remain able to record it while
+	// the gated send waits for queue space.
+	time.Sleep(120 * time.Millisecond)
+	rfPacket, err := aprs.ParsePacket("REMOTE>APRS::N0CALL-10:hello{01}")
+	if err != nil {
+		t.Fatalf("failed to parse RF message: %v", err)
+	}
+	recorded := make(chan struct{})
+	go func() {
+		ig.rememberRFMessage(rfPacket)
+		close(recorded)
+	}()
+	select {
+	case <-recorded:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("RF reception could not record a duplicate while the transmit queue was full")
+	}
+	<-tx.Chan
+
+	select {
+	case got := <-tx.Chan:
+		t.Fatalf("message heard on RF while the queue was full was gated: %q", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(ig.stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("gateMessagesToRF did not stop")
+	}
+}
+
+func TestRememberRFMessageFromThirdPartyPacket(t *testing.T) {
+	ig := &IGate{cfg: config.IGate{MessageDedupWindow: time.Minute}}
+	key := "REMOTE>N0CALL-10::N0CALL-10:hello{01}"
+
+	packet, err := aprs.ParsePacket("OTHER>APRS,WIDE1-1:}REMOTE>APRS,TCPIP,OTHER*::N0CALL-10:hello{01}")
+	if err != nil {
+		t.Fatalf("failed to parse third-party RF packet: %v", err)
+	}
+	ig.rememberRFMessageFromRFPacket(packet)
+	if !ig.rfMessageRecentlyHeard(key) {
+		t.Fatal("message wrapped by another i-gate was not remembered from RF")
+	}
+
+	// A third-party packet without an Internet-origin marker must not be
+	// treated as proof that an APRS-IS message was already sent over RF.
+	other, err := aprs.ParsePacket("OTHER>APRS,WIDE1-1:}OTHER2>APRS,WIDE1-1::N0CALL-10:other{02}")
+	if err != nil {
+		t.Fatalf("failed to parse unrelated third-party RF packet: %v", err)
+	}
+	ig.rememberRFMessageFromRFPacket(other)
+	if ig.rfMessageRecentlyHeard("OTHER2>N0CALL-10::N0CALL-10:other{02}") {
+		t.Fatal("third-party packet without TCPIP path was incorrectly remembered")
+	}
+}
+
 func TestSendBeaconRfAssumesSuccessAfterTimeout(t *testing.T) {
 	logger := mustLogger(t)
 
@@ -675,7 +810,7 @@ func TestSendBeaconRfAssumesSuccessAfterTimeout(t *testing.T) {
 		t.Fatalf("sendBeaconRf did not return after timeout")
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func TestStartBeaconSequencesAprsIsBeforeRf(t *testing.T) {
@@ -756,8 +891,7 @@ func TestStartBeaconSequencesAprsIsBeforeRf(t *testing.T) {
 	}
 	aprsMu.Unlock()
 
-	close(ig.stop)
-	time.Sleep(10 * time.Millisecond)
+	stopBeaconAndWait(ig)
 }
 
 func TestQueryAprsFiSuccess(t *testing.T) {
@@ -892,7 +1026,7 @@ func TestAprsFiWatchdogTriggersBeacon(t *testing.T) {
 		t.Fatalf("expected watchdog beacon frame, got %q", got)
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func TestAprsFiWatchdogSkipsWhenRecent(t *testing.T) {
@@ -938,7 +1072,7 @@ func TestAprsFiWatchdogSkipsWhenRecent(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func TestAprsFiWatchdogSkipsDueToRecentAttempt(t *testing.T) {
@@ -987,7 +1121,7 @@ func TestAprsFiWatchdogSkipsDueToRecentAttempt(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func TestAprsFiWatchdogRetriesWhenAprsFiMissesRecentAttempt(t *testing.T) {
@@ -1038,7 +1172,7 @@ func TestAprsFiWatchdogRetriesWhenAprsFiMissesRecentAttempt(t *testing.T) {
 		t.Fatalf("expected watchdog beacon when aprs.fi misses recent attempt, got %q", got)
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -1092,7 +1226,7 @@ func TestAprsFiWatchdogFallsBackOnQueryFailure(t *testing.T) {
 		t.Fatalf("expected watchdog beacon on aprs.fi query failure, got %q", got)
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func mustLogger(t *testing.T) *log.Logger {
@@ -1104,4 +1238,12 @@ func mustLogger(t *testing.T) *log.Logger {
 	}
 
 	return logger
+}
+
+// stopBeaconAndWait closes the beacon stop channel and joins any RF beacon
+// transmission already started by the test before timing globals are restored.
+func stopBeaconAndWait(ig *IGate) {
+	close(ig.stop)
+	ig.rfBeaconMu.Lock()
+	ig.rfBeaconMu.Unlock()
 }
