@@ -834,7 +834,7 @@ func (i *IGate) sendRFFramesUnlessRFMessage(frames []string, key string) (sent, 
 	return true, false
 }
 
-func (i *IGate) sendRFFramesWhenQuiet(frames []string) bool {
+func (i *IGate) sendRFFramesWhenQuiet(frames []string, onAdmission ...func()) bool {
 	if i.tx == nil || len(frames) == 0 {
 		return false
 	}
@@ -851,6 +851,9 @@ func (i *IGate) sendRFFramesWhenQuiet(frames []string) bool {
 			i.lastRxMu.Lock()
 			quiet := i.lastRx.IsZero() || time.Since(i.lastRx) >= beaconChannelQuiet
 			queued := quiet && i.tx.TrySend(frame)
+			if queued && len(onAdmission) > 0 && onAdmission[0] != nil {
+				onAdmission[0]()
+			}
 			i.lastRxMu.Unlock()
 			i.rfTxMu.Unlock()
 			if queued {
@@ -1252,15 +1255,24 @@ func (i *IGate) sendBeaconRf(frame, payload string, allowRetry bool) {
 			return
 		}
 
-		sendStart := time.Now()
-		i.recordBeaconAttempt(sendStart)
-		key, outcomeCh := i.expectBeacon(frame, payload, sendStart)
-
-		i.logger.Info("Beacon -> RF: ", frame)
-		if !i.sendRFFramesWhenQuiet([]string{frame}) {
-			i.clearBeaconExpectation(key, outcomeCh)
+		var sendStart time.Time
+		var key string
+		var outcomeCh <-chan bool
+		if !i.sendRFFramesWhenQuiet([]string{frame}, func() {
+			// Register before releasing the receive timestamp lock. The receive
+			// loop marks activity before observing packets, so an immediate local
+			// echo cannot arrive before this expectation exists.
+			sendStart = time.Now()
+			i.recordBeaconAttempt(sendStart)
+			key, outcomeCh = i.expectBeacon(frame, payload, sendStart)
+		}) {
+			if outcomeCh != nil {
+				i.clearBeaconExpectation(key, outcomeCh)
+			}
 			return
 		}
+
+		i.logger.Info("Beacon -> RF: ", frame)
 
 		outcome := i.waitForBeaconOutcome(outcomeCh)
 		i.clearBeaconExpectation(key, outcomeCh)

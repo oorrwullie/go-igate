@@ -146,6 +146,65 @@ func TestSendRFWhenQuietRechecksWhenTransmitterQueueIsFull(t *testing.T) {
 	}
 }
 
+func TestSendBeaconRfDoesNotTreatReceptionWhileWaitingAsCollision(t *testing.T) {
+	oldQuiet := beaconChannelQuiet
+	oldRetry := beaconRetryInterval
+	oldCollision := beaconCollisionWindow
+	oldWarmup := beaconWarmup
+	defer func() {
+		beaconChannelQuiet = oldQuiet
+		beaconRetryInterval = oldRetry
+		beaconCollisionWindow = oldCollision
+		beaconWarmup = oldWarmup
+	}()
+	beaconChannelQuiet = 20 * time.Millisecond
+	beaconRetryInterval = 5 * time.Millisecond
+	beaconCollisionWindow = 200 * time.Millisecond
+	beaconWarmup = 0
+
+	tx := &transmitter.Tx{Chan: make(chan string, 1)}
+	tx.Chan <- "already queued"
+	ig := &IGate{
+		callSign:    "N0CALL-11",
+		enableTx:    true,
+		tx:          tx,
+		logger:      mustLogger(t),
+		stop:        make(chan struct{}),
+		forwardChan: make(chan *aprs.Packet, 1),
+		lastRx:      time.Now().Add(-time.Second),
+	}
+	frame := "N0CALL-11>APRS:Beacon"
+	done := make(chan struct{})
+	go func() {
+		ig.sendBeaconRf(frame, "Beacon", true)
+		close(done)
+	}()
+
+	// The TX queue remains full while an unrelated RF packet is received.
+	time.Sleep(25 * time.Millisecond)
+	ig.markRx()
+	ig.observeBeacon(&aprs.Packet{Src: "OTHER", Payload: "unrelated"})
+	<-tx.Chan
+
+	if got := waitForTx(t, tx, 250*time.Millisecond); got != frame {
+		t.Fatalf("unexpected beacon frame %q", got)
+	}
+	select {
+	case retry := <-tx.Chan:
+		t.Fatalf("unrelated packet heard before beacon admission caused retry %q", retry)
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	ig.markRx()
+	ig.observeBeacon(&aprs.Packet{Src: "N0CALL-11", Payload: "Beacon"})
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sendBeaconRf did not finish after matching local echo")
+	}
+	close(ig.stop)
+}
+
 func setTestBeaconTimings() func() {
 	origQuiet := beaconChannelQuiet
 	origRetry := beaconRetryInterval
