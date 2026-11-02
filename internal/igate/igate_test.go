@@ -810,7 +810,7 @@ func TestSendBeaconRfAssumesSuccessAfterTimeout(t *testing.T) {
 		t.Fatalf("sendBeaconRf did not return after timeout")
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func TestStartBeaconSequencesAprsIsBeforeRf(t *testing.T) {
@@ -891,8 +891,7 @@ func TestStartBeaconSequencesAprsIsBeforeRf(t *testing.T) {
 	}
 	aprsMu.Unlock()
 
-	close(ig.stop)
-	time.Sleep(10 * time.Millisecond)
+	stopBeaconAndWait(ig)
 }
 
 func TestQueryAprsFiSuccess(t *testing.T) {
@@ -1027,7 +1026,7 @@ func TestAprsFiWatchdogTriggersBeacon(t *testing.T) {
 		t.Fatalf("expected watchdog beacon frame, got %q", got)
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func TestAprsFiWatchdogSkipsWhenRecent(t *testing.T) {
@@ -1073,7 +1072,7 @@ func TestAprsFiWatchdogSkipsWhenRecent(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func TestAprsFiWatchdogSkipsDueToRecentAttempt(t *testing.T) {
@@ -1122,7 +1121,7 @@ func TestAprsFiWatchdogSkipsDueToRecentAttempt(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func TestAprsFiWatchdogRetriesWhenAprsFiMissesRecentAttempt(t *testing.T) {
@@ -1173,7 +1172,7 @@ func TestAprsFiWatchdogRetriesWhenAprsFiMissesRecentAttempt(t *testing.T) {
 		t.Fatalf("expected watchdog beacon when aprs.fi misses recent attempt, got %q", got)
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -1227,7 +1226,7 @@ func TestAprsFiWatchdogFallsBackOnQueryFailure(t *testing.T) {
 		t.Fatalf("expected watchdog beacon on aprs.fi query failure, got %q", got)
 	}
 
-	close(ig.stop)
+	stopBeaconAndWait(ig)
 }
 
 func mustLogger(t *testing.T) *log.Logger {
@@ -1239,4 +1238,12 @@ func mustLogger(t *testing.T) *log.Logger {
 	}
 
 	return logger
+}
+
+// stopBeaconAndWait closes the beacon stop channel and joins any RF beacon
+// transmission already started by the test before timing globals are restored.
+func stopBeaconAndWait(ig *IGate) {
+	close(ig.stop)
+	ig.rfBeaconMu.Lock()
+	ig.rfBeaconMu.Unlock()
 }
