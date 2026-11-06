@@ -27,6 +27,7 @@ type Digipeater struct {
 	logger        *log.Logger
 	stop          chan bool
 	sendRF        func(string) bool
+	transmitDelay time.Duration
 }
 
 func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, cfg config.Digipeater, logger *log.Logger) (*Digipeater, error) {
@@ -88,6 +89,11 @@ func (d *Digipeater) SetRFSend(send func(string) bool) {
 	}
 }
 
+// SetTransmitDelay sets a short pause before a decoded packet is queued for RF.
+func (d *Digipeater) SetTransmitDelay(delay time.Duration) {
+	d.transmitDelay = delay
+}
+
 func (d *Digipeater) Run() error {
 	d.logger.Info("Starting digipeater...")
 
@@ -115,8 +121,16 @@ func (d *Digipeater) HandleMessage(msg string) {
 		return
 	}
 
-	d.logger.Info("Digipeating packet: ", txMsg)
-	go d.sendRF(txMsg)
+	go func() {
+		if d.transmitDelay > 0 {
+			time.Sleep(d.transmitDelay)
+		}
+		if !d.sendRF(txMsg) {
+			d.logger.Warn("Failed to queue digipeated packet for RF: ", txMsg)
+			return
+		}
+		d.logger.Info("Queued digipeated packet for RF: ", txMsg)
+	}()
 }
 
 func (d *Digipeater) prepare(msg string) (string, bool) {

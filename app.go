@@ -138,6 +138,10 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	if ig != nil && gateRewriter != nil {
 		ig.SetDigiRewriter(gateRewriter)
 	}
+	if dp != nil && deviceType == "Soundcard" {
+		dp.SetTransmitDelay(100 * time.Millisecond)
+		logger.Info("Using 100ms digipeater delay for sound-card reception")
+	}
 	if ig != nil && dp != nil {
 		dp.SetRFSend(ig.SendRF)
 	}
