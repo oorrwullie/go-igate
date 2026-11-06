@@ -60,6 +60,8 @@ type (
 		localStations          map[string]time.Time
 		rfMessagesMu           sync.Mutex
 		rfMessages             map[string]time.Time
+		localRFTxMu            sync.Mutex
+		localRFTxPackets       map[string]time.Time
 		internetStations       map[string]time.Time
 		internetPositions      map[string]*aprs.Packet
 		internetPositionTimes  map[string]time.Time
@@ -98,6 +100,7 @@ const (
 const forwarderQueueSize = 32
 const defaultAprsFiBaseURL = "https://api.aprs.fi"
 const aprsFiGracePeriod = 10 * time.Second
+const localRFEchoWindow = 10 * time.Second
 
 var rfPathComponentPattern = regexp.MustCompile(`^[A-Z0-9]{1,6}(?:-[A-Z0-9]{1,2})?$`)
 
@@ -185,6 +188,7 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		beaconWaits:            make(map[string]*beaconWait),
 		localStations:          make(map[string]time.Time),
 		rfMessages:             make(map[string]time.Time),
+		localRFTxPackets:       make(map[string]time.Time),
 		internetStations:       make(map[string]time.Time),
 		internetPositions:      make(map[string]*aprs.Packet),
 		internetPositionTimes:  make(map[string]time.Time),
@@ -290,6 +294,10 @@ func (i *IGate) listenForMessages() error {
 			packet, err := aprs.ParsePacket(msg)
 			if err != nil {
 				i.logger.Error(err, "Could not parse APRS packet: ", msg)
+				continue
+			}
+			if i.isRecentLocalRFEcho(packet) {
+				i.logger.Debug("Suppressing APRS-IS upload of locally digipeated RF echo: ", msg)
 				continue
 			}
 			if packet.HasForbiddenRFPath() {
@@ -786,7 +794,61 @@ func hasNoGateMarker(packet *aprs.Packet) bool {
 // SendRF queues an RF frame immediately. RF digipeats have already been
 // received locally and should not wait for the beacon channel-quiet policy.
 func (i *IGate) SendRF(frame string) bool {
-	return i.sendRFFrames([]string{frame})
+	if !i.sendRFFrames([]string{frame}) {
+		return false
+	}
+	if packet, err := aprs.ParsePacket(frame); err == nil {
+		i.rememberLocalRFTx(packet)
+	}
+	return true
+}
+
+func localRFPacketKey(packet *aprs.Packet) string {
+	if packet == nil {
+		return ""
+	}
+	path := make([]string, len(packet.Path))
+	for idx, hop := range packet.Path {
+		path[idx] = strings.ToUpper(strings.TrimSpace(hop))
+	}
+	return strings.ToUpper(strings.TrimSpace(packet.Src)) + ">" +
+		strings.ToUpper(strings.TrimSpace(packet.Dst)) + "," + strings.Join(path, ",") + ":" + packet.Payload
+}
+
+func (i *IGate) rememberLocalRFTx(packet *aprs.Packet) {
+	key := localRFPacketKey(packet)
+	if key == "" {
+		return
+	}
+	now := time.Now()
+	i.localRFTxMu.Lock()
+	defer i.localRFTxMu.Unlock()
+	if i.localRFTxPackets == nil {
+		i.localRFTxPackets = make(map[string]time.Time)
+	}
+	for cachedKey, sent := range i.localRFTxPackets {
+		if now.Sub(sent) >= localRFEchoWindow {
+			delete(i.localRFTxPackets, cachedKey)
+		}
+	}
+	i.localRFTxPackets[key] = now
+}
+
+func (i *IGate) isRecentLocalRFEcho(packet *aprs.Packet) bool {
+	key := localRFPacketKey(packet)
+	if key == "" {
+		return false
+	}
+	now := time.Now()
+	i.localRFTxMu.Lock()
+	defer i.localRFTxMu.Unlock()
+	for cachedKey, sent := range i.localRFTxPackets {
+		if now.Sub(sent) >= localRFEchoWindow {
+			delete(i.localRFTxPackets, cachedKey)
+		}
+	}
+	sent, ok := i.localRFTxPackets[key]
+	return ok && now.Sub(sent) < localRFEchoWindow
 }
 
 func (i *IGate) sendRFFrames(frames []string) bool {

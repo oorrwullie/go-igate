@@ -290,6 +290,62 @@ func TestListenForMessagesSkipsSelfForward(t *testing.T) {
 	}
 }
 
+func TestListenForMessagesDoesNotUploadLocallyDigipeatedEcho(t *testing.T) {
+	logger := mustLogger(t)
+	input := make(chan string, 1)
+	forward := make(chan *aprs.Packet, 1)
+	stop := make(chan struct{})
+	tx := &transmitter.Tx{Chan: make(chan string, 1)}
+
+	ig := &IGate{
+		callSign:    "N0CALL-1",
+		inputChan:   input,
+		forwardChan: forward,
+		stop:        stop,
+		tx:          tx,
+		logger:      logger,
+	}
+
+	frame := "CALL1>APRS,N0CALL-1*,WIDE2-1:/123456h4903.50N/07201.75W-Test message"
+	if !ig.SendRF(frame) {
+		t.Fatal("SendRF() did not queue local digipeat")
+	}
+	if got := <-tx.Chan; got != frame {
+		t.Fatalf("queued frame = %q, want %q", got, frame)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		_ = ig.listenForMessages()
+		close(done)
+	}()
+	original := "CALL1>APRS,WIDE1-1,WIDE2-1:/123456h4903.50N/07201.75W-Test message"
+	input <- original
+	select {
+	case pkt := <-forward:
+		if pkt == nil || !strings.EqualFold(pkt.Src, "CALL1") {
+			t.Fatalf("expected original RF packet to be forwarded, got %#v", pkt)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("original RF packet was not forwarded")
+	}
+
+	input <- frame
+
+	select {
+	case pkt := <-forward:
+		t.Fatalf("locally digipeated echo was forwarded to APRS-IS: %#v", pkt)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(stop)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("listenForMessages did not stop")
+	}
+}
+
 func TestListenForMessagesForwardsSelfWhenEnabled(t *testing.T) {
 	logger := mustLogger(t)
 	input := make(chan string, 1)
