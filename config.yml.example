@@ -28,6 +28,15 @@ soundcard-input-name: ""
 soundcard-output-name: ""
 # set to true to bypass the SDR and use the soundcard input for receive
 soundcard-capture-enabled: false
+# Optional receive source: decoded APRS frames published by OpenWebRX+.
+# When enabled this replaces the SDR/sound-card receive decoder. Keep this
+# broker private because received RF frames will be handled as local RF.
+openwebrx-mqtt:
+  enabled: false
+  broker: tcp://127.0.0.1:1883
+  topic: openwebrx/APRS
+  username: ""
+  password: ""
 sdr:
   #Set to true to enable using an RTL-SDR dongle
   enabled: true
