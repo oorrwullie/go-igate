@@ -76,7 +76,7 @@ func New(cfg config.OpenWebRXMQTT, ps *pubsub.PubSub, packetCache *cache.Cache, 
 }
 
 func (m *MQTT) Stop() {
-	if m != nil && m.client != nil && m.client.IsConnected() {
+	if m != nil && m.client != nil {
 		m.client.Disconnect(250)
 	}
 }
