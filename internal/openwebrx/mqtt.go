@@ -109,9 +109,6 @@ func extractFrame(payload []byte) (string, error) {
 			text = report.Packet
 		}
 		if text == "" {
-			text = report.Raw
-		}
-		if text == "" {
 			text = report.Frame
 		}
 		if text == "" && report.Source != "" && report.Destination != "" && report.Data != "" {
@@ -127,6 +124,9 @@ func extractFrame(payload []byte) (string, error) {
 				path = append(path, component)
 			}
 			text = report.Source + ">" + strings.Join(path, ",") + ":" + report.Data
+		}
+		if text == "" {
+			text = report.Raw
 		}
 	}
 	text = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), "APRS: "))
