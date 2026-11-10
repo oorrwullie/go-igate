@@ -84,6 +84,15 @@ const defaultTxDelay = 300 * time.Millisecond
 var defaultPreambleFlags = preambleFlagsForDelay(defaultTxDelay)
 
 func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.Logger) (*SoundcardCapture, error) {
+	return newSoundcardCapture(cfg, outputChan, logger, cfg.SoundcardCapture || !cfg.Sdr.Enabled)
+}
+
+// NewSoundcardTransmitter creates a playback-only sound-card device.
+func NewSoundcardTransmitter(cfg config.Config, outputChan chan []byte, logger *log.Logger) (*SoundcardCapture, error) {
+	return newSoundcardCapture(cfg, outputChan, logger, false)
+}
+
+func newSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.Logger, receiveEnabled bool) (*SoundcardCapture, error) {
 	var (
 		channelNum = 1
 		bitDepth   = 1
@@ -107,7 +116,7 @@ func NewSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		tailTone:           generateTone(Tone1200Hz, cfg.Transmitter.TxTail),
 		useAplay:           cfg.Transmitter.UseAplay,
 		txAudioLevel:       float32(cfg.Transmitter.AudioLevel),
-		receiveEnabled:     cfg.SoundcardCapture || !cfg.Sdr.Enabled,
+		receiveEnabled:     receiveEnabled,
 		receiveDiagnostics: cfg.Multimon.ReceiveDiagnostics,
 		aplayDevice:        cfg.SoundcardOutputName,
 	}

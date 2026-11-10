@@ -12,6 +12,7 @@ import (
 	"github.com/oorrwullie/go-igate/internal/igate"
 	"github.com/oorrwullie/go-igate/internal/log"
 	multimonpackage "github.com/oorrwullie/go-igate/internal/multimon"
+	openwebrx "github.com/oorrwullie/go-igate/internal/openwebrx"
 	"github.com/oorrwullie/go-igate/internal/pubsub"
 	"github.com/oorrwullie/go-igate/internal/transmitter"
 
@@ -24,6 +25,7 @@ type (
 		captureDevice     capture.Capture
 		captureOutputChan chan []byte
 		multimon          *multimonpackage.Multimon
+		mqttInput         *openwebrx.MQTT
 		transmitter       *transmitter.Transmitter
 		stop              chan bool
 		igate             *igate.IGate
@@ -44,8 +46,10 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		dp                *digipeater.Digipeater
 		captureOutputChan = make(chan []byte, 10)
 		multimon          *multimonpackage.Multimon
+		mqttInput         *openwebrx.MQTT
 		ps                = pubsub.New()
 		soundcard         *capture.SoundcardCapture
+		deviceType        string
 	)
 
 	cfg, err := config.GetConfig()
@@ -53,24 +57,27 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		return nil, err
 	}
 
-	captureDevice, err := capture.New(cfg, captureOutputChan, logger)
-	if err != nil {
-		return nil, fmt.Errorf("Error creating capture device: %v", err)
+	appCache := cache.NewCache(cfg.CacheSize, ".cache.json", 60*time.Second)
+	var captureDevice capture.Capture
+	if cfg.OpenWebRXMQTT.Enabled {
+		mqttInput, err = openwebrx.New(cfg.OpenWebRXMQTT, ps, appCache, logger)
+		if err != nil {
+			return nil, fmt.Errorf("Error starting OpenWebRX+ MQTT input: %w", err)
+		}
+		deviceType = "OpenWebRX+ MQTT"
+	} else {
+		captureDevice, err = capture.New(cfg, captureOutputChan, logger)
+		if err != nil {
+			return nil, fmt.Errorf("Error creating capture device: %v", err)
+		}
+		if captureDevice == nil || isNilCapture(captureDevice) {
+			return nil, fmt.Errorf("Error creating capture device: capture backend initialization returned nil; verify the SDR or soundcard settings")
+		}
+		if err = captureDevice.Start(); err != nil {
+			return nil, fmt.Errorf("Error starting SDR: %v", err)
+		}
+		deviceType = captureDevice.Type()
 	}
-	if captureDevice == nil {
-		return nil, fmt.Errorf("Error creating capture device: capture backend initialization returned nil; verify the SDR or soundcard settings")
-	}
-
-	if isNilCapture(captureDevice) {
-		return nil, fmt.Errorf("Error creating capture device: %T returned a nil pointer; verify the SDR or soundcard settings", captureDevice)
-	}
-
-	err = captureDevice.Start()
-	if err != nil {
-		return nil, fmt.Errorf("Error starting SDR: %v", err)
-	}
-
-	deviceType := captureDevice.Type()
 
 	if cfg.Transmitter.Enabled {
 		if sc, ok := captureDevice.(*capture.SoundcardCapture); ok {
@@ -78,7 +85,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 				return nil, fmt.Errorf("capture device reported type %q but returned a nil implementation", deviceType)
 			}
 			soundcard = sc
-		} else {
+		} else if captureDevice != nil {
 			if deviceType == "Soundcard" {
 				return nil, fmt.Errorf("capture device reported type %q but is %T", deviceType, captureDevice)
 			}
@@ -88,6 +95,15 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 				return nil, fmt.Errorf("Error creating soundcard capture: %v", err)
 			}
 			go soundcard.Start()
+		} else {
+			// In MQTT receive mode, create a transmit-only sound-card device.
+			soundcard, err = capture.NewSoundcardTransmitter(cfg, captureOutputChan, logger)
+			if err != nil {
+				return nil, fmt.Errorf("Error creating transmit soundcard: %v", err)
+			}
+			if err = soundcard.Start(); err != nil {
+				return nil, fmt.Errorf("Error starting transmit soundcard: %v", err)
+			}
 		}
 
 		tx, err = transmitter.New(soundcard, logger)
@@ -97,12 +113,11 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		txHandle = tx.Tx
 	}
 
-	appCache := cache.NewCache(cfg.CacheSize, ".cache.json", 60*time.Second)
-
-	multimon = multimonpackage.New(cfg.Multimon, captureOutputChan, ps, appCache, txHandle, cfg.StationCallsign, logger)
-	err = multimon.Start()
-	if err != nil {
-		return nil, fmt.Errorf("Error starting multimon: %v", err)
+	if captureDevice != nil {
+		multimon = multimonpackage.New(cfg.Multimon, captureOutputChan, ps, appCache, txHandle, cfg.StationCallsign, logger)
+		if err = multimon.Start(); err != nil {
+			return nil, fmt.Errorf("Error starting multimon: %v", err)
+		}
 	}
 
 	if cfg.IGate.Enabled {
@@ -155,6 +170,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		logger:            logger,
 		cache:             appCache,
 		multimon:          multimon,
+		mqttInput:         mqttInput,
 		captureDevice:     captureDevice,
 		digipeater:        dp,
 	}
@@ -184,11 +200,20 @@ func (d *DigiGate) Run() error {
 					d.digipeater.Stop()
 				}
 
-				d.logger.Info("Stopping capture device")
-				d.captureDevice.Stop()
+				if d.captureDevice != nil {
+					d.logger.Info("Stopping capture device")
+					d.captureDevice.Stop()
+				}
 
-				d.logger.Info("Stopping multimon-ng process")
-				d.multimon.Cmd.Process.Kill()
+				if d.multimon != nil && d.multimon.Cmd.Process != nil {
+					d.logger.Info("Stopping multimon-ng process")
+					_ = d.multimon.Cmd.Process.Kill()
+				}
+
+				if d.mqttInput != nil {
+					d.logger.Info("Stopping OpenWebRX+ MQTT input")
+					d.mqttInput.Stop()
+				}
 
 				if d.transmitter != nil {
 					d.logger.Info("Stopping transmitter")
