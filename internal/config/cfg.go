@@ -11,17 +11,18 @@ import (
 
 type (
 	Config struct {
-		Sdr                 Sdr         `yaml:"sdr"`
-		Multimon            Multimon    `yaml:"multimon"`
-		Transmitter         Transmitter `yaml:"transmitter"`
-		IGate               IGate       `yaml:"igate"`
-		DigipeaterEnabled   bool        `yaml:"enable-digipeater"`
-		Digipeater          Digipeater  `yaml:"digipeater"`
-		CacheSize           int         `yaml:"cache-size"`
-		StationCallsign     string      `yaml:"station-callsign"`
-		SoundcardInputName  string      `yaml:"soundcard-input-name"`
-		SoundcardOutputName string      `yaml:"soundcard-output-name"`
-		SoundcardCapture    bool        `yaml:"soundcard-capture-enabled"`
+		Sdr                 Sdr           `yaml:"sdr"`
+		OpenWebRXMQTT       OpenWebRXMQTT `yaml:"openwebrx-mqtt"`
+		Multimon            Multimon      `yaml:"multimon"`
+		Transmitter         Transmitter   `yaml:"transmitter"`
+		IGate               IGate         `yaml:"igate"`
+		DigipeaterEnabled   bool          `yaml:"enable-digipeater"`
+		Digipeater          Digipeater    `yaml:"digipeater"`
+		CacheSize           int           `yaml:"cache-size"`
+		StationCallsign     string        `yaml:"station-callsign"`
+		SoundcardInputName  string        `yaml:"soundcard-input-name"`
+		SoundcardOutputName string        `yaml:"soundcard-output-name"`
+		SoundcardCapture    bool          `yaml:"soundcard-capture-enabled"`
 	}
 
 	IGate struct {
@@ -48,6 +49,14 @@ type (
 		SquelchLevel    string `yaml:"squelch-level"`
 		SampleRate      string `yaml:"sample-rate"`
 		AdditionalFlags string `yaml:"additional-flags"`
+	}
+
+	OpenWebRXMQTT struct {
+		Enabled  bool   `yaml:"enabled"`
+		Broker   string `yaml:"broker"`
+		Topic    string `yaml:"topic"`
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
 	}
 
 	Multimon struct {

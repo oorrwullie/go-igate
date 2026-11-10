@@ -18,6 +18,7 @@ The software is written in Go and uses the [RTL-SDR](http://osmocom.org/projects
 - Log APRS packets to a file.
 - Upload APRS packets to the APRS-IS network.
 - Configurable RTL-SDR device.
+- Optional APRS receive from OpenWebRX+ over MQTT.
 
 ## Getting Started
 First you need to install the dependencies. Make sure you are running the latest version of Go or at least the version specified in the go.mod file.
@@ -33,6 +34,24 @@ To run Go-iGate, the following are required.
 - Go version go1.22.5
 
 ## Usage
+
+### Receiving APRS from OpenWebRX+
+
+OpenWebRX+ can publish decoded APRS reports to MQTT. To use those frames as go-igate's receive source, configure OpenWebRX+ to publish APRS to a broker and set `openwebrx-mqtt` in `config.yml`:
+
+```yaml
+openwebrx-mqtt:
+  enabled: true
+  broker: tcp://127.0.0.1:1883
+  topic: openwebrx/APRS
+  username: ""
+  password: ""
+```
+
+With this enabled, MQTT replaces go-igate's RTL-SDR/sound-card receive decoder. Frames that contain a complete TNC2 packet are passed through the normal iGate and digipeater processing. The configured sound-card transmitter can still be used for RF transmission. Configure the broker and topic to match OpenWebRX+; its APRS report topic is usually `openwebrx/APRS`.
+
+Use a local, access-controlled broker. OpenWebRX+ generally publishes to one MQTT broker, and map.flights' broker is an aircraft feed endpoint rather than an APRS source. If you need both map.flights ADS-B reporting and this APRS input, use a local broker and configure an MQTT bridge for the map.flights feed separately.
+
 ### Installing with make
 
 #### Build the application

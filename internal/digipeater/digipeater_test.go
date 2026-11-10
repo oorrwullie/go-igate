@@ -67,6 +67,28 @@ func TestDigipeaterWideChain(t *testing.T) {
 	}
 }
 
+func TestDigipeaterAppliesTransmitDelay(t *testing.T) {
+	dp, _ := newTestDigipeater(t)
+	dp.SetTransmitDelay(100 * time.Millisecond)
+
+	started := time.Now()
+	queued := make(chan time.Duration, 1)
+	dp.sendRF = func(string) bool {
+		queued <- time.Since(started)
+		return true
+	}
+	dp.HandleMessage("CALL1>APRS,WIDE1-1:/123456h4903.50N/07201.75W-Test message")
+
+	select {
+	case elapsed := <-queued:
+		if elapsed < 100*time.Millisecond {
+			t.Fatalf("digipeat queued after %s; want at least 100ms", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("digipeat was not queued")
+	}
+}
+
 func TestDigipeaterWideHopInsert(t *testing.T) {
 	dp, tx := newTestDigipeater(t)
 
