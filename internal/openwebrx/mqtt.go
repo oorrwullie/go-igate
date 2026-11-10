@@ -88,11 +88,15 @@ func extractFrame(payload []byte) (string, error) {
 	}
 	if strings.HasPrefix(text, "{") {
 		var report struct {
-			Mode   string `json:"mode"`
-			Msg    string `json:"msg"`
-			Packet string `json:"packet"`
-			Raw    string `json:"raw"`
-			Frame  string `json:"frame"`
+			Mode        string   `json:"mode"`
+			Msg         string   `json:"msg"`
+			Packet      string   `json:"packet"`
+			Raw         string   `json:"raw"`
+			Frame       string   `json:"frame"`
+			Source      string   `json:"source"`
+			Destination string   `json:"destination"`
+			Path        []string `json:"path"`
+			Data        string   `json:"data"`
 		}
 		if err := json.Unmarshal(payload, &report); err != nil {
 			return "", fmt.Errorf("invalid JSON report: %w", err)
@@ -109,6 +113,20 @@ func extractFrame(payload []byte) (string, error) {
 		}
 		if text == "" {
 			text = report.Frame
+		}
+		if text == "" && report.Source != "" && report.Destination != "" && report.Data != "" {
+			// OpenWebRX+ publishes APRS as decoded fields rather than a TNC2 line.
+			// Reassemble the packet so the rest of go-igate can process it normally.
+			path := make([]string, 0, len(report.Path)+1)
+			path = append(path, report.Destination)
+			for _, component := range report.Path {
+				component = strings.TrimSpace(component)
+				if component == "" || strings.ContainsAny(component, ">,:\r\n \t") {
+					return "", fmt.Errorf("invalid APRS path component %q", component)
+				}
+				path = append(path, component)
+			}
+			text = report.Source + ">" + strings.Join(path, ",") + ":" + report.Data
 		}
 	}
 	text = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), "APRS: "))
