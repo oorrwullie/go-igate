@@ -71,6 +71,8 @@ The embedded broker binds only to loopback and allows anonymous connections, so 
 
 The feed sends aircraft reports as OpenWebRX+ produces them. The receiver must keep OpenWebRX+'s 1090 MHz ADS-B background decoder running continuously for a continuous feed. This removes the local Mosquitto hop from APRS processing and lets go-igate publish ADS-B directly; it does not change the time OpenWebRX+ takes to decode reports.
 
+When map.flights forwarding is enabled, go-igate logs a once-per-minute ADS-B forwarding summary with incoming reports, completed QoS 0 MQTT publishes, failures, rejected reports, queue drops, queue depth, connection state, and age of the last received report. A completed QoS 0 publish only means go-igate's MQTT client completed the send; MQTT does not confirm that map.flights displayed the aircraft. Check the station page separately for ingestion and display.
+
 ### Installing with make
 
 #### Build the application

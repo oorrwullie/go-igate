@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -23,7 +24,8 @@ import (
 type MQTT struct {
 	client           mqtt.Client
 	server           *mochi.Server
-	mapFlightsClient mqtt.Client
+	mapFlightsClient mapFlightsPublisher
+	mapFlightsMu     sync.RWMutex
 	mapFlights       config.MapFlights
 	aprsTopic        string
 	ps               *pubsub.PubSub
@@ -34,6 +36,35 @@ type MQTT struct {
 	stop             chan struct{}
 	stopOnce         sync.Once
 	workers          sync.WaitGroup
+	adsbStats        adsbForwardStats
+}
+
+func (m *MQTT) setMapFlightsClient(client mapFlightsPublisher) {
+	m.mapFlightsMu.Lock()
+	m.mapFlightsClient = client
+	m.mapFlightsMu.Unlock()
+}
+
+func (m *MQTT) getMapFlightsClient() mapFlightsPublisher {
+	m.mapFlightsMu.RLock()
+	client := m.mapFlightsClient
+	m.mapFlightsMu.RUnlock()
+	return client
+}
+
+type mapFlightsPublisher interface {
+	IsConnected() bool
+	Publish(topic string, qos byte, retained bool, payload interface{}) mqtt.Token
+	Disconnect(quiesce uint)
+}
+
+type adsbForwardStats struct {
+	received       atomic.Uint64
+	published      atomic.Uint64
+	publishFailed  atomic.Uint64
+	rejected       atomic.Uint64
+	dropped        atomic.Uint64
+	lastReceivedAt atomic.Int64
 }
 
 // New connects to an MQTT broker and subscribes to OpenWebRX+'s APRS reports.
@@ -163,8 +194,10 @@ func (m *MQTT) Stop() {
 	if m != nil {
 		m.stopWorkers()
 	}
-	if m != nil && m.mapFlightsClient != nil {
-		m.mapFlightsClient.Disconnect(250)
+	if m != nil {
+		if client := m.getMapFlightsClient(); client != nil {
+			client.Disconnect(250)
+		}
 	}
 }
 
