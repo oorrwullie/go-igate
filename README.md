@@ -37,7 +37,7 @@ To run Go-iGate, the following are required.
 
 ### Receiving APRS from OpenWebRX+
 
-OpenWebRX+ can publish decoded APRS reports to MQTT. To use those frames as go-igate's receive source, configure OpenWebRX+ to publish APRS to a broker and set `openwebrx-mqtt` in `config.yml`:
+OpenWebRX+ can publish decoded APRS reports to MQTT. By default, go-igate subscribes to an existing broker:
 
 ```yaml
 openwebrx-mqtt:
@@ -50,7 +50,26 @@ openwebrx-mqtt:
 
 With this enabled, MQTT replaces go-igate's RTL-SDR/sound-card receive decoder. Frames that contain a complete TNC2 packet are passed through the normal iGate and digipeater processing. The configured sound-card transmitter can still be used for RF transmission. Configure the broker and topic to match OpenWebRX+; its APRS report topic is usually `openwebrx/APRS`.
 
-Use a local, access-controlled broker. OpenWebRX+ generally publishes to one MQTT broker, and map.flights' broker is an aircraft feed endpoint rather than an APRS source. If you need both map.flights ADS-B reporting and this APRS input, use a local broker and configure an MQTT bridge for the map.flights feed separately.
+To remove Mosquitto from the APRS receive path, enable go-igate's embedded broker and point OpenWebRX+ at `127.0.0.1:1884` (SSL off; it is a same-machine connection):
+
+```yaml
+openwebrx-mqtt:
+  enabled: true
+  topic: openwebrx/APRS
+  embedded-broker:
+    enabled: true
+    listen-address: 127.0.0.1:1884
+map-flights:
+  enabled: true
+  broker: ssl://mqtt.map.flights:8883
+  station: N7RIX
+  key: "YOUR_MAP_FLIGHTS_STATION_KEY"
+  topic: openwebrx/ADSB
+```
+
+The embedded broker binds only to loopback and allows anonymous connections, so OpenWebRX+ must run on the same machine. The map.flights station name is sent as the MQTT username and the station key as its password over TLS. go-igate forwards only reports whose topic matches `map-flights.topic` and whose JSON mode is `ADSB`; APRS and other OpenWebRX+ reports stay on the local path. Use a distinct map.flights key for this go-igate connection and disable the old Mosquitto bridge using that key, since map.flights allows one active connection per station key.
+
+The feed sends aircraft reports as OpenWebRX+ produces them. The receiver must keep OpenWebRX+'s 1090 MHz ADS-B background decoder running continuously for a continuous feed. This removes the local Mosquitto hop from APRS processing and lets go-igate publish ADS-B directly; it does not change the time OpenWebRX+ takes to decode reports.
 
 ### Installing with make
 

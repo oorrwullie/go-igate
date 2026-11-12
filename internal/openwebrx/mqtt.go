@@ -5,9 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	mochi "github.com/mochi-mqtt/server/v2"
+	"github.com/mochi-mqtt/server/v2/hooks/auth"
+	"github.com/mochi-mqtt/server/v2/listeners"
+	"github.com/mochi-mqtt/server/v2/packets"
 	"github.com/oorrwullie/go-igate/internal/aprs"
 	"github.com/oorrwullie/go-igate/internal/cache"
 	"github.com/oorrwullie/go-igate/internal/config"
@@ -16,17 +21,35 @@ import (
 )
 
 type MQTT struct {
-	client mqtt.Client
+	client           mqtt.Client
+	server           *mochi.Server
+	mapFlightsClient mqtt.Client
+	mapFlights       config.MapFlights
+	aprsTopic        string
+	ps               *pubsub.PubSub
+	packetCache      *cache.Cache
+	logger           *log.Logger
+	aprsEvents       chan []byte
+	adsbEvents       chan []byte
+	stop             chan struct{}
+	stopOnce         sync.Once
+	workers          sync.WaitGroup
 }
 
 // New connects to an MQTT broker and subscribes to OpenWebRX+'s APRS reports.
-func New(cfg config.OpenWebRXMQTT, ps *pubsub.PubSub, packetCache *cache.Cache, logger *log.Logger) (*MQTT, error) {
-	if strings.TrimSpace(cfg.Broker) == "" {
-		return nil, fmt.Errorf("openwebrx-mqtt.broker is required when OpenWebRX+ MQTT input is enabled")
-	}
+func New(cfg config.OpenWebRXMQTT, mapFlights config.MapFlights, ps *pubsub.PubSub, packetCache *cache.Cache, logger *log.Logger) (*MQTT, error) {
 	topic := strings.TrimSpace(cfg.Topic)
 	if topic == "" {
 		topic = "openwebrx/APRS"
+	}
+	m := newEventProcessor(topic, mapFlights, ps, packetCache, logger)
+	m.startMapFlightsClient()
+	if cfg.EmbeddedBroker.Enabled {
+		return newEmbeddedBroker(cfg, m)
+	}
+	if strings.TrimSpace(cfg.Broker) == "" {
+		m.Stop()
+		return nil, fmt.Errorf("openwebrx-mqtt.broker is required when OpenWebRX+ MQTT input is enabled")
 	}
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
@@ -38,25 +61,24 @@ func New(cfg config.OpenWebRXMQTT, ps *pubsub.PubSub, packetCache *cache.Cache, 
 			logger.Warn("OpenWebRX+ MQTT connection lost: ", err)
 		}).
 		SetOnConnectHandler(func(client mqtt.Client) {
-			token := client.Subscribe(topic, 0, func(_ mqtt.Client, message mqtt.Message) {
-				frame, err := extractFrame(message.Payload())
-				if err != nil {
-					logger.Debug("Ignoring non-APRS OpenWebRX+ MQTT report: ", err)
-					return
-				}
-				if packetCache.Set(frame, time.Now()) {
-					logger.Debug("Suppressing duplicate OpenWebRX+ APRS frame: ", frame)
-					return
-				}
-				logger.Debug("OpenWebRX+ APRS frame: ", frame)
-				logger.Info("packet received: APRS: ", frame)
-				ps.Publish(frame)
-			})
+			token := client.Subscribe(topic, 0, m.handleMQTTMessage)
 			if token.Wait() && token.Error() != nil {
 				logger.Error("Could not subscribe to OpenWebRX+ MQTT topic ", topic, ": ", token.Error())
-				return
+			} else {
+				logger.Info("Subscribed to OpenWebRX+ APRS MQTT topic: ", topic)
 			}
-			logger.Info("Subscribed to OpenWebRX+ APRS MQTT topic: ", topic)
+			if mapFlights.Enabled && !mqttTopicMatches(topic, strings.TrimSpace(mapFlights.Topic)) {
+				adsbTopic := strings.TrimSpace(mapFlights.Topic)
+				if adsbTopic == "" {
+					adsbTopic = "openwebrx/ADSB"
+				}
+				token := client.Subscribe(adsbTopic, 0, m.handleMQTTMessage)
+				if token.Wait() && token.Error() != nil {
+					logger.Error("Could not subscribe to OpenWebRX+ ADS-B MQTT topic ", adsbTopic, ": ", token.Error())
+				} else {
+					logger.Info("Subscribed to OpenWebRX+ ADS-B MQTT topic: ", adsbTopic)
+				}
+			}
 		})
 	if cfg.Username != "" {
 		opts.SetUsername(cfg.Username)
@@ -67,17 +89,82 @@ func New(cfg config.OpenWebRXMQTT, ps *pubsub.PubSub, packetCache *cache.Cache, 
 	token := client.Connect()
 	if !token.WaitTimeout(15 * time.Second) {
 		client.Disconnect(250)
+		m.Stop()
 		return nil, fmt.Errorf("timed out connecting to OpenWebRX+ MQTT broker %q", cfg.Broker)
 	}
 	if err := token.Error(); err != nil {
+		client.Disconnect(250)
+		m.Stop()
 		return nil, fmt.Errorf("connecting to OpenWebRX+ MQTT broker %q: %w", cfg.Broker, err)
 	}
-	return &MQTT{client: client}, nil
+	m.client = client
+	return m, nil
+}
+
+func (m *MQTT) handleMQTTMessage(_ mqtt.Client, message mqtt.Message) {
+	m.enqueue(message.Topic(), message.Payload())
+}
+
+func newEmbeddedBroker(cfg config.OpenWebRXMQTT, m *MQTT) (*MQTT, error) {
+	listenAddress := strings.TrimSpace(cfg.EmbeddedBroker.Listen)
+	if listenAddress == "" {
+		listenAddress = "127.0.0.1:1884"
+	}
+
+	server := mochi.New(&mochi.Options{InlineClient: true})
+	if err := server.AddHook(new(auth.AllowHook), nil); err != nil {
+		m.Stop()
+		return nil, fmt.Errorf("adding embedded MQTT allow hook: %w", err)
+	}
+	if err := server.AddListener(listeners.NewTCP(listeners.Config{ID: "openwebrx", Address: listenAddress})); err != nil {
+		m.Stop()
+		return nil, fmt.Errorf("listening for OpenWebRX+ MQTT on %s: %w", listenAddress, err)
+	}
+
+	if err := server.Subscribe("#", 1, func(_ *mochi.Client, _ packets.Subscription, packet packets.Packet) {
+		m.enqueue(packet.TopicName, packet.Payload)
+	}); err != nil {
+		_ = server.Close()
+		m.Stop()
+		return nil, fmt.Errorf("subscribing embedded MQTT broker to topics: %w", err)
+	}
+
+	go func() {
+		if err := server.Serve(); err != nil {
+			m.logger.Error("Embedded OpenWebRX+ MQTT broker stopped: ", err)
+		}
+	}()
+	m.server = server
+	m.logger.Info("Embedded OpenWebRX+ MQTT broker listening on ", listenAddress, "; APRS topic ", m.aprsTopic)
+	return m, nil
+}
+
+func mqttTopicMatches(filter, topic string) bool {
+	filterParts := strings.Split(filter, "/")
+	topicParts := strings.Split(topic, "/")
+	for index, part := range filterParts {
+		if part == "#" {
+			return index == len(filterParts)-1
+		}
+		if index >= len(topicParts) || (part != "+" && part != topicParts[index]) {
+			return false
+		}
+	}
+	return len(filterParts) == len(topicParts)
 }
 
 func (m *MQTT) Stop() {
 	if m != nil && m.client != nil {
 		m.client.Disconnect(250)
+	}
+	if m != nil && m.server != nil {
+		_ = m.server.Close()
+	}
+	if m != nil {
+		m.stopWorkers()
+	}
+	if m != nil && m.mapFlightsClient != nil {
+		m.mapFlightsClient.Disconnect(250)
 	}
 }
 
