@@ -60,7 +60,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	appCache := cache.NewCache(cfg.CacheSize, ".cache.json", 60*time.Second)
 	var captureDevice capture.Capture
 	if cfg.OpenWebRXMQTT.Enabled {
-		mqttInput, err = openwebrx.New(cfg.OpenWebRXMQTT, ps, appCache, logger)
+		mqttInput, err = openwebrx.New(cfg.OpenWebRXMQTT, cfg.MapFlights, ps, appCache, logger)
 		if err != nil {
 			return nil, fmt.Errorf("Error starting OpenWebRX+ MQTT input: %w", err)
 		}

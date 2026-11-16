@@ -33,10 +33,24 @@ soundcard-capture-enabled: false
 # broker private because received RF frames will be handled as local RF.
 openwebrx-mqtt:
   enabled: false
+  # Legacy mode: subscribe to an already-running broker.
   broker: tcp://127.0.0.1:1883
   topic: openwebrx/APRS
   username: ""
   password: ""
+  # Optional embedded broker: configure OpenWebRX+ to publish to
+  # 127.0.0.1:1884. It binds to loopback only and accepts anonymous clients.
+  embedded-broker:
+    enabled: false
+    listen-address: 127.0.0.1:1884
+# Optional direct ADS-B feed from OpenWebRX+ to map.flights. The MQTT topic
+# must match OpenWebRX+'s topic prefix plus /ADSB (normally openwebrx/ADSB).
+map-flights:
+  enabled: false
+  broker: ssl://mqtt.map.flights:8883
+  station: ""
+  key: ""
+  topic: openwebrx/ADSB
 sdr:
   #Set to true to enable using an RTL-SDR dongle
   enabled: true
