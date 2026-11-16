@@ -1,9 +1,9 @@
-# Description: Configuration file for go-igate
+# Description: Configuration file for Sparky
 # License: MIT
 # Notes: This file is written in YAML format. For more information on YAML, see https://yaml.org/
 
 
-# call-sign of the DigiGate (your call sign including SSID) - e.g. "N0CALL-10"
+# call-sign of the Sparky iGate (including SSID) - e.g. "N0CALL-10"
 station-callsign: ""
 # size of in-memory cache for keeping track of received packets
 cache-size: 1000
@@ -92,7 +92,7 @@ transmitter:
   # Set false to use the PortAudio stream for both input and output.
   use-aplay: true
 igate:
-  # enabled: set to true to enable DigiGate to act as an iGate.
+  # enabled: set to true to enable Sparky to act as an iGate.
   enabled: true
   # enable APRS-IS message gating to stations recently heard directly on RF.
   # This requires a transmitter and uses third-party packet format.

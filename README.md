@@ -1,4 +1,14 @@
-# go-gate APRS Gateway
+<p align="center">
+  <img src="assets/sparky-gopher-mascot.png" alt="Sparky, the Go gopher radio operator" width="260">
+</p>
+
+# Sparky
+
+<p align="center">An APRS and ADS-B radio gateway built with Go.</p>
+
+<p align="center">
+  <img src="assets/sparky-radio-command-center.png" alt="Sparky operating an APRS and ADS-B radio command center" width="900">
+</p>
 
 Receive, decode, log, upload [APRS](http://www.aprs.org/) packets using low cost [RTL-SDR](http://osmocom.org/projects/sdr/wiki/rtl-sdr) devices.
 
@@ -24,7 +34,7 @@ The software is written in Go and uses the [RTL-SDR](http://osmocom.org/projects
 First you need to install the dependencies. Make sure you are running the latest version of Go or at least the version specified in the go.mod file.
 
 ### Dependencies
-To run Go-iGate, the following are required.
+To run Sparky, the following are required.
 
 * An RTL-SDR compatible device.
 * [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr)
@@ -37,7 +47,7 @@ To run Go-iGate, the following are required.
 
 ### Receiving APRS from OpenWebRX+
 
-OpenWebRX+ can publish decoded APRS reports to MQTT. By default, go-igate subscribes to an existing broker:
+OpenWebRX+ can publish decoded APRS reports to MQTT. By default, Sparky subscribes to an existing broker:
 
 ```yaml
 openwebrx-mqtt:
@@ -48,9 +58,9 @@ openwebrx-mqtt:
   password: ""
 ```
 
-With this enabled, MQTT replaces go-igate's RTL-SDR/sound-card receive decoder. Frames that contain a complete TNC2 packet are passed through the normal iGate and digipeater processing. The configured sound-card transmitter can still be used for RF transmission. Configure the broker and topic to match OpenWebRX+; its APRS report topic is usually `openwebrx/APRS`.
+With this enabled, MQTT replaces Sparky's RTL-SDR/sound-card receive decoder. Frames that contain a complete TNC2 packet are passed through the normal iGate and digipeater processing. The configured sound-card transmitter can still be used for RF transmission. Configure the broker and topic to match OpenWebRX+; its APRS report topic is usually `openwebrx/APRS`.
 
-To remove Mosquitto from the APRS receive path, enable go-igate's embedded broker and point OpenWebRX+ at `127.0.0.1:1884` (SSL off; it is a same-machine connection):
+To remove Mosquitto from the APRS receive path, enable Sparky's embedded broker and point OpenWebRX+ at `127.0.0.1:1884` (SSL off; it is a same-machine connection):
 
 ```yaml
 openwebrx-mqtt:
@@ -67,11 +77,11 @@ map-flights:
   topic: openwebrx/ADSB
 ```
 
-The embedded broker binds only to loopback and allows anonymous connections, so OpenWebRX+ must run on the same machine. The map.flights station name is sent as the MQTT username and the station key as its password over TLS. go-igate forwards only reports whose topic matches `map-flights.topic` and whose JSON mode is `ADSB`; APRS and other OpenWebRX+ reports stay on the local path. Use a distinct map.flights key for this go-igate connection and disable the old Mosquitto bridge using that key, since map.flights allows one active connection per station key.
+The embedded broker binds only to loopback and allows anonymous connections, so OpenWebRX+ must run on the same machine. The map.flights station name is sent as the MQTT username and the station key as its password over TLS. Sparky forwards only reports whose topic matches `map-flights.topic` and whose JSON mode is `ADSB`; APRS and other OpenWebRX+ reports stay on the local path. Use a distinct map.flights key for this Sparky connection and disable the old Mosquitto bridge using that key, since map.flights allows one active connection per station key.
 
-The feed sends aircraft reports as OpenWebRX+ produces them. The receiver must keep OpenWebRX+'s 1090 MHz ADS-B background decoder running continuously for a continuous feed. This removes the local Mosquitto hop from APRS processing and lets go-igate publish ADS-B directly; it does not change the time OpenWebRX+ takes to decode reports.
+The feed sends aircraft reports as OpenWebRX+ produces them. The receiver must keep OpenWebRX+'s 1090 MHz ADS-B background decoder running continuously for a continuous feed. This removes the local Mosquitto hop from APRS processing and lets Sparky publish ADS-B directly; it does not change the time OpenWebRX+ takes to decode reports.
 
-When map.flights forwarding is enabled, go-igate logs a once-per-minute ADS-B forwarding summary with incoming reports, completed QoS 0 MQTT publishes, failures, rejected reports, queue drops, queue depth, connection state, and age of the last received report. A completed QoS 0 publish only means go-igate's MQTT client completed the send; MQTT does not confirm that map.flights displayed the aircraft. Check the station page separately for ingestion and display.
+When map.flights forwarding is enabled, Sparky logs a once-per-minute ADS-B forwarding summary with incoming reports, completed QoS 0 MQTT publishes, failures, rejected reports, queue drops, queue depth, connection state, and age of the last received report. A completed QoS 0 publish only means Sparky's MQTT client completed the send; MQTT does not confirm that map.flights displayed the aircraft. Check the station page separately for ingestion and display.
 
 ### Installing with make
 

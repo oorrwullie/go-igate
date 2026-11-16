@@ -84,7 +84,7 @@ func New(cfg config.OpenWebRXMQTT, mapFlights config.MapFlights, ps *pubsub.PubS
 	}
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
-		SetClientID(fmt.Sprintf("go-igate-%d", time.Now().UnixNano())).
+		SetClientID(fmt.Sprintf("sparky-%d", time.Now().UnixNano())).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(5 * time.Second).
@@ -233,7 +233,7 @@ func extractFrame(payload []byte) (string, error) {
 		}
 		if text == "" && report.Source != "" && report.Destination != "" && report.Data != "" {
 			// OpenWebRX+ publishes APRS as decoded fields rather than a TNC2 line.
-			// Reassemble the packet so the rest of go-igate can process it normally.
+			// Reassemble the packet so Sparky can process it normally.
 			path := make([]string, 0, len(report.Path)+1)
 			path = append(path, report.Destination)
 			for _, component := range report.Path {

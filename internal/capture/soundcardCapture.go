@@ -791,7 +791,7 @@ func (s *SoundcardCapture) runAplayLoop() {
 }
 
 func (s *SoundcardCapture) playWithAplay(samples []float32) error {
-	file, err := os.CreateTemp("", "go-igate-tx-*.wav")
+	file, err := os.CreateTemp("", "sparky-tx-*.wav")
 	if err != nil {
 		return fmt.Errorf("create temp wav: %w", err)
 	}

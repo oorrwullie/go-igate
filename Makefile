@@ -1,7 +1,7 @@
 # Project variables
-BINARY_NAME=go-igate
+BINARY_NAME=sparky
 BUILD_DIR=bin
-SERVICE_FILE=go-igate.service
+SERVICE_FILE=sparky.service
 
 # Go related variables
 GOBASE=$(shell pwd)

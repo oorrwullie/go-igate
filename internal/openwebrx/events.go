@@ -201,7 +201,7 @@ func (m *MQTT) startMapFlightsClient() {
 	}
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
-		SetClientID("go-igate-mapflights-" + strings.TrimSpace(m.mapFlights.Station)).
+		SetClientID("sparky-mapflights-" + strings.TrimSpace(m.mapFlights.Station)).
 		SetUsername(strings.TrimSpace(m.mapFlights.Station)).
 		SetPassword(m.mapFlights.Key).
 		SetAutoReconnect(true).

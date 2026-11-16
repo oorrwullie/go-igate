@@ -107,7 +107,7 @@ func (a *AprsIs) Connect() error {
 	}
 
 	err = conn.PrintfLine(
-		"user %s pass %s vers DigiGate 0.0.1 filter %s",
+		"user %s pass %s vers Sparky 0.0.1 filter %s",
 		a.Callsign,
 		a.cfg.Passcode,
 		a.cfg.Filter,
