@@ -53,7 +53,7 @@ func (m *MQTT) getMapFlightsClient() mapFlightsPublisher {
 }
 
 type mapFlightsPublisher interface {
-	IsConnected() bool
+	IsConnectionOpen() bool
 	Publish(topic string, qos byte, retained bool, payload interface{}) mqtt.Token
 	Disconnect(quiesce uint)
 }
@@ -63,6 +63,7 @@ type adsbForwardStats struct {
 	published      atomic.Uint64
 	publishFailed  atomic.Uint64
 	rejected       atomic.Uint64
+	offlineDropped atomic.Uint64
 	dropped        atomic.Uint64
 	lastReceivedAt atomic.Int64
 }
@@ -91,26 +92,7 @@ func New(cfg config.OpenWebRXMQTT, mapFlights config.MapFlights, ps *pubsub.PubS
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 			logger.Warn("OpenWebRX+ MQTT connection lost: ", err)
 		}).
-		SetOnConnectHandler(func(client mqtt.Client) {
-			token := client.Subscribe(topic, 0, m.handleMQTTMessage)
-			if token.Wait() && token.Error() != nil {
-				logger.Error("Could not subscribe to OpenWebRX+ MQTT topic ", topic, ": ", token.Error())
-			} else {
-				logger.Info("Subscribed to OpenWebRX+ APRS MQTT topic: ", topic)
-			}
-			if mapFlights.Enabled && !mqttTopicMatches(topic, strings.TrimSpace(mapFlights.Topic)) {
-				adsbTopic := strings.TrimSpace(mapFlights.Topic)
-				if adsbTopic == "" {
-					adsbTopic = "openwebrx/ADSB"
-				}
-				token := client.Subscribe(adsbTopic, 0, m.handleMQTTMessage)
-				if token.Wait() && token.Error() != nil {
-					logger.Error("Could not subscribe to OpenWebRX+ ADS-B MQTT topic ", adsbTopic, ": ", token.Error())
-				} else {
-					logger.Info("Subscribed to OpenWebRX+ ADS-B MQTT topic: ", adsbTopic)
-				}
-			}
-		})
+		SetOnConnectHandler(m.subscriptionHandler())
 	if cfg.Username != "" {
 		opts.SetUsername(cfg.Username)
 		opts.SetPassword(cfg.Password)
@@ -130,6 +112,44 @@ func New(cfg config.OpenWebRXMQTT, mapFlights config.MapFlights, ps *pubsub.PubS
 	}
 	m.client = client
 	return m, nil
+}
+
+// Paho reuses the client on reconnect. Coalesce notifications while a
+// subscription is pending, then subscribe again on the current connection.
+func (m *MQTT) subscriptionHandler() mqtt.OnConnectHandler {
+	connected := make(chan mqtt.Client, 1)
+	topics := map[string]byte{m.aprsTopic: 0}
+	if m.mapFlights.Enabled && !mqttTopicMatches(m.aprsTopic, m.mapFlights.Topic) {
+		topics[m.mapFlights.Topic] = 0
+	}
+	m.workers.Add(1)
+	go func() {
+		defer m.workers.Done()
+		for {
+			select {
+			case <-m.stop:
+				return
+			case client := <-connected:
+				token := client.SubscribeMultiple(topics, m.handleMQTTMessage)
+				select {
+				case <-m.stop:
+					return
+				case <-token.Done():
+					if err := token.Error(); err != nil {
+						m.logger.Error("OpenWebRX+ MQTT subscription failed: ", err)
+					} else {
+						m.logger.Info("Subscribed to OpenWebRX+ MQTT topics: ", topics)
+					}
+				}
+			}
+		}
+	}()
+	return func(c mqtt.Client) {
+		select {
+		case connected <- c:
+		default:
+		}
+	}
 }
 
 func (m *MQTT) handleMQTTMessage(_ mqtt.Client, message mqtt.Message) {

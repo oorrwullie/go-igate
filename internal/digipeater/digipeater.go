@@ -25,7 +25,9 @@ type Digipeater struct {
 	ssnPrefixes   map[string]struct{}
 	dedupe        *deduper
 	logger        *log.Logger
-	stop          chan bool
+	stop          chan struct{}
+	lifecycle     sync.Mutex
+	workers       sync.WaitGroup
 	sendRF        func(string) bool
 	transmitDelay time.Duration
 }
@@ -66,6 +68,7 @@ func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, cfg config.Digi
 		ssnPrefixes[strings.ToUpper(prefix)] = struct{}{}
 	}
 
+	stop := make(chan struct{})
 	return &Digipeater{
 		tx:            tx,
 		inputChan:     ps.Subscribe(),
@@ -76,8 +79,8 @@ func New(tx *transmitter.Tx, ps *pubsub.PubSub, callsign string, cfg config.Digi
 		ssnPrefixes:   ssnPrefixes,
 		dedupe:        newDeduper(window),
 		logger:        logger,
-		stop:          make(chan bool),
-		sendRF:        func(msg string) bool { return tx.SendUntil(msg, nil) },
+		stop:          stop,
+		sendRF:        func(msg string) bool { return tx.SendUntil(msg, stop) },
 	}, nil
 }
 
@@ -112,7 +115,14 @@ func (d *Digipeater) Run() error {
 
 func (d *Digipeater) Stop() {
 	d.logger.Info("Stopping digipeater...")
-	d.stop <- true
+	d.lifecycle.Lock()
+	select {
+	case <-d.stop:
+	default:
+		close(d.stop)
+	}
+	d.lifecycle.Unlock()
+	d.workers.Wait()
 }
 
 func (d *Digipeater) HandleMessage(msg string) {
@@ -121,9 +131,26 @@ func (d *Digipeater) HandleMessage(msg string) {
 		return
 	}
 
+	d.lifecycle.Lock()
+	select {
+	case <-d.stop:
+		d.lifecycle.Unlock()
+		return
+	default:
+		d.workers.Add(1)
+	}
+	d.lifecycle.Unlock()
+
 	go func() {
+		defer d.workers.Done()
 		if d.transmitDelay > 0 {
-			time.Sleep(d.transmitDelay)
+			timer := time.NewTimer(d.transmitDelay)
+			defer timer.Stop()
+			select {
+			case <-d.stop:
+				return
+			case <-timer.C:
+			}
 		}
 		if !d.sendRF(txMsg) {
 			d.logger.Warn("Failed to queue digipeated packet for RF: ", txMsg)

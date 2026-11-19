@@ -176,3 +176,21 @@ func TestDigipeaterRejectsForbiddenRFPath(t *testing.T) {
 		}
 	}
 }
+
+func TestStopCancelsDelayedDigipeats(t *testing.T) {
+	dp, tx := newTestDigipeater(t)
+	dp.SetTransmitDelay(time.Hour)
+	dp.HandleMessage("CALL1>APRS,WIDE1-1:>pending")
+	done := make(chan struct{})
+	go func() { dp.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel pending delay")
+	}
+	dp.HandleMessage("CALL1>APRS,WIDE1-1:>after stop")
+	dp.Stop()
+	if len(tx.Chan) != 0 {
+		t.Fatal("queued RF after shutdown")
+	}
+}

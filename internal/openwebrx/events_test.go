@@ -18,8 +18,8 @@ type fakeMapFlightsPublisher struct {
 	tokenErr  error
 }
 
-func (f *fakeMapFlightsPublisher) IsConnected() bool { return f.connected }
-func (f *fakeMapFlightsPublisher) Disconnect(uint)   {}
+func (f *fakeMapFlightsPublisher) IsConnectionOpen() bool { return f.connected }
+func (f *fakeMapFlightsPublisher) Disconnect(uint)        {}
 func (f *fakeMapFlightsPublisher) Publish(topic string, qos byte, _ bool, payload interface{}) mqtt.Token {
 	f.topic = topic
 	f.qos = qos
@@ -100,5 +100,80 @@ func TestADSBQueueDropIsCounted(t *testing.T) {
 	}
 	if got := m.adsbStats.dropped.Load(); got != 1 {
 		t.Fatalf("dropped = %d, want 1", got)
+	}
+}
+
+type subscriptionClient struct {
+	mqtt.Client
+	calls chan map[string]byte
+	ack   chan struct{}
+}
+
+type subscriptionToken struct {
+	completedMQTTToken
+	ack <-chan struct{}
+}
+
+func (t subscriptionToken) Done() <-chan struct{} { return t.ack }
+
+func (c *subscriptionClient) SubscribeMultiple(topics map[string]byte, _ mqtt.MessageHandler) mqtt.Token {
+	c.calls <- topics
+	return subscriptionToken{ack: c.ack}
+}
+
+func TestReconnectWhileSubscriptionPending(t *testing.T) {
+	m := newADSBTestProcessor()
+	m.aprsTopic = "openwebrx/APRS"
+	m.stop = make(chan struct{})
+	defer m.stopWorkers()
+	c := &subscriptionClient{calls: make(chan map[string]byte, 2), ack: make(chan struct{})}
+	onConnect := m.subscriptionHandler()
+	checkSubscription := func() {
+		t.Helper()
+		select {
+		case topics := <-c.calls:
+			for _, topic := range []string{m.aprsTopic, m.mapFlights.Topic} {
+				if qos, ok := topics[topic]; !ok || qos != 0 {
+					t.Fatalf("unexpected subscriptions: %v", topics)
+				}
+			}
+		case <-time.After(time.Second):
+			t.Fatal("missing subscription")
+		}
+	}
+	onConnect(c)
+	checkSubscription()
+	returned := make(chan struct{})
+	go func() { onConnect(c); close(returned) }()
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("reconnect callback blocked")
+	}
+	close(c.ack)
+	checkSubscription()
+}
+
+func TestADSBWorkersDuringSustainedOutage(t *testing.T) {
+	m := newADSBTestProcessor()
+	m.stop = make(chan struct{})
+	defer m.stopWorkers()
+	m.setMapFlightsClient(&fakeMapFlightsPublisher{})
+	for range adsbWorkers {
+		m.workers.Add(1)
+		go m.runADSBWorker()
+	}
+	const count = 100
+	deadline := time.After(2 * time.Second)
+	for range count {
+		select {
+		case m.adsbEvents <- []byte(`{"mode":"ADSB"}`):
+		case <-deadline:
+			t.Fatal("workers stalled while disconnected")
+		}
+	}
+	m.stopWorkers()
+	if got := m.adsbStats.offlineDropped.Load(); got != count {
+		t.Fatalf("offline drops = %d, want %d", got, count)
 	}
 }

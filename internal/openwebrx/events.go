@@ -87,12 +87,13 @@ func (m *MQTT) runADSBHealthLogger() {
 				lastReceived = time.Since(time.Unix(0, timestamp)).Round(time.Second).String()
 			}
 			client := m.getMapFlightsClient()
-			connected := client != nil && client.IsConnected()
+			connected := client != nil && client.IsConnectionOpen()
 			m.logger.Info(
 				"ADS-B forwarding health (last 60s): received=", m.adsbStats.received.Swap(0),
 				" mqtt-publish-complete=", m.adsbStats.published.Swap(0),
 				" publish-errors=", m.adsbStats.publishFailed.Swap(0),
 				" rejected=", m.adsbStats.rejected.Swap(0),
+				" offline-dropped=", m.adsbStats.offlineDropped.Swap(0),
 				" queue-dropped=", m.adsbStats.dropped.Swap(0),
 				" queue=", len(m.adsbEvents), "/", cap(m.adsbEvents),
 				" map-connected=", connected,
@@ -168,16 +169,9 @@ func (m *MQTT) forwardADSB(payload []byte) {
 		return
 	}
 	client := m.getMapFlightsClient()
-	if client == nil {
-		m.adsbStats.publishFailed.Add(1)
+	if client == nil || !client.IsConnectionOpen() {
+		m.adsbStats.offlineDropped.Add(1)
 		return
-	}
-	for !client.IsConnected() {
-		select {
-		case <-m.stop:
-			return
-		case <-time.After(250 * time.Millisecond):
-		}
 	}
 	token := client.Publish(m.mapFlights.Topic, 0, false, payload)
 	if !token.WaitTimeout(5 * time.Second) {
