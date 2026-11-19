@@ -67,6 +67,28 @@ func TestDigipeaterWideChain(t *testing.T) {
 	}
 }
 
+func TestDigipeaterAppliesTransmitDelay(t *testing.T) {
+	dp, _ := newTestDigipeater(t)
+	dp.SetTransmitDelay(100 * time.Millisecond)
+
+	started := time.Now()
+	queued := make(chan time.Duration, 1)
+	dp.sendRF = func(string) bool {
+		queued <- time.Since(started)
+		return true
+	}
+	dp.HandleMessage("CALL1>APRS,WIDE1-1:/123456h4903.50N/07201.75W-Test message")
+
+	select {
+	case elapsed := <-queued:
+		if elapsed < 100*time.Millisecond {
+			t.Fatalf("digipeat queued after %s; want at least 100ms", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("digipeat was not queued")
+	}
+}
+
 func TestDigipeaterWideHopInsert(t *testing.T) {
 	dp, tx := newTestDigipeater(t)
 
@@ -152,5 +174,23 @@ func TestDigipeaterRejectsForbiddenRFPath(t *testing.T) {
 		if msg, ok := dp.prepare("CALL1>APRS," + path + ":!4903.50N/07201.75W-Test"); ok {
 			t.Errorf("expected %q packet to be rejected, got %q", path, msg)
 		}
+	}
+}
+
+func TestStopCancelsDelayedDigipeats(t *testing.T) {
+	dp, tx := newTestDigipeater(t)
+	dp.SetTransmitDelay(time.Hour)
+	dp.HandleMessage("CALL1>APRS,WIDE1-1:>pending")
+	done := make(chan struct{})
+	go func() { dp.Stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("stop did not cancel pending delay")
+	}
+	dp.HandleMessage("CALL1>APRS,WIDE1-1:>after stop")
+	dp.Stop()
+	if len(tx.Chan) != 0 {
+		t.Fatal("queued RF after shutdown")
 	}
 }

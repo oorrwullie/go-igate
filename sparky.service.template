@@ -1,5 +1,5 @@
 [Unit]
-Description=i-Gate APRS
+Description=Sparky APRS and ADS-B Gateway
 
 [Service]
 StandardOutput=append:/var/log/aprs.log

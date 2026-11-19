@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -11,17 +12,19 @@ import (
 
 type (
 	Config struct {
-		Sdr                 Sdr         `yaml:"sdr"`
-		Multimon            Multimon    `yaml:"multimon"`
-		Transmitter         Transmitter `yaml:"transmitter"`
-		IGate               IGate       `yaml:"igate"`
-		DigipeaterEnabled   bool        `yaml:"enable-digipeater"`
-		Digipeater          Digipeater  `yaml:"digipeater"`
-		CacheSize           int         `yaml:"cache-size"`
-		StationCallsign     string      `yaml:"station-callsign"`
-		SoundcardInputName  string      `yaml:"soundcard-input-name"`
-		SoundcardOutputName string      `yaml:"soundcard-output-name"`
-		SoundcardCapture    bool        `yaml:"soundcard-capture-enabled"`
+		Sdr                 Sdr           `yaml:"sdr"`
+		OpenWebRXMQTT       OpenWebRXMQTT `yaml:"openwebrx-mqtt"`
+		MapFlights          MapFlights    `yaml:"map-flights"`
+		Multimon            Multimon      `yaml:"multimon"`
+		Transmitter         Transmitter   `yaml:"transmitter"`
+		IGate               IGate         `yaml:"igate"`
+		DigipeaterEnabled   bool          `yaml:"enable-digipeater"`
+		Digipeater          Digipeater    `yaml:"digipeater"`
+		CacheSize           int           `yaml:"cache-size"`
+		StationCallsign     string        `yaml:"station-callsign"`
+		SoundcardInputName  string        `yaml:"soundcard-input-name"`
+		SoundcardOutputName string        `yaml:"soundcard-output-name"`
+		SoundcardCapture    bool          `yaml:"soundcard-capture-enabled"`
 	}
 
 	IGate struct {
@@ -48,6 +51,28 @@ type (
 		SquelchLevel    string `yaml:"squelch-level"`
 		SampleRate      string `yaml:"sample-rate"`
 		AdditionalFlags string `yaml:"additional-flags"`
+	}
+
+	OpenWebRXMQTT struct {
+		Enabled        bool               `yaml:"enabled"`
+		Broker         string             `yaml:"broker"`
+		Topic          string             `yaml:"topic"`
+		Username       string             `yaml:"username"`
+		Password       string             `yaml:"password"`
+		EmbeddedBroker EmbeddedMQTTBroker `yaml:"embedded-broker"`
+	}
+
+	EmbeddedMQTTBroker struct {
+		Enabled bool   `yaml:"enabled"`
+		Listen  string `yaml:"listen-address"`
+	}
+
+	MapFlights struct {
+		Enabled bool   `yaml:"enabled"`
+		Broker  string `yaml:"broker"`
+		Station string `yaml:"station"`
+		Key     string `yaml:"key"`
+		Topic   string `yaml:"topic"`
 	}
 
 	Multimon struct {
@@ -123,6 +148,37 @@ func GetConfig() (Config, error) {
 	err = yaml.Unmarshal(f, &cfg)
 	if err != nil {
 		return cfg, fmt.Errorf("Could not parse config file: %v", err)
+	}
+	if cfg.OpenWebRXMQTT.EmbeddedBroker.Enabled {
+		address := strings.TrimSpace(cfg.OpenWebRXMQTT.EmbeddedBroker.Listen)
+		if address == "" {
+			address = "127.0.0.1:1884"
+		}
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return cfg, fmt.Errorf("invalid openwebrx-mqtt.embedded-broker.listen-address %q: %w", address, err)
+		}
+		if host != "localhost" {
+			ip := net.ParseIP(host)
+			if ip == nil || !ip.IsLoopback() {
+				return cfg, fmt.Errorf("openwebrx-mqtt.embedded-broker.listen-address must bind to loopback; embedded broker does not provide authentication or TLS")
+			}
+		}
+	}
+	if cfg.MapFlights.Enabled {
+		if !cfg.OpenWebRXMQTT.Enabled {
+			return cfg, fmt.Errorf("map-flights requires openwebrx-mqtt.enabled")
+		}
+		if strings.TrimSpace(cfg.MapFlights.Station) == "" || strings.TrimSpace(cfg.MapFlights.Key) == "" {
+			return cfg, fmt.Errorf("map-flights.station and map-flights.key are required when map-flights.enabled is true")
+		}
+		if topic := strings.TrimSpace(cfg.MapFlights.Topic); strings.ContainsAny(topic, "+#") {
+			return cfg, fmt.Errorf("map-flights.topic must be one concrete topic, not an MQTT wildcard")
+		}
+		broker := strings.TrimSpace(cfg.MapFlights.Broker)
+		if broker != "" && !strings.HasPrefix(strings.ToLower(broker), "ssl://") {
+			return cfg, fmt.Errorf("map-flights.broker must use ssl:// because the station key is sent as the MQTT password")
+		}
 	}
 
 	if cfg.Digipeater.DedupeWindow == 0 {

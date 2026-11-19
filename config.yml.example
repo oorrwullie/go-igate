@@ -1,9 +1,9 @@
-# Description: Configuration file for go-igate
+# Description: Configuration file for Sparky
 # License: MIT
 # Notes: This file is written in YAML format. For more information on YAML, see https://yaml.org/
 
 
-# call-sign of the DigiGate (your call sign including SSID) - e.g. "N0CALL-10"
+# call-sign of the Sparky iGate (including SSID) - e.g. "N0CALL-10"
 station-callsign: ""
 # size of in-memory cache for keeping track of received packets
 cache-size: 1000
@@ -28,6 +28,29 @@ soundcard-input-name: ""
 soundcard-output-name: ""
 # set to true to bypass the SDR and use the soundcard input for receive
 soundcard-capture-enabled: false
+# Optional receive source: decoded APRS frames published by OpenWebRX+.
+# When enabled this replaces the SDR/sound-card receive decoder. Keep this
+# broker private because received RF frames will be handled as local RF.
+openwebrx-mqtt:
+  enabled: false
+  # Legacy mode: subscribe to an already-running broker.
+  broker: tcp://127.0.0.1:1883
+  topic: openwebrx/APRS
+  username: ""
+  password: ""
+  # Optional embedded broker: configure OpenWebRX+ to publish to
+  # 127.0.0.1:1884. It binds to loopback only and accepts anonymous clients.
+  embedded-broker:
+    enabled: false
+    listen-address: 127.0.0.1:1884
+# Optional direct ADS-B feed from OpenWebRX+ to map.flights. The MQTT topic
+# must match OpenWebRX+'s topic prefix plus /ADSB (normally openwebrx/ADSB).
+map-flights:
+  enabled: false
+  broker: ssl://mqtt.map.flights:8883
+  station: ""
+  key: ""
+  topic: openwebrx/ADSB
 sdr:
   #Set to true to enable using an RTL-SDR dongle
   enabled: true
@@ -69,7 +92,7 @@ transmitter:
   # Set false to use the PortAudio stream for both input and output.
   use-aplay: true
 igate:
-  # enabled: set to true to enable DigiGate to act as an iGate.
+  # enabled: set to true to enable Sparky to act as an iGate.
   enabled: true
   # enable APRS-IS message gating to stations recently heard directly on RF.
   # This requires a transmitter and uses third-party packet format.
