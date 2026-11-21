@@ -11,12 +11,16 @@ import (
 	"time"
 )
 
+const snapshotInterval = 5 * time.Second
+
 type Cache struct {
 	capacity int
 	mu       sync.Mutex
 	filePath string
 	lru      *LRU
 	ttl      time.Duration
+	lastSnapshot time.Time
+	dirty bool
 }
 
 type LRU struct {
@@ -85,7 +89,7 @@ func (c *Cache) Set(key string, value interface{}) (duplicate bool) {
 			node.timestamp = time.Now()
 			node.val = value
 			c.lru.moveToFront(node)
-			c.persistLocked()
+			c.markDirtyLocked()
 			return true
 		}
 		c.lru.removeNode(node)
@@ -97,7 +101,7 @@ func (c *Cache) Set(key string, value interface{}) (duplicate bool) {
 	}
 
 	c.lru.set(key, value)
-	c.persistLocked()
+	c.markDirtyLocked()
 
 	return false
 }
@@ -116,11 +120,45 @@ func (c *Cache) pruneExpiredLocked() {
 	}
 }
 
-// persistLocked runs under c.mu, preserving current synchronous persistence.
+// markDirtyLocked limits full-file writes on the RF receive hot path.
+// Cache snapshots are intentionally best-effort: a crash can lose at most the
+// activity since the last successful snapshot. Flush forces a final snapshot.
+func (c *Cache) markDirtyLocked() {
+	if c.filePath == "" {
+		return
+	}
+	c.dirty = true
+	if !c.lastSnapshot.IsZero() && time.Since(c.lastSnapshot) < snapshotInterval {
+		return
+	}
+	c.persistLocked()
+}
+
+// Flush persists all pending mutations. Call after stopping producers on
+// orderly shutdown. It is safe to call concurrently with Set and Get.
+func (c *Cache) Flush() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.dirty {
+		return nil
+	}
+	return c.saveDirtyLocked()
+}
+
 func (c *Cache) persistLocked() {
-	if err := c.saveToFile(); err != nil && c.filePath != "" {
+	if err := c.saveDirtyLocked(); err != nil {
 		fmt.Println("Error saving cache:", err)
 	}
+}
+
+func (c *Cache) saveDirtyLocked() error {
+	// A failed write is not retried for every incoming frame.
+	c.lastSnapshot = time.Now()
+	if err := c.saveToFile(); err != nil {
+		return err
+	}
+	c.dirty = false
+	return nil
 }
 
 func (c *Cache) saveToFile() error {
@@ -176,7 +214,10 @@ func (c *Cache) loadFromFile() error {
 	}
 
 	// Restore chronological admission order, not randomized map order.
-	type entry struct { key string; ts time.Time }
+	type entry struct {
+		key string
+		ts  time.Time
+	}
 	entries := make([]entry, 0, len(data))
 	now := time.Now()
 	for k, ts := range data {
@@ -184,7 +225,7 @@ func (c *Cache) loadFromFile() error {
 		if c.ttl > 0 && now.Sub(timestamp) > c.ttl {
 			continue
 		}
-		entries = append(entries, entry{k, timestamp})
+		entries = append(entries, entry{key: k, ts: timestamp})
 	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].ts.Equal(entries[j].ts) {
