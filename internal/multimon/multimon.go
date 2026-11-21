@@ -9,11 +9,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/oorrwullie/go-igate/internal/cache"
-	"github.com/oorrwullie/go-igate/internal/config"
-	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/oorrwullie/go-igate/internal/pubsub"
-	"github.com/oorrwullie/go-igate/internal/transmitter"
+	"github.com/oorrwullie/sparky/internal/cache"
+	"github.com/oorrwullie/sparky/internal/config"
+	"github.com/oorrwullie/sparky/internal/log"
+	"github.com/oorrwullie/sparky/internal/pubsub"
+	"github.com/oorrwullie/sparky/internal/transmitter"
 )
 
 type Multimon struct {
