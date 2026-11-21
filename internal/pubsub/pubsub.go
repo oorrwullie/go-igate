@@ -10,7 +10,7 @@ import (
 const subscriberQueueSize = 128
 
 type PubSub struct {
-	mu          sync.RWMutex
+	mu          sync.Mutex
 	subscribers []chan string
 	dropped     atomic.Uint64
 	closed      bool
@@ -34,12 +34,14 @@ func (p *PubSub) Subscribe() <-chan string {
 	return ch
 }
 
+// Publish serializes fan-out across concurrent producers, so all subscribers
+// observe the same order. The short lock contains only nonblocking sends.
 // Publish never waits for a slow subscriber. New packets are dropped for that
 // subscriber when its queue is full; other subscribers still receive them.
 // The caller can monitor Drops to detect overload.
 func (p *PubSub) Publish(msg string) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	if p.closed {
 		return
 	}
