@@ -112,3 +112,41 @@ func TestSdrPipeStopsWhenOutputIsBlocked(t *testing.T) {
 		t.Fatal("capture did not stop while output was blocked")
 	}
 }
+
+func TestSdrStopWithoutSuccessfulStart(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		attemptRun bool
+	}{
+		{name: "never started"},
+		{name: "start failed", attemptRun: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &SdrCapture{
+				Cmd:  exec.Command("sparky-nonexistent-rtl-fm-for-test"),
+				stop: make(chan struct{}),
+				done: make(chan struct{}),
+			}
+			if tc.attemptRun {
+				if err := s.Start(); err == nil {
+					t.Fatal("expected rtl_fm startup failure")
+				}
+			}
+
+			finished := make(chan struct{})
+			go func() {
+				s.Stop()
+				s.Stop() // Idempotent, including the failed-start case.
+				close(finished)
+			}()
+			select {
+			case <-finished:
+			case <-time.After(time.Second):
+				t.Fatal("Stop blocked without a running rtl_fm process")
+			}
+			if err := s.Start(); err == nil {
+				t.Fatal("Start must not restart a stopped capture")
+			}
+		})
+	}
+}
