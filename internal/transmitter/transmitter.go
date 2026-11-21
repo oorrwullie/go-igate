@@ -13,6 +13,14 @@ import (
 
 // Backend handles hardware-specific transmission and shutdown. RF scheduling
 // remains in the iGate/digipeater layers; only their admitted frames reach here.
+//
+// Shutdown contract: Stop is terminal, concurrency-safe and idempotent. It
+// must interrupt Play already in progress and ensure Play invoked concurrently
+// with or after Stop returns promptly without starting new hardware activity.
+// The transmitter cannot serialize Stop behind Play: Play may itself block
+// waiting for hardware, and Stop is what must unblock it.
+// Play may return once a frame is queued for hardware; it need not wait for
+// transmission to finish.
 type Backend interface {
 	Play(string)
 	Stop()
