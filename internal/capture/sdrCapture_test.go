@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/sparky/internal/config"
 )
 
 type tReader struct {
