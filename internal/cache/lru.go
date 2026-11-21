@@ -190,6 +190,20 @@ func (c *Cache) saveToFile() error {
 	if err := os.Rename(file.Name(), c.filePath); err != nil {
 		return fmt.Errorf("replace cache file: %w", err)
 	}
+	// fsync the containing directory too: syncing the temporary file alone
+	// does not make the renamed pathname durable across a power failure.
+	directory, err := os.Open(filepath.Dir(c.filePath))
+	if err != nil {
+		return fmt.Errorf("open cache directory: %w", err)
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil {
+		return fmt.Errorf("sync cache directory: %w", syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close cache directory: %w", closeErr)
+	}
 	return nil
 }
 
