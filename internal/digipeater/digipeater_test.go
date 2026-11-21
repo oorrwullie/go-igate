@@ -4,10 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oorrwullie/go-igate/internal/config"
-	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/oorrwullie/go-igate/internal/pubsub"
-	"github.com/oorrwullie/go-igate/internal/transmitter"
+	"github.com/oorrwullie/sparky/internal/config"
+	"github.com/oorrwullie/sparky/internal/log"
+	"github.com/oorrwullie/sparky/internal/pubsub"
+	"github.com/oorrwullie/sparky/internal/transmitter"
 )
 
 func newTestDigipeater(t *testing.T) (*Digipeater, *transmitter.Tx) {
