@@ -43,6 +43,9 @@ type waveReader struct {
 
 // New retains the existing sound-card wiring for callers.
 func New(sc *capture.SoundcardCapture, logger *log.Logger) (*Transmitter, error) {
+	if sc == nil {
+		return nil, fmt.Errorf("sound-card transmitter backend is nil")
+	}
 	t, err := NewWithBackend(sc, logger)
 	if err != nil {
 		return nil, err
