@@ -185,76 +185,119 @@ func (p *Packet) IsAckMessage() bool {
 	return false
 }
 
-// Position returns latitude and longitude in decimal degrees if the payload contains an
-// uncompressed position report (e.g. !DDMM.mmN/DDDMM.mmE). Otherwise ok will be false.
+// Position extracts coordinates from standard uncompressed or compressed
+// position reports, with or without the seven-byte APRS timestamp.
+// Unsupported formats return ok=false; callers determine the fallback policy.
 func (p *Packet) Position() (lat float64, lon float64, ok bool) {
-	if len(p.Payload) < 19 {
+	if len(p.Payload) == 0 {
 		return 0, 0, false
 	}
-
+	offset := 1
 	switch p.Payload[0] {
-	case '!', '=', '/', '@':
+	case '!', '=':
+	case '/', '@':
+		// Timestamped reports have DDHHMMz, DDHHMM/, or HHMMSSh
+		// before the position field; its contents are not needed here.
+		if len(p.Payload) < 8 {
+			return 0, 0, false
+		}
+		offset = 8
 	default:
 		return 0, 0, false
 	}
 
-	if len(p.Payload) < 19 {
+	if lat, lon, ok = uncompressedPosition(p.Payload, offset); ok {
+		return lat, lon, true
+	}
+	return compressedPosition(p.Payload, offset)
+}
+
+func uncompressedPosition(payload string, offset int) (lat float64, lon float64, ok bool) {
+	if len(payload) < offset+18 {
 		return 0, 0, false
 	}
-
-	latField := p.Payload[1:9] // DDMM.mmN
-	if len(latField) != 8 {
+	latitude := payload[offset : offset+8]
+	longitude := payload[offset+9 : offset+18]
+	if payload[offset+8] < '!' || payload[offset+8] > '~' {
 		return 0, 0, false
 	}
-
-	latDeg, err := strconv.ParseFloat(latField[:2], 64)
+	latDegrees, err := strconv.ParseFloat(latitude[:2], 64)
 	if err != nil {
 		return 0, 0, false
 	}
-
-	latMin, err := strconv.ParseFloat(latField[2:7], 64)
+	latMinutes, err := strconv.ParseFloat(latitude[2:7], 64)
 	if err != nil {
 		return 0, 0, false
 	}
-
-	latDir := latField[7]
-
-	lonField := p.Payload[10:19] // DDDMM.mmE
-	if len(lonField) != 9 {
-		return 0, 0, false
-	}
-
-	lonDeg, err := strconv.ParseFloat(lonField[:3], 64)
+	lonDegrees, err := strconv.ParseFloat(longitude[:3], 64)
 	if err != nil {
 		return 0, 0, false
 	}
-
-	lonMin, err := strconv.ParseFloat(lonField[3:8], 64)
+	lonMinutes, err := strconv.ParseFloat(longitude[3:8], 64)
 	if err != nil {
 		return 0, 0, false
 	}
-
-	lonDir := lonField[8]
-
-	lat = latDeg + latMin/60
-	lon = lonDeg + lonMin/60
-
-	switch latDir {
+	if latDegrees > 90 || lonDegrees > 180 || latMinutes >= 60 || lonMinutes >= 60 {
+		return 0, 0, false
+	}
+	lat = latDegrees + latMinutes/60
+	lon = lonDegrees + lonMinutes/60
+	switch latitude[7] {
 	case 'N', 'n':
 	case 'S', 's':
 		lat = -lat
 	default:
 		return 0, 0, false
 	}
-
-	switch lonDir {
+	switch longitude[8] {
 	case 'E', 'e':
 	case 'W', 'w':
 		lon = -lon
 	default:
 		return 0, 0, false
 	}
+	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+		return 0, 0, false
+	}
+	return lat, lon, true
+}
 
+// Compressed coordinates are four base-91 digits each, following the symbol
+// table byte: latitude = 90 - YYYY/380926, longitude = -180 + XXXX/190463.
+// See APRS Protocol Reference v1.0.1, Chapter 9.
+func compressedPosition(payload string, offset int) (lat float64, lon float64, ok bool) {
+	if len(payload) < offset+13 {
+		return 0, 0, false
+	}
+	// Symbol table and code are printable APRS characters. A leading digit
+	// can also be a valid overlay; first try uncompressed syntax above.
+	if payload[offset] < '!' || payload[offset] > '~' ||
+		payload[offset+9] < '!' || payload[offset+9] > '~' {
+		return 0, 0, false
+	}
+	decode := func(chars string) (int, bool) {
+		value := 0
+		for i := 0; i < len(chars); i++ {
+			if chars[i] < '!' || chars[i] > '{' {
+				return 0, false
+			}
+			value = value*91 + int(chars[i]-'!')
+		}
+		return value, true
+	}
+	y, ok := decode(payload[offset+1 : offset+5])
+	if !ok {
+		return 0, 0, false
+	}
+	x, ok := decode(payload[offset+5 : offset+9])
+	if !ok {
+		return 0, 0, false
+	}
+	lat = 90 - float64(y)/380926
+	lon = -180 + float64(x)/190463
+	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+		return 0, 0, false
+	}
 	return lat, lon, true
 }
 
