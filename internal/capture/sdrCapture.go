@@ -5,6 +5,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/oorrwullie/sparky/internal/config"
 	"github.com/oorrwullie/sparky/internal/log"
@@ -15,7 +16,8 @@ type SdrCapture struct {
 	logger     *log.Logger
 	outputChan chan []byte
 	Cmd        *exec.Cmd
-	stop       chan bool
+	stop       chan struct{}
+	stopOnce   sync.Once
 }
 
 func NewSdrCapture(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) (*SdrCapture, error) {
@@ -47,7 +49,7 @@ func NewSdrCapture(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) (
 		logger:     logger,
 		outputChan: outputChan,
 		Cmd:        cmd,
-		stop:       make(chan bool),
+		stop:       make(chan struct{}),
 	}, nil
 }
 
@@ -63,22 +65,21 @@ func (s *SdrCapture) Start() error {
 	}
 
 	go func() {
-		select {
-		case <-s.stop:
-			s.logger.Info("Stopping rtl_fm process")
-			s.Cmd.Process.Kill()
-		default:
-			buf := make([]byte, 4096)
-
-			s.pipeRtlFM(out, buf)
-		}
+		defer s.Cmd.Wait()
+		buf := make([]byte, 4096)
+		s.pipeRtlFM(out, buf)
 	}()
 
 	return nil
 }
 
 func (s *SdrCapture) Stop() {
-	s.stop <- true
+	s.stopOnce.Do(func() {
+		close(s.stop)
+		if s.Cmd.Process != nil {
+			_ = s.Cmd.Process.Kill() // Interrupt a blocked stdout read.
+		}
+	})
 }
 
 func (s *SdrCapture) Type() string {
@@ -93,15 +94,24 @@ func (s *SdrCapture) pipeRtlFM(out io.ReadCloser, buf []byte) {
 			if err == io.EOF {
 				break
 			}
-			s.logger.Error("Error reading rtl_fm stdout:", err)
-			return
+			select {
+			case <-s.stop:
+				return
+			default:
+				s.logger.Error("Error reading rtl_fm stdout:", err)
+				return
+			}
 		}
 
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 
-			s.outputChan <- data
+			select {
+			case <-s.stop:
+				return
+			case s.outputChan <- data:
+			}
 		}
 	}
 }
