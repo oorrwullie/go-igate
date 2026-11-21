@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"sync"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -62,4 +63,33 @@ func TestCloseConcurrentWithPublish(t *testing.T) {
 		t.Fatal("Subscribe after Close must return a closed channel")
 	}
 	p.Publish("ignored")
+}
+
+func TestConcurrentPublishersKeepSubscriberOrder(t *testing.T) {
+	p := New()
+	a, b := p.Subscribe(), p.Subscribe()
+	const producers, messagesPerProducer = 8, 12
+	var wg sync.WaitGroup
+	for producer := 0; producer < producers; producer++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for n := 0; n < messagesPerProducer; n++ {
+				p.Publish(fmt.Sprintf("%d:%d", id, n))
+			}
+		}(producer)
+	}
+	wg.Wait()
+
+	// The queue is larger than the total publish count, so no drops
+	// are expected and each subscriber must see the exact same order.
+	if got := p.Drops(); got != 0 {
+		t.Fatalf("unexpected drops: %d", got)
+	}
+	for n := 0; n < producers*messagesPerProducer; n++ {
+		x, y := <-a, <-b
+		if x != y {
+			t.Fatalf("subscriber order diverged at %d: %q vs %q", n, x, y)
+		}
+	}
 }
