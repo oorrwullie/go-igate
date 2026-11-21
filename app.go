@@ -183,10 +183,6 @@ func NewSparky(logger *log.Logger) (*Sparky, error) {
 }
 
 func (d *Sparky) Run() error {
-	defer func() {
-		d.Stop()
-		<-d.shutdownComplete
-	}()
 	if d.transmitter != nil {
 		err := d.transmitter.Start()
 		if err != nil {
@@ -197,36 +193,40 @@ func (d *Sparky) Run() error {
 	go func() {
 		<-d.stop
 		defer close(d.shutdownComplete)
-				if d.cfg.IGate.Enabled {
-					d.logger.Info("Stopping IGate client")
-					d.igate.Stop()
-				}
+		if d.cfg.IGate.Enabled {
+			d.logger.Info("Stopping IGate client")
+			d.igate.Stop()
+		}
 
-				if d.cfg.DigipeaterEnabled && d.digipeater != nil {
-					d.logger.Info("Stopping digipeater")
-					d.digipeater.Stop()
-				}
+		if d.cfg.DigipeaterEnabled && d.digipeater != nil {
+			d.logger.Info("Stopping digipeater")
+			d.digipeater.Stop()
+		}
 
-				if d.captureDevice != nil {
-					d.logger.Info("Stopping capture device")
-					d.captureDevice.Stop()
-				}
+		if d.captureDevice != nil {
+			d.logger.Info("Stopping capture device")
+			d.captureDevice.Stop()
+		}
 
-				if d.multimon != nil && d.multimon.Cmd.Process != nil {
-					d.logger.Info("Stopping multimon-ng process")
-					_ = d.multimon.Cmd.Process.Kill()
-				}
+		if d.multimon != nil && d.multimon.Cmd.Process != nil {
+			d.logger.Info("Stopping multimon-ng process")
+			_ = d.multimon.Cmd.Process.Kill()
+		}
 
-				if d.mqttInput != nil {
-					d.logger.Info("Stopping OpenWebRX+ MQTT input")
-					d.mqttInput.Stop()
-				}
+		if d.mqttInput != nil {
+			d.logger.Info("Stopping OpenWebRX+ MQTT input")
+			d.mqttInput.Stop()
+		}
 
-				if d.transmitter != nil {
-					d.logger.Info("Stopping transmitter")
-					d.transmitter.Stop()
-				}
+		if d.transmitter != nil {
+			d.logger.Info("Stopping transmitter")
+			d.transmitter.Stop()
+		}
 
+	}()
+	defer func() {
+		d.Stop()
+		<-d.shutdownComplete
 	}()
 
 	var g errgroup.Group
