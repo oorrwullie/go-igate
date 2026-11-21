@@ -16,9 +16,9 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/oorrwullie/go-igate/internal/aprs"
-	"github.com/oorrwullie/go-igate/internal/config"
-	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/oorrwullie/sparky/internal/aprs"
+	"github.com/oorrwullie/sparky/internal/config"
+	"github.com/oorrwullie/sparky/internal/log"
 
 	"github.com/gordonklaus/portaudio"
 	"github.com/mjibson/go-dsp/fft"
