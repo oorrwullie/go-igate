@@ -3,8 +3,8 @@ package digipeater
 import (
 	"testing"
 
-	"github.com/oorrwullie/go-igate/internal/aprs"
-	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/sparky/internal/aprs"
+	"github.com/oorrwullie/sparky/internal/config"
 )
 
 func TestRewriter(t *testing.T) {
