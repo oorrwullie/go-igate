@@ -32,19 +32,31 @@ func TestLRUEvictionAndRecency(t *testing.T) {
 
 func TestCacheTTLRefreshSurvivesRestart(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "cache.json")
-	c := NewCache(2, file, time.Minute)
-	if c.Set("frame", time.Now()) {
-		t.Fatal("first Set should not be duplicate")
+	old := time.Now().Add(-50 * time.Second)
+	data, err := json.Marshal(map[string]int64{"frame": old.UnixNano()})
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Simulate a near-expired persisted timestamp without timing sleeps.
-	c.mu.Lock()
-	c.lru.cache["frame"].timestamp = time.Now().Add(-50 * time.Second)
-	c.mu.Unlock()
+	if err := os.WriteFile(file, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := NewCache(2, file, time.Minute)
 	if !c.Set("frame", time.Now()) {
 		t.Fatal("refreshed Set should be duplicate")
 	}
 	if err := c.Flush(); err != nil {
 		t.Fatal(err)
+	}
+	var disk map[string]int64
+	persisted, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(persisted, &disk); err != nil {
+		t.Fatal(err)
+	}
+	if age := time.Since(time.Unix(0, disk["frame"])); age > 5*time.Second {
+		t.Fatalf("refreshed entry persisted with stale age %v", age)
 	}
 	restored := NewCache(2, file, time.Minute)
 	if _, ok := restored.Get("frame"); !ok {
