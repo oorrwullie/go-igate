@@ -10,11 +10,9 @@
   <img src="assets/sparky-radio-command-center.png" alt="Sparky operating an APRS and ADS-B radio command center" width="900">
 </p>
 
-**Radio data, connected.**
-
 Sparky is an open-source radio data gateway written in Go. It receives, processes, and routes radio data between receivers, transmitters, and network services. Today it focuses on **APRS** and **ADS-B**, with room for additional protocols and hardware backends as the project evolves.
 
-Sparky began as an RTL-SDR APRS iGate, inspired by [Ionosphere](https://github.com/cceremuga/ionosphere). Its current capabilities extend beyond an iGate:
+Sparky began as an RTL-SDR APRS iGate, inspired by [Ionosphere](https://github.com/cceremuga/ionosphere). Its current capabilities extend beyond an iGate.
 
 ## Current capabilities
 
@@ -35,11 +33,11 @@ Sparky began as an RTL-SDR APRS iGate, inspired by [Ionosphere](https://github.c
 First you need to install the dependencies. Make sure you are running the latest version of Go or at least the version specified in the go.mod file.
 
 ### Dependencies
-To run Sparky, the following are required.
+Depending on the selected receive and transmit backends, Sparky uses:
 
-* An RTL-SDR compatible device.
-* [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr)
-* [multimon-ng](https://github.com/EliasOenal/multimon-ng)
+* An RTL-SDR compatible device (for SDR reception).
+* [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr) (for SDR reception)
+* [multimon-ng](https://github.com/EliasOenal/multimon-ng) (for local audio decoding)
 * [alsa-utils](https://alsa-project.org/wiki/Main_Page) (`aplay`) when using the soundcard transmitter
  
 - Go 1.22.4 or later (see `go.mod`)
@@ -98,7 +96,7 @@ When map.flights forwarding is enabled, Sparky logs a once-per-minute ADS-B forw
 ### Running the application for testing
 
 ```bash
-go run main.go
+go run .
 ```
 
 ### Log rotation
@@ -123,7 +121,7 @@ When message gating is disabled, RF packets sent back to APRS-IS use `qAO`. When
 - APRS expects fixed stations to be visible within a 10–30 minute “net cycle.” Configure the primary RF beacon (your wide path) around 30 minutes and add a secondary direct beacon near 10 minutes to refresh local maps without flooding the network.
 - In `config.yml` the `additional-rf-beacons` list lets you schedule those direct packets. Leave the `path` empty to transmit truly direct; adding text like `DIRECT` creates a literal hop and is not recommended.
 - Disable APRS-IS (`disable-tcp: true`) if you only want RF packets on aprs.fi. Re-enable it with a conservative `is-interval` when Internet visibility is important.
-- After editing the configuration, run `make` to rebuild the binary and restart the `aprs` service so the new schedule takes effect.
+- After editing the configuration, run `make` to rebuild the binary and restart the `sparky` service so the new schedule takes effect.
 - If aprs.fi occasionally drops your IGate, enable `igate.beacon.aprsfi-verification` with your aprs.fi API key and set `watchdog-interval` (for example `30m`). The watchdog polls aprs.fi and, when your call hasn't been heard for longer than `watchdog-max-age` (defaults to twice the interval), it automatically schedules an RF beacon to refresh the map.
 
 ## Renaming from go-igate
