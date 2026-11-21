@@ -5,7 +5,9 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/oorrwullie/sparky/internal/config"
 )
@@ -83,4 +85,30 @@ func (tR *tReader) Read(p []byte) (n int, err error) {
 func (tR *tReader) Close() error {
 	tR.ReadBytes = []byte{}
 	return nil
+}
+
+func TestSdrPipeStopsWhenOutputIsBlocked(t *testing.T) {
+	s := &SdrCapture{
+		outputChan: make(chan []byte), // no consumer
+		stop:       make(chan struct{}),
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.pipeRtlFM(io.NopCloser(strings.NewReader("packet")), make([]byte, 16))
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("capture unexpectedly completed without a consumer")
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	// A closed stop channel releases a blocked output send.
+	s.stopOnce.Do(func() { close(s.stop) })
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("capture did not stop while output was blocked")
+	}
 }
