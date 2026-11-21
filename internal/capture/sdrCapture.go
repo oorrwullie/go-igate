@@ -18,6 +18,7 @@ type SdrCapture struct {
 	Cmd        *exec.Cmd
 	stop       chan struct{}
 	stopOnce   sync.Once
+	done       chan struct{}
 }
 
 func NewSdrCapture(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) (*SdrCapture, error) {
@@ -50,6 +51,7 @@ func NewSdrCapture(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) (
 		outputChan: outputChan,
 		Cmd:        cmd,
 		stop:       make(chan struct{}),
+		done:       make(chan struct{}),
 	}, nil
 }
 
@@ -65,9 +67,10 @@ func (s *SdrCapture) Start() error {
 	}
 
 	go func() {
-		defer s.Cmd.Wait()
+		defer close(s.done)
 		buf := make([]byte, 4096)
 		s.pipeRtlFM(out, buf)
+		_ = s.Cmd.Wait()
 	}()
 
 	return nil
@@ -78,6 +81,9 @@ func (s *SdrCapture) Stop() {
 		close(s.stop)
 		if s.Cmd.Process != nil {
 			_ = s.Cmd.Process.Kill() // Interrupt a blocked stdout read.
+		}
+		if s.done != nil {
+			<-s.done // Ensure the process was reaped before shutdown completes.
 		}
 	})
 }
