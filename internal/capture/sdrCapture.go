@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/oorrwullie/go-igate/internal/config"
-	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/oorrwullie/sparky/internal/config"
+	"github.com/oorrwullie/sparky/internal/log"
 )
 
 type SdrCapture struct {
