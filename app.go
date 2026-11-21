@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/oorrwullie/sparky/internal/cache"
@@ -27,7 +28,9 @@ type (
 		multimon          *multimonpackage.Multimon
 		mqttInput         *openwebrx.MQTT
 		transmitter       *transmitter.Transmitter
-		stop              chan bool
+		stop              chan struct{}
+		stopOnce          sync.Once
+		shutdownComplete  chan struct{}
 		igate             *igate.IGate
 		digipeater        *digipeater.Digipeater
 		logger            *log.Logger
@@ -165,7 +168,8 @@ func NewSparky(logger *log.Logger) (*Sparky, error) {
 		cfg:               cfg,
 		captureOutputChan: captureOutputChan,
 		transmitter:       tx,
-		stop:              make(chan bool),
+		stop:              make(chan struct{}),
+		shutdownComplete:  make(chan struct{}),
 		igate:             ig,
 		logger:            logger,
 		cache:             appCache,
@@ -179,6 +183,10 @@ func NewSparky(logger *log.Logger) (*Sparky, error) {
 }
 
 func (d *Sparky) Run() error {
+	defer func() {
+		d.Stop()
+		<-d.shutdownComplete
+	}()
 	if d.transmitter != nil {
 		err := d.transmitter.Start()
 		if err != nil {
@@ -187,9 +195,8 @@ func (d *Sparky) Run() error {
 	}
 
 	go func() {
-		for {
-			select {
-			case <-d.stop:
+		<-d.stop
+		defer close(d.shutdownComplete)
 				if d.cfg.IGate.Enabled {
 					d.logger.Info("Stopping IGate client")
 					d.igate.Stop()
@@ -220,9 +227,6 @@ func (d *Sparky) Run() error {
 					d.transmitter.Stop()
 				}
 
-				return
-			}
-		}
 	}()
 
 	var g errgroup.Group
@@ -241,11 +245,18 @@ func (d *Sparky) Run() error {
 		d.logger.Warn("Digipeater enabled but transmitter is disabled; digipeater will not run")
 	}
 
+	// An MQTT-only gateway has no iGate or digipeater loop to hold Run open.
+	if !d.cfg.IGate.Enabled && d.digipeater == nil {
+		<-d.stop
+		return nil
+	}
+
 	return g.Wait()
 }
 
+// Stop may be requested by both the signal handler and the Run exit path.
 func (d *Sparky) Stop() {
-	d.stop <- true
+	d.stopOnce.Do(func() { close(d.stop) })
 }
 
 func isNilCapture(c capture.Capture) bool {
