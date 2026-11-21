@@ -2,6 +2,7 @@ package transmitter
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,9 +16,14 @@ type fakeBackend struct {
 	entered  chan struct{}
 	unblock  chan struct{}
 	once     sync.Once
+	stopOnce sync.Once
+	stopped  atomic.Bool
 }
 
 func (b *fakeBackend) Play(msg string) {
+	if b.stopped.Load() {
+		return
+	}
 	b.mu.Lock()
 	b.calls++
 	b.mu.Unlock()
@@ -27,19 +33,25 @@ func (b *fakeBackend) Play(msg string) {
 	if b.unblock != nil {
 		<-b.unblock
 	}
+	if b.stopped.Load() {
+		return
+	}
 	b.mu.Lock()
 	b.messages = append(b.messages, msg)
 	b.mu.Unlock()
 }
 
 func (b *fakeBackend) Stop() {
-	if b.unblock != nil {
-		select {
-		case <-b.unblock:
-		default:
-			close(b.unblock)
+	b.stopOnce.Do(func() {
+		b.stopped.Store(true)
+		if b.unblock != nil {
+			select {
+			case <-b.unblock:
+			default:
+				close(b.unblock)
+			}
 		}
-	}
+	})
 }
 
 func TestTransmitterRepeatedStartDoesNotDispatchConcurrently(t *testing.T) {
@@ -83,7 +95,7 @@ func TestTransmitterRepeatedStartDoesNotDispatchConcurrently(t *testing.T) {
 			t.Fatalf("concurrent backend dispatch: %d Play calls while first is blocked", started)
 		}
 	}
-	backend.Stop() // Release blocked Play without stopping the transmitter.
+	close(backend.unblock) // Release first Play; keep backend available for second.
 	deadline := time.After(time.Second)
 	for {
 		backend.mu.Lock()
