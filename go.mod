@@ -1,4 +1,4 @@
-module github.com/oorrwullie/go-igate
+module github.com/oorrwullie/sparky
 
 go 1.22.4
 
