@@ -209,6 +209,15 @@ func (p *Packet) Position() (lat float64, lon float64, ok bool) {
 	if lat, lon, ok = uncompressedPosition(p.Payload, offset); ok {
 		return lat, lon, true
 	}
+	// Do not reinterpret a malformed uncompressed coordinate as compressed.
+	// Compressed symbol-table overlays may start with a digit, but they do
+	// not carry the uncompressed hemisphere field in this position.
+	if len(p.Payload) >= offset+18 && p.Payload[offset] >= '0' && p.Payload[offset] <= '9' {
+		switch p.Payload[offset+7] {
+		case 'N', 'n', 'S', 's':
+			return 0, 0, false
+		}
+	}
 	return compressedPosition(p.Payload, offset)
 }
 
