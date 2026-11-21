@@ -462,6 +462,11 @@ func (s *SoundcardCapture) runPortAudioTxLoop() {
 		select {
 		case <-s.stop:
 			return
+		default:
+		}
+		select {
+		case <-s.stop:
+			return
 		case msg, ok := <-s.sendChannel:
 			if !ok {
 				return
