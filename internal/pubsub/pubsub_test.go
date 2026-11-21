@@ -1,8 +1,8 @@
 package pubsub
 
 import (
-	"sync"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
