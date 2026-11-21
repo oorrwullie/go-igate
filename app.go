@@ -177,6 +177,7 @@ func NewSparky(logger *log.Logger) (*Sparky, error) {
 		mqttInput:         mqttInput,
 		captureDevice:     captureDevice,
 		digipeater:        dp,
+		pubsub:            ps,
 	}
 
 	return dg, nil
@@ -200,6 +201,9 @@ func (d *Sparky) Run() error {
 		// should delay stopping the receiver or transmitter.
 		if d.igate != nil {
 			stop("iGate", d.igate.Stop)
+		}
+		if d.pubsub != nil {
+			stop("PubSub", d.pubsub.Close)
 		}
 		if d.digipeater != nil {
 			stop("digipeater", d.digipeater.Stop)
@@ -231,6 +235,25 @@ func (d *Sparky) Run() error {
 	}
 
 	var g errgroup.Group
+	if d.pubsub != nil {
+		g.Go(func() error {
+			ticker := time.NewTicker(time.Minute)
+			defer ticker.Stop()
+			var reported uint64
+			for {
+				select {
+				case <-d.stop:
+					return nil
+				case <-ticker.C:
+					total := d.pubsub.Drops()
+					if total > reported {
+						d.logger.Warn("PubSub dropped ", total-reported, " subscriber deliveries in the last minute (", total, " total)")
+					}
+					reported = total
+				}
+			}
+		})
+	}
 	// An unexpected return from either service, including an error, must
 	// request cancellation so the other long-running service can exit.
 	if d.igate != nil {
@@ -248,7 +271,7 @@ func (d *Sparky) Run() error {
 		d.logger.Warn("Digipeater enabled but transmitter is disabled; digipeater will not run")
 	}
 
-	if d.igate == nil && d.digipeater == nil {
+	if d.igate == nil && d.digipeater == nil && d.pubsub == nil {
 		<-d.stop // MQTT-only and disabled-worker configurations stay alive.
 		return nil
 	}
