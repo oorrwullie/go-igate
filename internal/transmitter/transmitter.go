@@ -11,17 +11,29 @@ import (
 	"github.com/oorrwullie/sparky/internal/log"
 )
 
+// Backend handles hardware-specific transmission and shutdown. RF scheduling
+// remains in the iGate/digipeater layers; only their admitted frames reach here.
+type Backend interface {
+	Play(string)
+	Stop()
+}
+
 type Transmitter struct {
 	Tx        *Tx
 	stop      chan struct{}
 	stopOnce  sync.Once
+	mu        sync.Mutex
+	started   bool
+	workerDone chan struct{}
 	logger    *log.Logger
-	soundcard *capture.SoundcardCapture
+	backend   Backend
+	soundcard *capture.SoundcardCapture // Legacy AFSK helpers; not the dispatch path.
 }
 
 type Tx struct {
 	Chan chan string
 	mu   sync.Mutex
+	stop <-chan struct{}
 }
 
 type waveReader struct {
@@ -29,46 +41,84 @@ type waveReader struct {
 	position int
 }
 
+// New retains the existing sound-card wiring for callers.
 func New(sc *capture.SoundcardCapture, logger *log.Logger) (*Transmitter, error) {
-	tx := &Tx{
-		Chan: make(chan string, 1),
-		mu:   sync.Mutex{},
+	t, err := NewWithBackend(sc, logger)
+	if err != nil {
+		return nil, err
 	}
+	t.soundcard = sc
+	return t, nil
+}
 
+// NewWithBackend permits a new transmitter implementation without changing
+// queue admission, quiet-channel gating, or packet scheduling.
+func NewWithBackend(backend Backend, logger *log.Logger) (*Transmitter, error) {
+	if backend == nil {
+		return nil, fmt.Errorf("transmitter backend is nil")
+	}
+	stop := make(chan struct{})
 	return &Transmitter{
-		Tx:        tx,
-		stop:      make(chan struct{}),
-		logger:    logger,
-		soundcard: sc,
+		Tx:      &Tx{Chan: make(chan string, 1), stop: stop},
+		stop:    stop,
+		logger:  logger,
+		backend: backend,
 	}, nil
 }
 
 func (t *Transmitter) Start() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	select {
+	case <-t.stop:
+		return fmt.Errorf("transmitter already stopped")
+	default:
+	}
+	if t.started {
+		return nil
+	}
+	t.started = true
+	t.workerDone = make(chan struct{})
 	go func() {
+		defer close(t.workerDone)
 		for {
 			select {
 			case <-t.stop:
 				return
 			case msg := <-t.Tx.Chan:
+				// A selected queued frame must not be transmitted after stop.
+				select {
+				case <-t.stop:
+					return
+				default:
+				}
 				t.Transmit(msg)
 			}
 		}
 	}()
-
 	return nil
 }
 
+// Stop first cancels packet admission, then releases any hardware-blocked
+// Play call, and finally waits for the dedicated transmit worker to exit.
 func (t *Transmitter) Stop() {
-	t.logger.Info("Stopping soundcard capture...")
-	t.soundcard.Stop()
-
-	t.logger.Info("Stopping transmitter...")
-	t.stopOnce.Do(func() { close(t.stop) })
+	t.stopOnce.Do(func() {
+		t.mu.Lock()
+		close(t.stop)
+		done := t.workerDone
+		t.mu.Unlock()
+		t.backend.Stop()
+		if done != nil {
+			<-done
+		}
+		if t.logger != nil {
+			t.logger.Info("Transmitter stopped")
+		}
+	})
 }
 
 func (t *Transmitter) Transmit(msg string) {
-	//fmtMsg := fmt.Sprintf("%v\r\n", msg)
-	t.soundcard.Play(msg)
+	t.backend.Play(msg)
 }
 
 func (t *Transmitter) encodeMsg(msg string) []byte {
@@ -112,15 +162,21 @@ func (t *Tx) Send(msg string) {
 // retains the historical blocking behavior used by simple callers.
 func (t *Tx) SendUntil(msg string, stop <-chan struct{}) bool {
 	for {
+		select {
+		case <-t.stop:
+			return false
+		case <-stop:
+			return false
+		default:
+		}
 		if t.TrySend(msg) {
 			return true
 		}
 		timer := time.NewTimer(10 * time.Millisecond)
-		if stop == nil {
-			<-timer.C
-			continue
-		}
 		select {
+		case <-t.stop:
+			timer.Stop()
+			return false
 		case <-stop:
 			timer.Stop()
 			return false
@@ -133,6 +189,11 @@ func (t *Tx) SendUntil(msg string, stop <-chan struct{}) bool {
 func (t *Tx) TrySend(msg string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	select {
+	case <-t.stop:
+		return false
+	default:
+	}
 	select {
 	case t.Chan <- msg:
 		return true
