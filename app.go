@@ -5,22 +5,22 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/oorrwullie/go-igate/internal/cache"
-	"github.com/oorrwullie/go-igate/internal/capture"
-	"github.com/oorrwullie/go-igate/internal/config"
-	"github.com/oorrwullie/go-igate/internal/digipeater"
-	"github.com/oorrwullie/go-igate/internal/igate"
-	"github.com/oorrwullie/go-igate/internal/log"
-	multimonpackage "github.com/oorrwullie/go-igate/internal/multimon"
-	openwebrx "github.com/oorrwullie/go-igate/internal/openwebrx"
-	"github.com/oorrwullie/go-igate/internal/pubsub"
-	"github.com/oorrwullie/go-igate/internal/transmitter"
+	"github.com/oorrwullie/sparky/internal/cache"
+	"github.com/oorrwullie/sparky/internal/capture"
+	"github.com/oorrwullie/sparky/internal/config"
+	"github.com/oorrwullie/sparky/internal/digipeater"
+	"github.com/oorrwullie/sparky/internal/igate"
+	"github.com/oorrwullie/sparky/internal/log"
+	multimonpackage "github.com/oorrwullie/sparky/internal/multimon"
+	openwebrx "github.com/oorrwullie/sparky/internal/openwebrx"
+	"github.com/oorrwullie/sparky/internal/pubsub"
+	"github.com/oorrwullie/sparky/internal/transmitter"
 
 	"golang.org/x/sync/errgroup"
 )
 
 type (
-	DigiGate struct {
+	Sparky struct {
 		cfg               config.Config
 		captureDevice     capture.Capture
 		captureOutputChan chan []byte
@@ -38,7 +38,7 @@ type (
 
 const minPacketSize = 35
 
-func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
+func NewSparky(logger *log.Logger) (*Sparky, error) {
 	var (
 		tx                *transmitter.Transmitter
 		txHandle          *transmitter.Tx
@@ -161,7 +161,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 		dp.SetRFSend(ig.SendRF)
 	}
 
-	dg := &DigiGate{
+	dg := &Sparky{
 		cfg:               cfg,
 		captureOutputChan: captureOutputChan,
 		transmitter:       tx,
@@ -178,7 +178,7 @@ func NewDigiGate(logger *log.Logger) (*DigiGate, error) {
 	return dg, nil
 }
 
-func (d *DigiGate) Run() error {
+func (d *Sparky) Run() error {
 	if d.transmitter != nil {
 		err := d.transmitter.Start()
 		if err != nil {
@@ -244,7 +244,7 @@ func (d *DigiGate) Run() error {
 	return g.Wait()
 }
 
-func (d *DigiGate) Stop() {
+func (d *Sparky) Stop() {
 	d.stop <- true
 }
 
