@@ -467,34 +467,23 @@ func (s *SoundcardCapture) runPortAudioTxLoop() {
 	}
 }
 
+// Play applies backpressure only to the transmit worker; it never spawns a
+// goroutine per packet. Stop cancels a sender waiting for queue capacity.
 func (s *SoundcardCapture) Play(msg string) {
 	msg = strings.TrimSpace(msg)
 	if msg == "" {
 		return
 	}
-
 	select {
 	case <-s.stop:
 		return
-	default:
-	}
-
-	select {
 	case s.sendChannel <- msg:
-	default:
-		go func(m string) {
-			select {
-			case s.sendChannel <- m:
-			case <-s.stop:
-			}
-		}(msg)
 	}
 }
 
 func (s *SoundcardCapture) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stop)
-		close(s.sendChannel)
 		s.streamMu.Lock()
 		defer s.streamMu.Unlock()
 		if s.stream != nil {
