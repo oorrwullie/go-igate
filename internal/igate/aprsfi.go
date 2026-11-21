@@ -1,6 +1,7 @@
 package igate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,9 @@ import (
 )
 
 // APRS.fi monitoring and verification remain asynchronous to RF processing.
+// At most two verification polls are pending concurrently; others are skipped
+// rather than accumulating unbounded timers and HTTP requests.
+const maxConcurrentAprsFiVerifications = 2
 func (i *IGate) aprsFiWatchdogEnabled() bool {
 	if !i.verifyAprsFi {
 		return false
@@ -67,6 +71,11 @@ func (i *IGate) watchdogLocalGap() time.Duration {
 func (i *IGate) aprsFiWatchdogTick(maxAge time.Duration) {
 	if maxAge <= 0 {
 		return
+	}
+	select {
+	case <-i.stop:
+		return
+	default:
 	}
 
 	lastAttempt, hasAttempt := i.lastBeaconAttemptTime()
@@ -128,7 +137,7 @@ func (i *IGate) triggerWatchdogBeacon(reason string) {
 	} else {
 		i.logger.Warn("APRS.fi watchdog -> RF: ", frame)
 	}
-	go i.sendBeaconRf(frame, i.cfg.Beacon.Comment, true)
+	i.launchAsync(func() { i.sendBeaconRf(frame, i.cfg.Beacon.Comment, true) })
 }
 
 func (i *IGate) scheduleAprsFiVerification(frame, payload string, sent time.Time, allowRetry bool) {
@@ -142,7 +151,33 @@ func (i *IGate) scheduleAprsFiVerification(frame, payload string, sent time.Time
 		return
 	}
 
-	go i.runAprsFiVerification(frame, payload, sent, allowRetry)
+	// Register a verification before launching it; shutdown and admission
+	// share the lock so Stop can safely wait for all registered work.
+	i.asyncMu.Lock()
+	select {
+	case <-i.stop:
+		i.asyncMu.Unlock()
+		return
+	default:
+	}
+	if i.verificationSlots == nil {
+		i.verificationSlots = make(chan struct{}, maxConcurrentAprsFiVerifications)
+	}
+	select {
+	case i.verificationSlots <- struct{}{}:
+	default:
+		i.asyncMu.Unlock()
+		i.logger.Warn("Skipping APRS.fi verification: all verification slots busy")
+		return
+	}
+	slots := i.verificationSlots
+	i.asyncWorkers.Add(1)
+	i.asyncMu.Unlock()
+	go func() {
+		defer i.asyncWorkers.Done()
+		defer func() { <-slots }()
+		i.runAprsFiVerification(frame, payload, sent, allowRetry)
+	}()
 }
 
 func (i *IGate) runAprsFiVerification(frame, payload string, sent time.Time, allowRetry bool) {
@@ -175,8 +210,14 @@ func (i *IGate) runAprsFiVerification(frame, payload string, sent time.Time, all
 	}
 
 	if allowRetry {
+		select {
+		case <-i.stop:
+			return
+		default:
+		}
 		i.logger.Warn("APRS.fi did not confirm beacon; retrying RF beacon")
-		go i.sendBeaconRf(frame, payload, false)
+		// This retry is joined with the verification worker, not detached.
+		i.sendBeaconRf(frame, payload, false)
 		return
 	}
 
@@ -209,7 +250,11 @@ func (i *IGate) latestAprsFiTimestamp() (time.Time, error) {
 
 	endpoint := fmt.Sprintf("%s/api/get?%s", base, params.Encode())
 
-	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	ctx := i.aprsFiContext
+	if ctx == nil {
+		ctx = context.Background() // For manually constructed test instances.
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return time.Time{}, err
 	}
