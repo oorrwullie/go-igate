@@ -55,8 +55,9 @@ func NewCache(capacity int, filePath string, ttl time.Duration) *Cache {
 		ttl:      ttl,
 	}
 
-	_ = cache.loadFromFile()
-	fmt.Println("Loaded cache")
+	if err := cache.loadFromFile(); err != nil {
+		fmt.Println("Error loading cache:", err)
+	}
 
 	return cache
 }
@@ -122,7 +123,8 @@ func (c *Cache) pruneExpiredLocked() {
 
 // markDirtyLocked limits full-file writes on the RF receive hot path.
 // Cache snapshots are intentionally best-effort: a crash can lose at most the
-// activity since the last successful snapshot. Flush forces a final snapshot.
+// activity since the last successful snapshot (or longer if persistence
+// fails). Flush forces a final snapshot on a clean shutdown.
 func (c *Cache) markDirtyLocked() {
 	if c.filePath == "" {
 		return
