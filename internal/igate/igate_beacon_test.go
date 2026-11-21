@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oorrwullie/go-igate/internal/aprs"
-	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/oorrwullie/go-igate/internal/transmitter"
+	"github.com/oorrwullie/sparky/internal/aprs"
+	"github.com/oorrwullie/sparky/internal/log"
+	"github.com/oorrwullie/sparky/internal/transmitter"
 )
 
 func TestWaitForQuietUsesQuietDeadlineNotRetryInterval(t *testing.T) {
