@@ -165,6 +165,12 @@ func TestPositionFormatsForGeographicFiltering(t *testing.T) {
 		{"unsupported-compressed-table-selector", "!k:21D2:OF>  !Test", 0, 0, false},
 		{"invalid-timestamp", "@21120xz4010.20N/11137.80W-Test", 0, 0, false},
 		{"invalid-timestamp-suffix", "@211200q4010.20N/11137.80W-Test", 0, 0, false},
+		{"invalid-timestamp-day", "@321200z4010.20N/11137.80W-Test", 0, 0, false},
+		{"invalid-timestamp-hour", "@212400z4010.20N/11137.80W-Test", 0, 0, false},
+		{"invalid-timestamp-minutes", "@211260z4010.20N/11137.80W-Test", 0, 0, false},
+		{"valid-hms-timestamp", "/123456h4010.20N/11137.80W-Test", 40.17, -111.63, true},
+		{"missing-symbol-code", "!4010.20N/11137.80W", 0, 0, false},
+		{"invalid-symbol-code", "!4010.20N/11137.80W ", 0, 0, false},
 		{"invalid-latitude", "!9910.20N/11137.80W-Test", 0, 0, false},
 		{"invalid-minutes", "!4060.20N/11137.80W-Test", 0, 0, false},
 	}
