@@ -221,6 +221,13 @@ func (d *Sparky) Run() error {
 			stop("transmitter", d.transmitter.Stop)
 		}
 		workers.Wait()
+		// Persist pending deduplication timestamps once producers have stopped.
+		// A failed snapshot is logged; the cache remains best-effort.
+		if d.cache != nil {
+			if err := d.cache.Flush(); err != nil {
+				d.logger.Warn("Final cache snapshot failed: ", err)
+			}
+		}
 		close(d.shutdownComplete)
 	}()
 	defer func() {
