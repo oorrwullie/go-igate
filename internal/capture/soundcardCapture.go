@@ -2,6 +2,7 @@ package capture
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math"
@@ -49,6 +50,9 @@ type SoundcardCapture struct {
 	tailTone            []float32
 	txMu                sync.Mutex
 	stopOnce            sync.Once
+	txContext           context.Context
+	txCancel            context.CancelFunc
+	txWorkerDone        chan struct{}
 	stream              *portaudio.Stream
 	started             bool
 	streamMu            sync.Mutex
@@ -98,6 +102,7 @@ func newSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		bitDepth   = 1
 	)
 
+	txContext, txCancel := context.WithCancel(context.Background())
 	sc := &SoundcardCapture{
 		SampleRate:         SampleRate,
 		inputSampleRate:    SampleRate,
@@ -107,6 +112,8 @@ func newSoundcardCapture(cfg config.Config, outputChan chan []byte, logger *log.
 		ChannelNum:         channelNum,
 		BitDepth:           bitDepth,
 		stop:               make(chan struct{}),
+		txContext:          txContext,
+		txCancel:           txCancel,
 		sendChannel:        make(chan string, 10),
 		logger:             logger,
 		outputChan:         outputChan,
@@ -185,12 +192,21 @@ func Int16ToFloat32(data []int16) []float32 {
 func (s *SoundcardCapture) Start() error {
 	s.streamMu.Lock()
 	defer s.streamMu.Unlock()
+	select {
+	case <-s.stop:
+		return fmt.Errorf("sound-card device is stopped")
+	default:
+	}
 	if s.started {
 		return nil
 	}
 	if !s.receiveEnabled && s.useAplay {
 		s.started = true
-		go s.runAplayLoop()
+		s.txWorkerDone = make(chan struct{})
+		go func() {
+			defer close(s.txWorkerDone)
+			s.runAplayLoop()
+		}()
 		return nil
 	}
 	if err := portaudio.Initialize(); err != nil {
@@ -260,10 +276,17 @@ func (s *SoundcardCapture) Start() error {
 		go s.runAudioOutputLoop()
 		go s.runReceiveDiagnostics()
 	}
+	s.txWorkerDone = make(chan struct{})
 	if s.useAplay {
-		go s.runAplayLoop()
+		go func() {
+			defer close(s.txWorkerDone)
+			s.runAplayLoop()
+		}()
 	} else {
-		go s.runPortAudioTxLoop()
+		go func() {
+			defer close(s.txWorkerDone)
+			s.runPortAudioTxLoop()
+		}()
 	}
 	return nil
 }
@@ -484,8 +507,10 @@ func (s *SoundcardCapture) Play(msg string) {
 func (s *SoundcardCapture) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stop)
+		if s.txCancel != nil {
+			s.txCancel() // Interrupt an active aplay subprocess immediately.
+		}
 		s.streamMu.Lock()
-		defer s.streamMu.Unlock()
 		if s.stream != nil {
 			if err := s.stream.Stop(); err != nil {
 				s.logger.Warn("Error stopping sound-card stream: ", err)
@@ -497,6 +522,11 @@ func (s *SoundcardCapture) Stop() {
 			if err := portaudio.Terminate(); err != nil {
 				s.logger.Warn("Error terminating PortAudio: ", err)
 			}
+		}
+		done := s.txWorkerDone
+		s.streamMu.Unlock()
+		if done != nil {
+			<-done // Ensure the audio worker, including Cmd.Wait, has exited.
 		}
 	})
 }
@@ -746,6 +776,11 @@ func (s *SoundcardCapture) runAplayLoop() {
 		select {
 		case <-s.stop:
 			return
+		default:
+		}
+		select {
+		case <-s.stop:
+			return
 		case msg, ok := <-s.sendChannel:
 			if !ok {
 				return
@@ -772,8 +807,18 @@ func (s *SoundcardCapture) runAplayLoop() {
 				s.logger.Warn("Failed to write debug wave: ", err)
 			}
 
+			select {
+			case <-s.stop:
+				return
+			default:
+			}
 			if err := s.playWithAplay(wave); err != nil {
-				s.logger.Error("Failed to transmit with aplay: ", err)
+				select {
+				case <-s.stop:
+					return
+				default:
+					s.logger.Error("Failed to transmit with aplay: ", err)
+				}
 			}
 		}
 	}
@@ -785,6 +830,7 @@ func (s *SoundcardCapture) playWithAplay(samples []float32) error {
 		return fmt.Errorf("create temp wav: %w", err)
 	}
 	tmpName := file.Name()
+	defer os.Remove(tmpName)
 
 	if _, err := file.Write(buildDebugWav(samples)); err != nil {
 		file.Close()
@@ -802,13 +848,15 @@ func (s *SoundcardCapture) playWithAplay(samples []float32) error {
 	}
 	args = append(args, tmpName)
 
-	cmd := exec.Command(args[0], args[1:]...)
+	ctx := s.txContext
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 	if err := cmd.Run(); err != nil {
-		_ = os.Remove(tmpName)
 		return fmt.Errorf("aplay command failed: %w", err)
 	}
-
-	return os.Remove(tmpName)
+	return nil
 }
 
 func dumpWaveForDebug(samples []float32) error {
