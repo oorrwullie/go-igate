@@ -14,11 +14,11 @@ import (
 	"github.com/mochi-mqtt/server/v2/hooks/auth"
 	"github.com/mochi-mqtt/server/v2/listeners"
 	"github.com/mochi-mqtt/server/v2/packets"
-	"github.com/oorrwullie/go-igate/internal/aprs"
-	"github.com/oorrwullie/go-igate/internal/cache"
-	"github.com/oorrwullie/go-igate/internal/config"
-	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/oorrwullie/go-igate/internal/pubsub"
+	"github.com/oorrwullie/sparky/internal/aprs"
+	"github.com/oorrwullie/sparky/internal/cache"
+	"github.com/oorrwullie/sparky/internal/config"
+	"github.com/oorrwullie/sparky/internal/log"
+	"github.com/oorrwullie/sparky/internal/pubsub"
 )
 
 type MQTT struct {
