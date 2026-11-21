@@ -20,14 +20,14 @@ type Backend interface {
 
 type Transmitter struct {
 	Tx        *Tx
-	stop      chan struct{}
-	stopOnce  sync.Once
-	mu        sync.Mutex
-	started   bool
+	stop       chan struct{}
+	stopOnce   sync.Once
+	mu         sync.Mutex
+	started    bool
 	workerDone chan struct{}
-	logger    *log.Logger
-	backend   Backend
-	soundcard *capture.SoundcardCapture // Legacy AFSK helpers; not the dispatch path.
+	logger     *log.Logger
+	backend    Backend
+	soundcard  *capture.SoundcardCapture // Legacy AFSK helpers; not the dispatch path.
 }
 
 type Tx struct {
@@ -104,7 +104,11 @@ func (t *Transmitter) Start() error {
 func (t *Transmitter) Stop() {
 	t.stopOnce.Do(func() {
 		t.mu.Lock()
+		// Publish and shutdown share the queue mutex. Once Stop returns,
+		// no sender can have admitted a frame after cancellation.
+		t.Tx.mu.Lock()
 		close(t.stop)
+		t.Tx.mu.Unlock()
 		done := t.workerDone
 		t.mu.Unlock()
 		t.backend.Stop()
