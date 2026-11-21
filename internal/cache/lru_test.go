@@ -32,18 +32,49 @@ func TestLRUEvictionAndRecency(t *testing.T) {
 
 func TestCacheTTLRefreshSurvivesRestart(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "cache.json")
-	c := NewCache(2, file, 200*time.Millisecond)
+	c := NewCache(2, file, time.Minute)
 	if c.Set("frame", time.Now()) {
 		t.Fatal("first Set should not be duplicate")
 	}
-	time.Sleep(110 * time.Millisecond)
+	// Simulate a near-expired persisted timestamp without timing sleeps.
+	c.mu.Lock()
+	c.lru.cache["frame"].timestamp = time.Now().Add(-50 * time.Second)
+	c.mu.Unlock()
 	if !c.Set("frame", time.Now()) {
-		t.Fatal("second Set should be duplicate")
+		t.Fatal("refreshed Set should be duplicate")
 	}
-	time.Sleep(110 * time.Millisecond)
-	restored := NewCache(2, file, 200*time.Millisecond)
+	if err := c.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	restored := NewCache(2, file, time.Minute)
 	if _, ok := restored.Get("frame"); !ok {
-		t.Fatal("refreshed duplicate expired after restart")
+		t.Fatal("refreshed duplicate expired after clean restart")
+	}
+}
+
+func TestCacheThrottlesSnapshotsAndFlushesLatest(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "cache.json")
+	c := NewCache(3, file, time.Minute)
+	c.Set("a", time.Now())
+	original, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Set("b", time.Now())
+	c.Set("a", time.Now())
+	onDisk, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(original) != string(onDisk) {
+		t.Fatal("cache rewrote snapshot within throttle interval")
+	}
+	if err := c.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	restored := NewCache(3, file, time.Minute)
+	if _, ok := restored.Get("b"); !ok {
+		t.Fatal("Flush did not persist newly added frame")
 	}
 }
 
