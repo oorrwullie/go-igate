@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
@@ -83,6 +85,7 @@ func (c *Cache) Set(key string, value interface{}) (duplicate bool) {
 			node.timestamp = time.Now()
 			node.val = value
 			c.lru.moveToFront(node)
+			c.persistLocked()
 			return true
 		}
 		c.lru.removeNode(node)
@@ -94,9 +97,7 @@ func (c *Cache) Set(key string, value interface{}) (duplicate bool) {
 	}
 
 	c.lru.set(key, value)
-	if err := c.saveToFile(); err != nil && c.filePath != "" {
-		fmt.Println("Error saving cache:", err)
-	}
+	c.persistLocked()
 
 	return false
 }
@@ -115,26 +116,40 @@ func (c *Cache) pruneExpiredLocked() {
 	}
 }
 
+// persistLocked runs under c.mu, preserving current synchronous persistence.
+func (c *Cache) persistLocked() {
+	if err := c.saveToFile(); err != nil && c.filePath != "" {
+		fmt.Println("Error saving cache:", err)
+	}
+}
+
 func (c *Cache) saveToFile() error {
 	if c.filePath == "" {
 		return nil
 	}
-
-	file, err := os.Create(c.filePath)
-	if err != nil {
-		return fmt.Errorf("error creating cache file: %w", err)
-	}
-	defer file.Close()
-
 	data := make(map[string]int64, len(c.lru.cache))
 	for k, n := range c.lru.cache {
 		data[k] = n.timestamp.UnixNano()
 	}
-
-	if err := json.NewEncoder(file).Encode(data); err != nil {
-		return fmt.Errorf("error encoding cache data to JSON: %w", err)
+	file, err := os.CreateTemp(filepath.Dir(c.filePath), ".sparky-cache-*")
+	if err != nil {
+		return fmt.Errorf("create cache temp file: %w", err)
 	}
-
+	defer os.Remove(file.Name())
+	if err := json.NewEncoder(file).Encode(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("encode cache data: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync cache data: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close cache temp file: %w", err)
+	}
+	if err := os.Rename(file.Name(), c.filePath); err != nil {
+		return fmt.Errorf("replace cache file: %w", err)
+	}
 	return nil
 }
 
@@ -160,13 +175,25 @@ func (c *Cache) loadFromFile() error {
 		return fmt.Errorf("error decoding cache data from JSON: %w", err)
 	}
 
+	// Restore chronological admission order, not randomized map order.
+	type entry struct { key string; ts time.Time }
+	entries := make([]entry, 0, len(data))
 	now := time.Now()
 	for k, ts := range data {
 		timestamp := time.Unix(0, ts)
 		if c.ttl > 0 && now.Sub(timestamp) > c.ttl {
 			continue
 		}
-		c.lru.setWithTimestamp(k, timestamp)
+		entries = append(entries, entry{k, timestamp})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].ts.Equal(entries[j].ts) {
+			return entries[i].key < entries[j].key
+		}
+		return entries[i].ts.Before(entries[j].ts)
+	})
+	for _, e := range entries {
+		c.lru.setWithTimestamp(e.key, e.ts)
 	}
 
 	return nil
