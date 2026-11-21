@@ -1,6 +1,7 @@
 package igate
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -41,6 +42,11 @@ type (
 		forwardChan            chan *aprs.Packet
 		stop                   chan struct{}
 		stopOnce               sync.Once
+		asyncMu                 sync.Mutex
+		asyncWorkers            sync.WaitGroup
+		verificationSlots       chan struct{}
+		aprsFiContext           context.Context
+		aprsFiCancel            context.CancelFunc
 		rfBeaconMu             sync.Mutex
 		rfTxMu                 sync.Mutex
 		beaconMu               sync.Mutex
@@ -127,6 +133,7 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		return nil, fmt.Errorf("Error creating APRS client: %v", err)
 	}
 
+	aprsFiContext, aprsFiCancel := context.WithCancel(context.Background())
 	inputChan := ps.Subscribe()
 
 	var (
@@ -179,6 +186,8 @@ func New(cfg config.IGate, ps *pubsub.PubSub, enableTx bool, tx *transmitter.Tx,
 		geoFilter:              rangeFilter,
 		forwardChan:            make(chan *aprs.Packet, forwarderQueueSize),
 		stop:                   make(chan struct{}),
+		aprsFiContext:          aprsFiContext,
+		aprsFiCancel:           aprsFiCancel,
 		lastRx:                 time.Now(),
 		beaconWaits:            make(map[string]*beaconWait),
 		localStations:          make(map[string]time.Time),
@@ -259,14 +268,40 @@ func (i *IGate) Run() error {
 	return g.Wait()
 }
 
+// launchAsync registers independent iGate work before creating a goroutine.
+// The shared lifecycle lock prevents Add from racing with shutdown Wait.
+func (i *IGate) launchAsync(work func()) bool {
+	i.asyncMu.Lock()
+	defer i.asyncMu.Unlock()
+	select {
+	case <-i.stop:
+		return false
+	default:
+	}
+	i.asyncWorkers.Add(1)
+	go func() {
+		defer i.asyncWorkers.Done()
+		work()
+	}()
+	return true
+}
+
 func (i *IGate) Stop() {
 	i.stopOnce.Do(func() {
+		i.asyncMu.Lock()
 		close(i.stop)
+		i.asyncMu.Unlock()
+		if i.aprsFiCancel != nil {
+			i.aprsFiCancel()
+		}
 		if i.Aprsis != nil {
 			i.Aprsis.Stop()
 		}
 		i.cancelPendingBeacon()
 	})
+	// Join verification and beacon work after cancellation, without holding
+	// the admission lock. Repeated Stop calls are safe.
+	i.asyncWorkers.Wait()
 }
 
 func (i *IGate) SetDigiRewriter(rewriter *digipeater.Rewriter) {
@@ -1131,7 +1166,7 @@ func (i *IGate) startBeacon() error {
 
 		rfFrame := buildBeaconFrame(i.callSign, path, i.cfg.Beacon.Comment)
 		i.logger.Info("Beacon -> RF (", reason, "): ", rfFrame)
-		go i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment, allowRetry)
+		i.launchAsync(func() { i.sendBeaconRf(rfFrame, i.cfg.Beacon.Comment, allowRetry) })
 	}
 
 	// Send initial beacon to each configured destination
@@ -1144,7 +1179,7 @@ func (i *IGate) startBeacon() error {
 	}
 
 	if isTicker != nil {
-		go func() {
+		if !i.launchAsync(func() {
 			defer isTicker.Stop()
 
 			for {
@@ -1155,12 +1190,14 @@ func (i *IGate) startBeacon() error {
 					sendAprsIs("scheduled")
 				}
 			}
-		}()
+		}) {
+			isTicker.Stop()
+		}
 	}
 
 	for _, schedule := range rfSchedules {
 		s := schedule
-		go func() {
+		i.launchAsync(func() {
 			ticker := time.NewTicker(s.interval)
 			defer ticker.Stop()
 
@@ -1172,7 +1209,7 @@ func (i *IGate) startBeacon() error {
 					sendRF(s.path, s.allowRetry, "scheduled")
 				}
 			}
-		}()
+		})
 	}
 
 	return nil
