@@ -196,61 +196,82 @@ func (p *Packet) Position() (lat float64, lon float64, ok bool) {
 	switch p.Payload[0] {
 	case '!', '=':
 	case '/', '@':
-		// Timestamped reports have DDHHMMz, DDHHMM/, or HHMMSSh
-		// before the position field; its contents are not needed here.
+		// APRS timestamp: six ASCII digits followed by z, /, or h.
 		if len(p.Payload) < 8 {
+			return 0, 0, false
+		}
+		for k := 1; k <= 6; k++ {
+			if !asciiDigit(p.Payload[k]) {
+				return 0, 0, false
+			}
+		}
+		switch p.Payload[7] {
+		case 'z', '/', 'h':
+		default:
 			return 0, 0, false
 		}
 		offset = 8
 	default:
 		return 0, 0, false
 	}
-
-	if lat, lon, ok = uncompressedPosition(p.Payload, offset); ok {
-		return lat, lon, true
+	if len(p.Payload) <= offset {
+		return 0, 0, false
 	}
-	// Do not reinterpret a malformed uncompressed coordinate as compressed.
-	// Compressed symbol-table overlays may start with a digit, but they do
-	// not carry the uncompressed hemisphere field in this position.
-	if len(p.Payload) >= offset+18 && p.Payload[offset] >= '0' && p.Payload[offset] <= '9' {
-		switch p.Payload[offset+7] {
-		case 'N', 'n', 'S', 's':
-			return 0, 0, false
-		}
+
+	// APRS 1.0.1 chapter 20 explicitly disallows numeric symbol-table
+	// identifiers in *compressed* reports (a-j represent digit overlays).
+	// A leading digit therefore unambiguously selects uncompressed syntax,
+	// including malformed or truncated uncompressed frames.
+	if asciiDigit(p.Payload[offset]) {
+		return uncompressedPosition(p.Payload, offset)
 	}
 	return compressedPosition(p.Payload, offset)
 }
 
+func asciiDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+// Fixed DDMM.mmN / DDDMM.mmE syntax: ParseFloat alone accepts NaN,
+// negatives and exponent notation, which are not valid APRS coordinates.
 func uncompressedPosition(payload string, offset int) (lat float64, lon float64, ok bool) {
 	if len(payload) < offset+18 {
 		return 0, 0, false
 	}
 	latitude := payload[offset : offset+8]
 	longitude := payload[offset+9 : offset+18]
-	if payload[offset+8] < '!' || payload[offset+8] > '~' {
+	for _, k := range []int{0, 1, 2, 3, 5, 6} {
+		if !asciiDigit(latitude[k]) {
+			return 0, 0, false
+		}
+	}
+	if latitude[4] != '.' {
 		return 0, 0, false
 	}
-	latDegrees, err := strconv.ParseFloat(latitude[:2], 64)
-	if err != nil {
+	for _, k := range []int{0, 1, 2, 3, 4, 6, 7} {
+		if !asciiDigit(longitude[k]) {
+			return 0, 0, false
+		}
+	}
+	if longitude[5] != '.' {
 		return 0, 0, false
 	}
-	latMinutes, err := strconv.ParseFloat(latitude[2:7], 64)
-	if err != nil {
-		return 0, 0, false
+	// Only recognized symbol-table selectors count as valid positions.
+	switch payload[offset+8] {
+	case '/', '\\':
+	default:
+		if !asciiDigit(payload[offset+8]) &&
+			(payload[offset+8] < 'A' || payload[offset+8] > 'Z') {
+			return 0, 0, false
+		}
 	}
-	lonDegrees, err := strconv.ParseFloat(longitude[:3], 64)
-	if err != nil {
-		return 0, 0, false
-	}
-	lonMinutes, err := strconv.ParseFloat(longitude[3:8], 64)
-	if err != nil {
-		return 0, 0, false
-	}
+	latDegrees, _ := strconv.Atoi(latitude[:2])
+	latMinutes, _ := strconv.ParseFloat(latitude[2:7], 64)
+	lonDegrees, _ := strconv.Atoi(longitude[:3])
+	lonMinutes, _ := strconv.ParseFloat(longitude[3:8], 64)
 	if latDegrees > 90 || lonDegrees > 180 || latMinutes >= 60 || lonMinutes >= 60 {
 		return 0, 0, false
 	}
-	lat = latDegrees + latMinutes/60
-	lon = lonDegrees + lonMinutes/60
+	lat = float64(latDegrees) + latMinutes/60
+	lon = float64(lonDegrees) + lonMinutes/60
 	switch latitude[7] {
 	case 'N', 'n':
 	case 'S', 's':
@@ -265,32 +286,37 @@ func uncompressedPosition(payload string, offset int) (lat float64, lon float64,
 	default:
 		return 0, 0, false
 	}
-	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+	if lat > 90 || lat < -90 || lon > 180 || lon < -180 {
 		return 0, 0, false
 	}
 	return lat, lon, true
 }
 
 // Compressed coordinates are four base-91 digits each, following the symbol
-// table byte: latitude = 90 - YYYY/380926, longitude = -180 + XXXX/190463.
-// See APRS Protocol Reference v1.0.1, Chapter 9.
+// table ID. APRS specifies /, backslash, A-Z and a-j for compressed tables;
+// numeric overlays must use a-j, never a literal digit.
 func compressedPosition(payload string, offset int) (lat float64, lon float64, ok bool) {
 	if len(payload) < offset+13 {
 		return 0, 0, false
 	}
-	// Symbol table and code are printable APRS characters. A leading digit
-	// can also be a valid overlay; first try uncompressed syntax above.
-	if payload[offset] < '!' || payload[offset] > '~' ||
-		payload[offset+9] < '!' || payload[offset+9] > '~' {
+	table := payload[offset]
+	switch {
+	case table == '/' || table == '\\':
+	case table >= 'A' && table <= 'Z':
+	case table >= 'a' && table <= 'j':
+	default:
+		return 0, 0, false
+	}
+	if payload[offset+9] < '!' || payload[offset+9] > '~' {
 		return 0, 0, false
 	}
 	decode := func(chars string) (int, bool) {
 		value := 0
-		for i := 0; i < len(chars); i++ {
-			if chars[i] < '!' || chars[i] > '{' {
+		for k := 0; k < len(chars); k++ {
+			if chars[k] < '!' || chars[k] > '{' {
 				return 0, false
 			}
-			value = value*91 + int(chars[i]-'!')
+			value = value*91 + int(chars[k]-'!')
 		}
 		return value, true
 	}
