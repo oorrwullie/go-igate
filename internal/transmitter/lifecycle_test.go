@@ -11,12 +11,16 @@ import (
 type fakeBackend struct {
 	mu       sync.Mutex
 	messages []string
+	calls    int
 	entered  chan struct{}
 	unblock  chan struct{}
 	once     sync.Once
 }
 
 func (b *fakeBackend) Play(msg string) {
+	b.mu.Lock()
+	b.calls++
+	b.mu.Unlock()
 	if b.entered != nil {
 		b.once.Do(func() { close(b.entered) })
 	}
@@ -38,56 +42,59 @@ func (b *fakeBackend) Stop() {
 	}
 }
 
-func TestTransmitterWorkerPreservesOrder(t *testing.T) {
+func TestTransmitterRepeatedStartDoesNotDispatchConcurrently(t *testing.T) {
 	logger, err := log.New()
 	if err != nil {
 		t.Fatal(err)
 	}
-	backend := &fakeBackend{}
+	backend := &fakeBackend{
+		entered: make(chan struct{}),
+		unblock: make(chan struct{}),
+	}
 	tx, err := NewWithBackend(backend, logger)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !tx.Tx.TrySend("first") {
-		t.Fatal("initial frame not queued")
-	}
 	if err := tx.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if err := tx.Start(); err != nil {
-		t.Fatal("repeated Start should not spawn another worker:", err)
+	if !tx.Tx.TrySend("first") {
+		t.Fatal("first frame not queued")
 	}
-
-	// Wait for the first frame before admitting the next; a single worker
-	// must dispatch in queue order.
-	deadline := time.After(time.Second)
-	for {
-		backend.mu.Lock()
-		n := len(backend.messages)
-		backend.mu.Unlock()
-		if n == 1 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatal("first frame was not delivered")
-		default:
-			time.Sleep(time.Millisecond)
-		}
+	select {
+	case <-backend.entered:
+	case <-time.After(time.Second):
+		t.Fatal("first frame was not dispatched")
+	}
+	// The first Play is still blocked. A second worker would race into Play
+	// and increment calls before the first backend call can return.
+	if err := tx.Start(); err != nil {
+		t.Fatal("repeated Start should be idempotent:", err)
 	}
 	if !tx.Tx.TrySend("second") {
 		t.Fatal("second frame not queued")
 	}
+	select {
+	case <-time.After(50 * time.Millisecond):
+		backend.mu.Lock()
+		started := backend.calls
+		backend.mu.Unlock()
+		if started != 1 {
+			t.Fatalf("concurrent backend dispatch: %d Play calls while first is blocked", started)
+		}
+	}
+	backend.Stop() // Release blocked Play without stopping the transmitter.
+	deadline := time.After(time.Second)
 	for {
 		backend.mu.Lock()
-		n := len(backend.messages)
+		started := backend.calls
 		backend.mu.Unlock()
-		if n == 2 {
+		if started == 2 {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatal("second frame was not delivered")
+			t.Fatal("second frame was never dispatched")
 		default:
 			time.Sleep(time.Millisecond)
 		}
