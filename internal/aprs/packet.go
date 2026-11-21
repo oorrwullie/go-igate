@@ -205,8 +205,20 @@ func (p *Packet) Position() (lat float64, lon float64, ok bool) {
 				return 0, 0, false
 			}
 		}
+		first, _ := strconv.Atoi(p.Payload[1:3])
+		second, _ := strconv.Atoi(p.Payload[3:5])
+		third, _ := strconv.Atoi(p.Payload[5:7])
 		switch p.Payload[7] {
-		case 'z', '/', 'h':
+		case 'z', '/':
+			// Day-of-month, hour, minute.
+			if first < 1 || first > 31 || second > 23 || third > 59 {
+				return 0, 0, false
+			}
+		case 'h':
+			// Hour, minute, second.
+			if first > 23 || second > 59 || third > 59 {
+				return 0, 0, false
+			}
 		default:
 			return 0, 0, false
 		}
@@ -233,7 +245,7 @@ func asciiDigit(c byte) bool { return c >= '0' && c <= '9' }
 // Fixed DDMM.mmN / DDDMM.mmE syntax: ParseFloat alone accepts NaN,
 // negatives and exponent notation, which are not valid APRS coordinates.
 func uncompressedPosition(payload string, offset int) (lat float64, lon float64, ok bool) {
-	if len(payload) < offset+18 {
+	if len(payload) < offset+19 {
 		return 0, 0, false
 	}
 	latitude := payload[offset : offset+8]
@@ -252,6 +264,10 @@ func uncompressedPosition(payload string, offset int) (lat float64, lon float64,
 		}
 	}
 	if longitude[5] != '.' {
+		return 0, 0, false
+	}
+	// Both table ID and symbol code are mandatory, printable APRS bytes.
+	if payload[offset+18] < '!' || payload[offset+18] > '~' {
 		return 0, 0, false
 	}
 	// Only recognized symbol-table selectors count as valid positions.
