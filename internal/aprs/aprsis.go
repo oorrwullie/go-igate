@@ -1,7 +1,10 @@
 package aprs
 
 import (
+	"context"
 	"fmt"
+	"net"
+	"sync"
 	"net/textproto"
 	"strings"
 	"sync/atomic"
@@ -22,6 +25,11 @@ type AprsIs struct {
 	inboundEnabled atomic.Bool
 	stop           chan struct{}
 	stopOnce       atomic.Bool
+	connMu         sync.Mutex
+	connectMu      sync.Mutex
+	pending        net.Conn
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger) (*AprsIs, error) {
@@ -37,7 +45,10 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 		return nil, fmt.Errorf("no passcode specified")
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	a := &AprsIs{
+		ctx:       ctx,
+		cancel:    cancel,
 		Callsign:  callSign,
 		Inbound:   make(chan string, 64),
 		Conn:      nil,
@@ -55,7 +66,25 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 
 	go func() {
 		for {
-			msg, err := a.Conn.ReadLine()
+			conn := a.currentConnection()
+			if conn == nil {
+				select {
+				case <-a.stop:
+					return
+				default:
+				}
+				if err := a.Connect(); err != nil {
+					logger.Error(err, "Could not connect to APRS-IS server")
+					select {
+					case <-a.stop:
+						return
+					case <-time.After(5 * time.Second):
+						continue
+					}
+				}
+				continue
+			}
+			msg, err := conn.ReadLine()
 			if err != nil {
 				logger.Error(err, "Error reading from APRS-IS")
 				select {
@@ -96,36 +125,83 @@ func New(cfg config.AprsIs, callSign string, comment string, logger *log.Logger)
 	return a, nil
 }
 
+func (a *AprsIs) isStopped() bool {
+	return a.stopOnce.Load()
+}
+
+func (a *AprsIs) currentConnection() *textproto.Conn {
+	a.connMu.Lock()
+	defer a.connMu.Unlock()
+	return a.Conn
+}
+
+// Connect serializes connection attempts but never holds connMu across I/O.
+// Stop can therefore close a stalled login socket immediately.
 func (a *AprsIs) Connect() error {
-	if a.connected {
+	a.connectMu.Lock()
+	defer a.connectMu.Unlock()
+	if a.isStopped() {
+		return fmt.Errorf("APRS-IS client stopped")
+	}
+	if a.currentConnection() != nil {
 		return nil
 	}
 
-	conn, err := textproto.Dial("tcp", a.cfg.Server)
-	if err != nil {
-		return fmt.Errorf("could not connect to APRS-IS: %v", err)
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
-
-	err = conn.PrintfLine(
-		"user %s pass %s vers Sparky 0.0.1 filter %s",
-		a.Callsign,
-		a.cfg.Passcode,
-		a.cfg.Filter,
-	)
+	dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	raw, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", a.cfg.Server)
 	if err != nil {
+		return fmt.Errorf("could not connect to APRS-IS: %w", err)
+	}
+	a.connMu.Lock()
+	if a.isStopped() {
+		a.connMu.Unlock()
+		raw.Close()
+		return fmt.Errorf("APRS-IS client stopped")
+	}
+	a.pending = raw
+	a.connMu.Unlock()
+	defer func() {
+		a.connMu.Lock()
+		if a.pending == raw {
+			a.pending = nil
+		}
+		a.connMu.Unlock()
+	}()
+
+	// A server that accepts TCP but never sends logresp must not pin shutdown.
+	if err := raw.SetDeadline(time.Now().Add(10*time.Second)); err != nil {
+		raw.Close()
+		return err
+	}
+	conn := textproto.NewConn(raw)
+	if err := conn.PrintfLine("user %s pass %s vers Sparky 0.0.1 filter %s",
+		a.Callsign, a.cfg.Passcode, a.cfg.Filter); err != nil {
 		conn.Close()
 		return err
 	}
-
 	if err := verifyLoginResponse(conn, a.Callsign); err != nil {
 		conn.Close()
 		return err
 	}
-
-	fmt.Println("Connected to APRS-IS server")
-	a.connected = true
+	if err := raw.SetDeadline(time.Time{}); err != nil {
+		conn.Close()
+		return err
+	}
+	a.connMu.Lock()
+	if a.isStopped() {
+		a.connMu.Unlock()
+		conn.Close()
+		return fmt.Errorf("APRS-IS client stopped")
+	}
+	a.pending = nil
 	a.Conn = conn
-
+	a.connected = true
+	a.connMu.Unlock()
 	return nil
 }
 
@@ -163,35 +239,58 @@ func (a *AprsIs) SetInboundEnabled(enabled bool) {
 }
 
 func (a *AprsIs) Disconnect() {
-	if !a.connected {
-		return
-	}
-
-	a.Conn.Close()
+	a.connMu.Lock()
+	conn := a.Conn
+	a.Conn = nil
 	a.connected = false
+	a.connMu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
+	}
 }
 
-// Stop permanently ends the reader and closes the current connection.
+// Stop closes both the active and not-yet-logged-in connections; it never
+// waits behind Connect's network I/O. Further reconnects are rejected.
 func (a *AprsIs) Stop() {
 	if a.stopOnce.CompareAndSwap(false, true) {
-		close(a.stop)
+		if a.cancel != nil {
+			a.cancel()
+		}
+		if a.stop != nil {
+			close(a.stop)
+		}
 	}
-	a.Disconnect()
+	a.connMu.Lock()
+	pending := a.pending
+	active := a.Conn
+	a.pending = nil
+	a.Conn = nil
+	a.connected = false
+	a.connMu.Unlock()
+	if pending != nil {
+		_ = pending.Close()
+	}
+	if active != nil {
+		_ = active.Close()
+	}
 }
 
 func (a *AprsIs) Upload(msg string) error {
-	if !a.connected {
-		err := a.Connect()
-		if err != nil {
+	if a.isStopped() {
+		return fmt.Errorf("APRS-IS client stopped")
+	}
+	conn := a.currentConnection()
+	if conn == nil {
+		if err := a.Connect(); err != nil {
 			return err
 		}
+		conn = a.currentConnection()
+		if conn == nil {
+			return fmt.Errorf("APRS-IS connection unavailable")
+		}
 	}
-
 	msg = strings.TrimPrefix(msg, "APRS: ")
-
-	err := a.Conn.PrintfLine("%s", msg)
-
-	return err
+	return conn.PrintfLine("%s", msg)
 }
 
 func isReadReceipt(message string) bool {
