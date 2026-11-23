@@ -1,13 +1,5 @@
 <p align="center">
-  <img src="assets/sparky-gopher-mascot.png" alt="Sparky, the Go gopher radio operator" width="260">
-</p>
-
-# Sparky
-
-<p align="center">Radio data, connected.</p>
-
-<p align="center">
-  <img src="assets/sparky-radio-command-center.png" alt="Sparky operating an APRS and ADS-B radio command center" width="900">
+  <img src="assets/sparky-readme-banner.svg" alt="Sparky — radio data, connected: APRS, ADS-B, MQTT and Go" width="100%">
 </p>
 
 Sparky is an open-source radio data gateway written in Go. It receives, processes, and routes radio data between receivers, transmitters, and network services. Today it focuses on **APRS** and **ADS-B**, with room for additional protocols and hardware backends as the project evolves.
@@ -16,9 +8,15 @@ Sparky began as an RTL-SDR APRS iGate, inspired by [Ionosphere](https://github.c
 
 ## Why Sparky?
 
+<img src="assets/sparky-gopher-mascot.png" alt="Sparky, the Go gopher wearing a radio headset" width="185" align="right">
+
 The name is a nod to **Sparky**, the radio operator Radar frequently talks to in *M\*A\*S\*H*. He's the voice at the other end of the radio, helping messages get where they need to go. That's a fitting namesake for software that listens to radio traffic and routes it between the airwaves and connected services.
 
 ## Current capabilities
+
+<p align="center">
+  <img src="assets/sparky-radio-command-center.png" alt="Sparky operating a radio command center with APRS and ADS-B displays" width="850">
+</p>
 
 ### APRS
 - Receive APRS through an RTL-SDR with `rtl_fm` and `multimon-ng`, or from a sound-card audio input.
@@ -34,7 +32,7 @@ The name is a nod to **Sparky**, the radio operator Radar frequently talks to in
 **Scope:** ADS-B forwarding relies on OpenWebRX+ to decode aircraft reports; Sparky does not currently decode raw ADS-B samples itself. The embedded MQTT broker is provided for the local OpenWebRX+ integration, not as a general-purpose public broker. RF transmission currently uses a sound-card audio output and an external radio; native RF transmitter-module control is not yet implemented.
 
 ## Getting Started
-First you need to install the dependencies. Make sure you are running the latest version of Go or at least the version specified in the go.mod file.
+Install the prerequisites for your chosen receive/transmit backend, then build and configure Sparky.
 
 ### Dependencies
 **Build dependencies (all configurations):** `pkg-config` and the PortAudio development headers are required because the capture package currently imports PortAudio unconditionally, including for MQTT-only use. On Debian/Ubuntu, install `pkg-config` and `portaudio19-dev` before building.
@@ -44,9 +42,9 @@ First you need to install the dependencies. Make sure you are running the latest
 * An RTL-SDR compatible device (for SDR reception).
 * [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr) (for SDR reception)
 * [multimon-ng](https://github.com/EliasOenal/multimon-ng) (for local audio decoding)
-* [alsa-utils](https://alsa-project.org/wiki/Main_Page) (`aplay`) when using the soundcard transmitter
- 
-- Go 1.22.4 or later (see `go.mod`)
+* [alsa-utils](https://alsa-project.org/wiki/Main_Page) (`aplay`) when using the sound-card transmitter
+
+**Go toolchain:** Go 1.22.4 or later (see `go.mod`).
 
 ## Usage
 
@@ -88,22 +86,14 @@ The feed sends aircraft reports as OpenWebRX+ produces them. The receiver must k
 
 When map.flights forwarding is enabled, Sparky logs a once-per-minute ADS-B forwarding summary with incoming reports, completed QoS 0 MQTT publishes, failures, rejected reports, queue drops, queue depth, connection state, and age of the last received report. A completed QoS 0 publish only means Sparky's MQTT client completed the send; MQTT does not confirm that map.flights displayed the aircraft. Check the station page separately for ingestion and display.
 
-### Installing with make
-
-#### Build the application
-`make build`
-
-#### Run the application
-`make run`
-
-### Installing the service with make
-`make install-service`
-
-### Running the application for testing
+### Build and run
 
 ```bash
-go run .
+make build       # Build Sparky
+make run         # Run it locally
 ```
+
+To install the provided systemd service, run `make install-service`. For a quick development run, use `go run .`.
 
 ### Log rotation
 
@@ -154,5 +144,5 @@ Contributions are what make the open source community such an amazing place to l
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
-## Contact
+## Repository
 Project repository: [https://github.com/oorrwullie/sparky](https://github.com/oorrwullie/sparky)

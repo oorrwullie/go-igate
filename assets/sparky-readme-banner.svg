@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="390" viewBox="0 0 1200 390" role="img" aria-labelledby="title desc">
+<title id="title">Sparky — Radio data, connected</title>
+<desc id="desc">A navy-blue radio gateway banner with a glowing radio tower, APRS packet paths, signal traces, and a vintage receiver.</desc>
+<defs>
+ <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#08182d"/><stop offset=".6" stop-color="#112a45"/><stop offset="1" stop-color="#153e55"/></linearGradient>
+ <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#59e9f3"/><stop offset="1" stop-color="#57a9df"/></linearGradient>
+ <radialGradient id="glow"><stop stop-color="#42d7ef" stop-opacity=".21"/><stop offset="1" stop-color="#42d7ef" stop-opacity="0"/></radialGradient>
+ <filter id="soft"><feGaussianBlur stdDeviation="5"/></filter>
+</defs>
+<rect width="1200" height="390" rx="26" fill="url(#bg)"/>
+<circle cx="945" cy="130" r="250" fill="url(#glow)"/>
+<g opacity=".18" stroke="#69c3db" fill="none" stroke-width="1.5">
+ <path d="M0 330Q220 225 455 321T900 322T1200 275"/>
+ <path d="M0 354Q220 249 455 345T900 346T1200 299"/>
+ <path d="M0 378Q220 273 455 369T900 370T1200 323"/>
+ <path d="M0 125H1200M0 195H1200M0 265H1200" stroke-dasharray="3 11"/>
+</g>
+<g fill="none" stroke="#44dbea" stroke-width="2.8" stroke-linecap="round">
+ <path opacity=".6" d="M50 280L148 240L244 257L335 208" stroke-dasharray="9 13"/>
+ <path opacity=".5" d="M472 278L590 238L704 265L835 194" stroke-dasharray="8 12"/>
+ <circle cx="148" cy="240" r="6" fill="#44dbea"/><circle cx="244" cy="257" r="5" fill="#44dbea"/>
+ <circle cx="590" cy="238" r="5" fill="#44dbea"/>
+</g>
+<g transform="translate(945 37)">
+ <circle cx="0" cy="126" r="127" fill="none" stroke="#60d8e7" stroke-opacity=".18" stroke-width="1"/>
+ <circle cx="0" cy="126" r="90" fill="none" stroke="#60d8e7" stroke-opacity=".2" stroke-width="1"/>
+ <path d="M0 78V238M-65 238H65M0 78L-54 238M0 78L54 238M-35 190H35M-24 147H24M-12 106H12" fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+ <circle cy="72" r="11" fill="#5cf1f0"/>
+ <path d="M-27 46Q0 20 27 46M-46 30Q0 -14 46 30M27 46Q0 20 -27 46M46 30Q0 -14 -46 30" fill="none" stroke="#59e6f0" stroke-width="6" stroke-linecap="round"/>
+</g>
+<g transform="translate(68 58)">
+ <rect x="0" y="0" width="81" height="81" rx="18" fill="#2d526a" fill-opacity=".65" stroke="#65d9e7" stroke-opacity=".6" stroke-width="2"/>
+ <path d="M22 60V28M59 60V28M22 28L41 15L59 28M24 45H57" fill="none" stroke="#6ef2f1" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+ <circle cx="41" cy="16" r="5" fill="#6ef2f1"/>
+</g>
+<text x="168" y="129" font-family="Verdana,DejaVu Sans,sans-serif" font-weight="800" font-size="79" letter-spacing="3" fill="#ffffff">SPARKY</text>
+<text x="70" y="194" font-family="Verdana,DejaVu Sans,sans-serif" font-size="30" font-weight="600" fill="#6ce9ef">Radio data, connected.</text>
+<g font-family="Verdana,DejaVu Sans,sans-serif" font-size="16" font-weight="600" fill="#b3d6e1">
+ <rect x="68" y="223" width="112" height="35" rx="17" fill="#214b62" stroke="#4b90a3" stroke-opacity=".6"/><text x="92" y="246">APRS</text>
+ <rect x="192" y="223" width="116" height="35" rx="17" fill="#214b62" stroke="#4b90a3" stroke-opacity=".6"/><text x="218" y="246">ADS-B</text>
+ <rect x="320" y="223" width="112" height="35" rx="17" fill="#214b62" stroke="#4b90a3" stroke-opacity=".6"/><text x="345" y="246">MQTT</text>
+ <rect x="444" y="223" width="112" height="35" rx="17" fill="#214b62" stroke="#4b90a3" stroke-opacity=".6"/><text x="469" y="246">Go</text>
+</g>
+<text x="68" y="332" font-family="Verdana,DejaVu Sans,sans-serif" font-size="15" fill="#a4c4d2">From the airwaves to the network</text>
+<path d="M680 345H1165" stroke="#57e1ec" stroke-width="2" stroke-opacity=".27"/>
+</svg>
