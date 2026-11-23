@@ -4,15 +4,16 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"github.com/oorrwullie/sparky/internal/config"
+	"fmt"
 	"net"
-	"sync"
-	"time"
 	"net/textproto"
 	"strings"
+	"sync"
 	"testing"
-)
+	"time"
 
+	"github.com/oorrwullie/sparky/internal/config"
+)
 func TestVerifyLoginResponseSkipsServerGreeting(t *testing.T) {
 	response := textproto.NewReader(bufio.NewReader(strings.NewReader(
 		"# aprsc 2.1.20 test server\r\n# logresp N0CALL-10 verified, server test\r\n",
@@ -118,4 +119,63 @@ func TestStopRejectsReconnectRace(t *testing.T) {
 	if err := a.Connect(); err == nil || errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Connect after Stop error = %v", err)
 	}
+}
+
+func TestConcurrentAPRSISUploadsAreCompleteLines(t *testing.T) {
+	client, server := net.Pipe()
+	defer server.Close()
+	a := &AprsIs{
+		Conn: textproto.NewConn(client),
+		stop: make(chan struct{}),
+	}
+	const count = 80
+	lines := make(chan string, count)
+	readDone := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(server)
+		for n := 0; n < count; n++ {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				readDone <- err
+				return
+			}
+			lines <- strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+		}
+		readDone <- nil
+	}()
+	var wg sync.WaitGroup
+	for n := 0; n < count; n++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			if err := a.Upload(fmt.Sprintf("N0CALL>APRS:frame-%03d", id)); err != nil {
+				t.Errorf("Upload(%d): %v", id, err)
+			}
+		}(n)
+	}
+	finished := make(chan struct{})
+	go func() { wg.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-time.After(3*time.Second):
+		t.Fatal("concurrent Upload calls stalled")
+	}
+	select {
+	case err := <-readDone:
+		if err != nil { t.Fatal(err) }
+	case <-time.After(3*time.Second):
+		t.Fatal("server did not receive all packet lines")
+	}
+	received := make(map[string]bool)
+	for n := 0; n < count; n++ {
+		line := <-lines
+		if !strings.HasPrefix(line, "N0CALL>APRS:frame-") || len(line) != len("N0CALL>APRS:frame-000") {
+			t.Fatalf("interleaved or malformed APRS-IS line %q", line)
+		}
+		if received[line] {
+			t.Fatalf("duplicate packet %q", line)
+		}
+		received[line] = true
+	}
+	a.Stop()
 }

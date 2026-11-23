@@ -27,6 +27,7 @@ type AprsIs struct {
 	stopOnce       atomic.Bool
 	connMu         sync.Mutex
 	connectMu      sync.Mutex
+	writeMu        sync.Mutex
 	pending        net.Conn
 	ctx            context.Context
 	cancel         context.CancelFunc
@@ -275,7 +276,11 @@ func (a *AprsIs) Stop() {
 	}
 }
 
+// Upload serializes all APRS-IS writes, including concurrent beacons and RF
+// packet uploads. Stop never takes writeMu, so it can interrupt blocked I/O.
 func (a *AprsIs) Upload(msg string) error {
+	a.writeMu.Lock()
+	defer a.writeMu.Unlock()
 	if a.isStopped() {
 		return fmt.Errorf("APRS-IS client stopped")
 	}
