@@ -1,9 +1,10 @@
-// Package webconfig serves the first, read-only Sparky configuration interface.
+// Package webconfig serves Sparky's authenticated configuration interface.
 package webconfig
 
 import (
  "crypto/sha256"
  "crypto/subtle"
+ "crypto/tls"
  "errors"
  "fmt"
  "html/template"
@@ -46,7 +47,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  w.Header().Set("X-Frame-Options", "DENY")
  w.Header().Set("Referrer-Policy", "no-referrer")
  w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
- if !localHost(r.Host) {
+ if r.TLS == nil && !localHost(r.Host) {
   http.Error(w,"Host not allowed",http.StatusForbidden)
   return
  }
@@ -93,8 +94,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // authorized protects every route, including the overview and error pages.
-// Basic authentication is intentionally restricted to the loopback-only
-// listener. Access across machines requires an encrypted SSH tunnel.
+// Plain HTTP is permitted only on the loopback listener. Remote access
+// requires HTTPS configured with an explicit certificate and private key.
 func (s *Server) authorized(w http.ResponseWriter,r *http.Request) bool {
  password:=os.Getenv("SPARKY_CONFIG_PASSWORD")
  if len(password)<16 {
@@ -125,17 +126,36 @@ func localHost(hostport string) bool {
  return ip!=nil && ip.IsLoopback()
 }
 
-// ListenAndServe starts only on a loopback address. It never binds a LAN
-// interface, regardless of a caller's requested address.
+// ListenAndServe keeps the original safe default: plaintext HTTP bound to an
+// explicit loopback IP address. LAN exposure requires ListenAndServeTLS.
 func (s *Server) ListenAndServe(addr string) error {
+ return s.listen(addr,"","")
+}
+
+// ListenAndServeTLS enables explicit HTTPS on a chosen interface. Both TLS
+// credentials must be supplied, including for localhost, and the browser must
+// trust a certificate valid for the hostname or IP used.
+func (s *Server) ListenAndServeTLS(addr, certFile, keyFile string) error {
+ if certFile=="" || keyFile=="" {return errors.New("HTTPS requires both TLS certificate and private key")}
+ return s.listen(addr,certFile,keyFile)
+}
+
+func (s *Server) listen(addr,certFile,keyFile string) error {
  if addr=="" {addr="127.0.0.1:8080"}
  host,_,err:=net.SplitHostPort(addr)
- if err!=nil || !localHost(host) {
-  return fmt.Errorf("web config listener must use an explicit loopback IP address: %q",addr)
- }
- // Require literal loopback IP rather than a DNS name to avoid binding surprises.
+ if err!=nil {return fmt.Errorf("invalid web configuration listener %q: %w",addr,err)}
  ip:=net.ParseIP(host)
- if ip==nil || !ip.IsLoopback() {return errors.New("listener requires a literal loopback IP")}
+ if ip==nil {return errors.New("listener requires a literal IP address")}
+ secure:=certFile!="" && keyFile!=""
+ if !ip.IsLoopback() && !secure {
+  return errors.New("non-loopback web configuration listener requires HTTPS certificate and key")
+ }
+ if (certFile=="") != (keyFile=="") {return errors.New("incomplete TLS configuration")}
+ var cert tls.Certificate
+ if secure {
+  cert,err=tls.LoadX509KeyPair(certFile,keyFile)
+  if err!=nil {return fmt.Errorf("load HTTPS certificate: %w",err)}
+ }
  listener,err:=net.Listen("tcp",addr)
  if err!=nil {return err}
  httpServer:=&http.Server{
@@ -145,6 +165,10 @@ func (s *Server) ListenAndServe(addr string) error {
   WriteTimeout:10*time.Second,
   IdleTimeout:30*time.Second,
   MaxHeaderBytes:1<<16,
+ }
+ if secure {
+  httpServer.TLSConfig=&tls.Config{MinVersion:tls.VersionTLS12,Certificates:[]tls.Certificate{cert}}
+  return httpServer.ServeTLS(listener,"","")
  }
  return httpServer.Serve(listener)
 }
