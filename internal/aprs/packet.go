@@ -242,6 +242,147 @@ func (p *Packet) Position() (lat float64, lon float64, ok bool) {
 
 func asciiDigit(c byte) bool { return c >= '0' && c <= '9' }
 
+// PositionBounds returns the geographic extent of a supported position.
+// Normal reports have zero extent. APRS position ambiguity uses blanks in
+// trailing minute digits: the sender reports a cell, not an exact point.
+// Unknown or malformed formats remain unknown (ok=false).
+func (p *Packet) PositionBounds() (minLat, maxLat, minLon, maxLon float64, ok bool) {
+	if lat, lon, exact := p.Position(); exact {
+		return lat, lat, lon, lon, true
+	}
+	payload := p.Payload
+	if len(payload) < 1 {
+		return 0, 0, 0, 0, false
+	}
+	offset := 1
+	switch payload[0] {
+	case '!', '=':
+	case '/', '@':
+		if len(payload) < 8 {
+			return 0, 0, 0, 0, false
+		}
+		for k := 1; k <= 6; k++ {
+			if !asciiDigit(payload[k]) {
+				return 0, 0, 0, 0, false
+			}
+		}
+		dayOrHour, _ := strconv.Atoi(payload[1:3])
+		hourOrMin, _ := strconv.Atoi(payload[3:5])
+		minOrSec, _ := strconv.Atoi(payload[5:7])
+		switch payload[7] {
+		case 'z', '/':
+			if dayOrHour < 1 || dayOrHour > 31 || hourOrMin > 23 || minOrSec > 59 {
+				return 0, 0, 0, 0, false
+			}
+		case 'h':
+			if dayOrHour > 23 || hourOrMin > 59 || minOrSec > 59 {
+				return 0, 0, 0, 0, false
+			}
+		default:
+			return 0, 0, 0, 0, false
+		}
+		offset = 8
+	default:
+		return 0, 0, 0, 0, false
+	}
+	if len(payload) < offset+19 || !asciiDigit(payload[offset]) {
+		return 0, 0, 0, 0, false
+	}
+	lat := []byte(payload[offset : offset+8])
+	lon := []byte(payload[offset+9 : offset+18])
+	if lat[4] != '.' || lon[5] != '.' {
+		return 0, 0, 0, 0, false
+	}
+	if !asciiDigit(lat[0]) || !asciiDigit(lat[1]) ||
+		!asciiDigit(lon[0]) || !asciiDigit(lon[1]) || !asciiDigit(lon[2]) {
+		return 0, 0, 0, 0, false
+	}
+	switch payload[offset+8] {
+	case '/', '\\':
+	default:
+		table := payload[offset+8]
+		if !asciiDigit(table) && (table < 'A' || table > 'Z') {
+			return 0, 0, 0, 0, false
+		}
+	}
+	if payload[offset+18] < '!' || payload[offset+18] > '~' {
+		return 0, 0, 0, 0, false
+	}
+	switch lat[7] {
+	case 'N', 'n', 'S', 's':
+	default:
+		return 0, 0, 0, 0, false
+	}
+	switch lon[8] {
+	case 'E', 'e', 'W', 'w':
+	default:
+		return 0, 0, 0, 0, false
+	}
+	// Blanks must be the same trailing minute-digit positions in both
+	// latitude and longitude. All other numeric positions must be digits.
+	latDigits := []int{2, 3, 5, 6}
+	lonDigits := []int{3, 4, 6, 7}
+	latAmbiguous := []int{6, 5, 3, 2}
+	lonAmbiguous := []int{7, 6, 4, 3}
+	for count := 1; count <= 4; count++ {
+		latBlank := make(map[int]bool, count)
+		lonBlank := make(map[int]bool, count)
+		for j := 0; j < count; j++ {
+			latBlank[latAmbiguous[j]] = true
+			lonBlank[lonAmbiguous[j]] = true
+		}
+		valid := true
+		for _, j := range latDigits {
+			if latBlank[j] {
+				if lat[j] != ' ' { valid = false }
+			} else if !asciiDigit(lat[j]) {
+				valid = false
+			}
+		}
+		for _, j := range lonDigits {
+			if lonBlank[j] {
+				if lon[j] != ' ' { valid = false }
+			} else if !asciiDigit(lon[j]) {
+				valid = false
+			}
+		}
+		if !valid {
+			continue
+		}
+		latDeg, _ := strconv.Atoi(string(lat[:2]))
+		lonDeg, _ := strconv.Atoi(string(lon[:3]))
+		for j := range lat {
+			if lat[j] == ' ' { lat[j] = '0' }
+		}
+		for j := range lon {
+			if lon[j] == ' ' { lon[j] = '0' }
+		}
+		latMinutes, _ := strconv.ParseFloat(string(lat[2:7]), 64)
+		lonMinutes, _ := strconv.ParseFloat(string(lon[3:8]), 64)
+		width := []float64{0, 0.1, 1, 10, 60}[count]
+		if latDeg > 90 || lonDeg > 180 ||
+			latMinutes+width > 60 || lonMinutes+width > 60 {
+			return 0, 0, 0, 0, false
+		}
+		minLat = float64(latDeg) + latMinutes/60
+		maxLat = float64(latDeg) + (latMinutes+width)/60
+		minLon = float64(lonDeg) + lonMinutes/60
+		maxLon = float64(lonDeg) + (lonMinutes+width)/60
+		if lat[7] == 'S' || lat[7] == 's' {
+			minLat, maxLat = -maxLat, -minLat
+		}
+		if lon[8] == 'W' || lon[8] == 'w' {
+			minLon, maxLon = -maxLon, -minLon
+		}
+		if minLat < -90 || maxLat > 90 || minLon < -180 || maxLon > 180 {
+			return 0, 0, 0, 0, false
+		}
+		return minLat, maxLat, minLon, maxLon, true
+	}
+	return 0, 0, 0, 0, false
+}
+
+
 // Fixed DDMM.mmN / DDDMM.mmE syntax: ParseFloat alone accepts NaN,
 // negatives and exponent notation, which are not valid APRS coordinates.
 func uncompressedPosition(payload string, offset int) (lat float64, lon float64, ok bool) {
