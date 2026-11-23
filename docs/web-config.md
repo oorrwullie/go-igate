@@ -10,6 +10,14 @@ does not expose an HTTP listener, render the interface, or restart the service.
   detect edits made since loading.
 - Save runs the same semantic validation/defaulting routine used at startup,
   then atomically replaces the file in the same directory (mode 0600).
+- File loading uses no-follow, nonblocking descriptor opening on Linux/macOS,
+  so a swapped symlink or FIFO cannot bypass the regular-file requirement.
+  On other operating systems this store refuses file access until a safe
+  implementation exists.
+- Once rename succeeds, the new revision is returned even if directory sync
+  fails. In that case `errors.Is(err, configeditor.ErrDurability)` is true:
+  the new contents are live, but crash durability is not confirmed. Do not
+  blindly retry the save with the previous revision token.
 - Save does not trigger a reload. A restart must be an explicit, separately
   authorized action after a successful save.
 - The YAML file contains secrets. **Do not expose raw document bytes through
