@@ -150,3 +150,83 @@ func TestTransportRejectsOversizedResponse(t *testing.T){
   t.Fatalf("oversized response: %v",err)
  }
 }
+
+ 
+// newlineErrorPort simulates the legal io.Reader behavior (n=1, err!=nil)
+// on the final byte of an otherwise successful acknowledgment.
+type newlineErrorPort struct{ net.Conn }
+func (p *newlineErrorPort) Read(buf []byte)(int,error){
+ n,err:=p.Conn.Read(buf)
+ if n==1&&buf[0]=='\n' {return n,io.ErrUnexpectedEOF}
+ return n,err
+}
+
+func TestTransportRejectsAckFinalByteWithReadError(t *testing.T){
+ a,b:=net.Pipe()
+ transport,err:=NewTransport(&newlineErrorPort{Conn:a})
+ if err!=nil{t.Fatal(err)}
+ t.Cleanup(func(){_=transport.Close();_=b.Close()})
+ go func(){
+  request:=make([]byte,len(Handshake()))
+  if _,err:=io.ReadFull(b,request);err!=nil{return}
+  _,_=b.Write([]byte("+DMOCONNECT:0\r\n"))
+ }()
+ err=transport.Exchange(context.Background(),Handshake(),time.Second)
+ if !errors.Is(err,io.ErrUnexpectedEOF){t.Fatalf("ACK with I/O error reported success: %v",err)}
+ if err=transport.Exchange(context.Background(),Handshake(),time.Second);!errors.Is(err,ErrUnusable){
+  t.Fatalf("session reused after read error: %v",err)
+ }
+}
+
+// Even if acquiring the command token wins the select against an already
+// canceled context, nothing has been written and the session remains healthy.
+func TestTransportPreCanceledContextLeavesPortReusable(t *testing.T){
+ transport,peer:=connected(t)
+ ctx,cancel:=context.WithCancel(context.Background())
+ cancel()
+ for i:=0;i<100;i++{
+  if err:=transport.Exchange(ctx,Handshake(),time.Second);!errors.Is(err,context.Canceled){
+   t.Fatalf("iteration %d: pre-cancel returned %v",i,err)
+  }
+ }
+ go func(){
+  buf:=make([]byte,len(Handshake()))
+  if _,err:=io.ReadFull(peer,buf);err!=nil{return}
+  _,_=peer.Write([]byte("+DMOCONNECT:0\r\n"))
+ }()
+ if err:=transport.Exchange(context.Background(),Handshake(),time.Second);err!=nil{
+  t.Fatalf("pre-cancel poisoned healthy connection: %v",err)
+ }
+}
+
+type signaledWritePort struct {
+ net.Conn
+ began chan struct{}
+ once sync.Once
+}
+func (p *signaledWritePort) Write(b []byte)(int,error){
+ p.once.Do(func(){close(p.began)})
+ return p.Conn.Write(b)
+}
+
+func TestTransportCancellationDuringWrite(t *testing.T){
+ a,b:=net.Pipe()
+ port:=&signaledWritePort{Conn:a,began:make(chan struct{})}
+ transport,err:=NewTransport(port)
+ if err!=nil{t.Fatal(err)}
+ t.Cleanup(func(){_=transport.Close();_=b.Close()})
+ ctx,cancel:=context.WithCancel(context.Background())
+ defer cancel()
+ result:=make(chan error,1)
+ go func(){result<-transport.Exchange(ctx,Handshake(),time.Second)}()
+ select{case <-port.began:case <-time.After(time.Second):t.Fatal("write never started")}
+ cancel()
+ select{
+ case err:=<-result:
+  if !errors.Is(err,context.Canceled){t.Fatalf("write cancellation returned %v",err)}
+ case <-time.After(300*time.Millisecond):t.Fatal("write cancellation did not unblock")
+ }
+ if err:=transport.Exchange(context.Background(),Handshake(),time.Second);!errors.Is(err,ErrUnusable){
+  t.Fatalf("partial write session reusable: %v",err)
+ }
+}
