@@ -4,17 +4,16 @@ import (
 	"bufio"
 	"context"
 	"errors"
-	"github.com/oorrwullie/sparky/internal/config"
-	"net"
 	"fmt"
+	"net"
 	"net/textproto"
-	"sync"
-	"time"
 	"strings"
-	"testing"
 	"sync"
-)
+	"testing"
+	"time"
 
+	"github.com/oorrwullie/sparky/internal/config"
+)
 func TestVerifyLoginResponseSkipsServerGreeting(t *testing.T) {
 	response := textproto.NewReader(bufio.NewReader(strings.NewReader(
 		"# aprsc 2.1.20 test server\r\n# logresp N0CALL-10 verified, server test\r\n",
