@@ -14,7 +14,7 @@ import (
 func TestEditRequiresAuthentication(t *testing.T){
  t.Setenv("SPARKY_CONFIG_PASSWORD","this-is-a-long-test-password")
  s:=testServer(t);rec:=httptest.NewRecorder()
- s.ServeHTTP(rec,httptest.NewRequest("GET","http://localhost:8080/edit",nil))
+ s.ServeHTTP(rec,localTestRequest("GET","http://localhost:8080/edit",nil))
  if rec.Code!=401{t.Fatalf("unexpected status %d",rec.Code)}
 }
 func TestEditPreservesSecretsAndRejectsCSRF(t *testing.T){
@@ -23,7 +23,7 @@ func TestEditPreservesSecretsAndRejectsCSRF(t *testing.T){
  initial:="# note retained\nstation-callsign: N0CALL\nopenwebrx-mqtt:\n  enabled: false\n  password: test-super-secret\n"
  if err:=os.WriteFile(p,[]byte(initial),0600);err!=nil{t.Fatal(err)}
  s:=&Server{Store:&configeditor.Store{Path:p}}
- req:=httptest.NewRequest("GET","http://localhost:8080/edit",nil);req.SetBasicAuth("admin","this-is-a-long-test-password")
+ req:=localTestRequest("GET","http://localhost:8080/edit",nil);req.SetBasicAuth("admin","this-is-a-long-test-password")
  rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
  if rec.Code!=200{t.Fatalf("GET returned %d",rec.Code)}
  if !strings.Contains(rec.Header().Get("Content-Security-Policy"),"form-action 'self'"){t.Fatal("editor CSP blocks form posts")}
@@ -32,7 +32,7 @@ func TestEditPreservesSecretsAndRejectsCSRF(t *testing.T){
  _,rev,err:=s.Store.Load();if err!=nil{t.Fatal(err)}
  form:=url.Values{"csrf":{hex.EncodeToString(token)},"revision":{rev},"callsign":{"N0CALL-10"},"igate":{"on"}}
  post:=func(origin string,form url.Values) *httptest.ResponseRecorder {
-  r:=httptest.NewRequest("POST","http://localhost:8080/edit",strings.NewReader(form.Encode()))
+  r:=localTestRequest("POST","http://localhost:8080/edit",strings.NewReader(form.Encode()))
   r.Header.Set("Content-Type","application/x-www-form-urlencoded")
   r.Header.Set("Origin",origin)
   r.SetBasicAuth("admin","this-is-a-long-test-password")
