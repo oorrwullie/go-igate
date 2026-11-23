@@ -211,8 +211,8 @@ func (d *Sparky) Run() error {
 		if d.captureDevice != nil {
 			stop("capture device", d.captureDevice.Stop)
 		}
-		if d.multimon != nil && d.multimon.Cmd.Process != nil {
-			stop("multimon-ng", func() { _ = d.multimon.Cmd.Process.Kill() })
+		if d.multimon != nil {
+			stop("multimon-ng", d.multimon.Stop)
 		}
 		if d.mqttInput != nil {
 			stop("OpenWebRX+ MQTT input", d.mqttInput.Stop)
