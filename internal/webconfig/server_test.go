@@ -54,3 +54,24 @@ func TestLoopbackHostValidation(t *testing.T){
  for _,host:=range []string{"127.0.0.1:8080","[::1]:8080","localhost:8080"}{if !localHost(host){t.Errorf("rejected %q",host)}}
  for _,host:=range []string{"0.0.0.0:8080","192.168.1.22:8080","evil.com:8080"}{if localHost(host){t.Errorf("accepted %q",host)}}
 }
+
+// TestTemplateEscaping verifies that configuration strings cannot turn into
+// browser-executable markup, even though the web UI is read-only.
+func TestTemplateEscaping(t *testing.T) {
+ p:=filepath.Join(t.TempDir(),"config.yml")
+ marker:="<script>alert(1)</script>"
+ if err:=os.WriteFile(p,[]byte("station-callsign: '"+marker+"'\n"),0600);err!=nil{t.Fatal(err)}
+ s:=&Server{Store:&configeditor.Store{Path:p}}
+ rec:=httptest.NewRecorder()
+ s.ServeHTTP(rec,httptest.NewRequest("GET","http://localhost:8080/",nil))
+ if rec.Code!=200{t.Fatalf("status %d",rec.Code)}
+ if strings.Contains(rec.Body.String(),marker){t.Fatal("raw HTML was not escaped")}
+ if !strings.Contains(rec.Body.String(),"&lt;script&gt;"){t.Fatal("HTML escaping missing")}
+}
+
+func TestBindAddressPolicy(t *testing.T) {
+ s:=&Server{}
+ for _,addr:=range []string{"0.0.0.0:0","192.168.1.1:8080","localhost:8080",":8080"} {
+  if err:=s.ListenAndServe(addr);err==nil{t.Fatalf("accepted nonliteral loopback bind %q",addr)}
+ }
+}
