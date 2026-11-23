@@ -211,3 +211,9 @@ func TestSpoofedLoopbackHostFromLANIsRejected(t *testing.T) {
   if w.Code!=http.StatusForbidden {t.Fatalf("spoofed Host %q accepted: %d",host,w.Code)}
  }
 }
+
+func TestEffectiveMQTTTopic(t *testing.T) {
+ for _,tc:=range []struct{input,want string}{{"","openwebrx/APRS"},{" \t ","openwebrx/APRS"},{" openwebrx/custom ","openwebrx/custom"}} {
+  if got:=effectiveMQTTTopic(tc.input);got!=tc.want{t.Errorf("topic %q: got %q want %q",tc.input,got,tc.want)}
+ }
+}
