@@ -2,6 +2,7 @@ package webconfig
 
 import (
  "net/http"
+ "crypto/tls"
  "net/http/httptest"
  "os"
  "path/filepath"
@@ -116,5 +117,32 @@ func TestPasswordMissingOrShortFailsClosed(t *testing.T) {
   req.SetBasicAuth("admin",pass)
   rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
   if rec.Code!=http.StatusServiceUnavailable {t.Fatalf("password length %d: status %d",len(pass),rec.Code)}
+ }
+}
+
+func TestRemoteHostRequiresHTTPS(t *testing.T) {
+ s:=testServer(t)
+ req:=httptest.NewRequest("GET","http://192.168.1.42:8443/",nil)
+ req.Host="192.168.1.42:8443"
+ req.SetBasicAuth("admin","this-is-a-long-test-password")
+ rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
+ if rec.Code!=http.StatusForbidden {t.Fatalf("remote HTTP accepted: %d",rec.Code)}
+
+ req=httptest.NewRequest("GET","https://192.168.1.42:8443/",nil)
+ req.Host="192.168.1.42:8443"
+ req.TLS=&tls.ConnectionState{Version:tls.VersionTLS13}
+ req.SetBasicAuth("admin","this-is-a-long-test-password")
+ rec=httptest.NewRecorder();s.ServeHTTP(rec,req)
+ if rec.Code!=http.StatusOK {t.Fatalf("remote HTTPS rejected: %d",rec.Code)}
+}
+
+func TestRemoteListenerRequiresTLSCredentials(t *testing.T) {
+ s:=&Server{}
+ for _,addr:=range []string{"0.0.0.0:0","192.168.1.42:8443","[::]:8443"} {
+  if err:=s.ListenAndServe(addr);err==nil {t.Fatalf("accepted remote HTTP listener %q",addr)}
+  if err:=s.ListenAndServeTLS(addr,"","");err==nil {t.Fatalf("accepted missing TLS files for %q",addr)}
+ }
+ if err:=s.ListenAndServeTLS("0.0.0.0:0","missing-cert.pem","missing-key.pem");err==nil {
+  t.Fatal("accepted invalid TLS credential paths")
  }
 }
