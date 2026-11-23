@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 )
+
+const snapshotInterval = 5 * time.Second
 
 type Cache struct {
 	capacity int
@@ -15,6 +19,8 @@ type Cache struct {
 	filePath string
 	lru      *LRU
 	ttl      time.Duration
+	lastSnapshot time.Time
+	dirty bool
 }
 
 type LRU struct {
@@ -49,8 +55,9 @@ func NewCache(capacity int, filePath string, ttl time.Duration) *Cache {
 		ttl:      ttl,
 	}
 
-	_ = cache.loadFromFile()
-	fmt.Println("Loaded cache")
+	if err := cache.loadFromFile(); err != nil {
+		fmt.Println("Error loading cache:", err)
+	}
 
 	return cache
 }
@@ -83,6 +90,7 @@ func (c *Cache) Set(key string, value interface{}) (duplicate bool) {
 			node.timestamp = time.Now()
 			node.val = value
 			c.lru.moveToFront(node)
+			c.markDirtyLocked()
 			return true
 		}
 		c.lru.removeNode(node)
@@ -94,9 +102,7 @@ func (c *Cache) Set(key string, value interface{}) (duplicate bool) {
 	}
 
 	c.lru.set(key, value)
-	if err := c.saveToFile(); err != nil && c.filePath != "" {
-		fmt.Println("Error saving cache:", err)
-	}
+	c.markDirtyLocked()
 
 	return false
 }
@@ -115,26 +121,89 @@ func (c *Cache) pruneExpiredLocked() {
 	}
 }
 
+// markDirtyLocked limits full-file writes on the RF receive hot path.
+// Cache snapshots are intentionally best-effort: a crash can lose at most the
+// activity since the last successful snapshot (or longer if persistence
+// fails). Flush forces a final snapshot on a clean shutdown.
+func (c *Cache) markDirtyLocked() {
+	if c.filePath == "" {
+		return
+	}
+	c.dirty = true
+	if !c.lastSnapshot.IsZero() && time.Since(c.lastSnapshot) < snapshotInterval {
+		return
+	}
+	c.persistLocked()
+}
+
+// Flush persists all pending mutations. Call after stopping producers on
+// orderly shutdown. It is safe to call concurrently with Set and Get.
+func (c *Cache) Flush() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.dirty {
+		return nil
+	}
+	return c.saveDirtyLocked()
+}
+
+func (c *Cache) persistLocked() {
+	if err := c.saveDirtyLocked(); err != nil {
+		fmt.Println("Error saving cache:", err)
+	}
+}
+
+func (c *Cache) saveDirtyLocked() error {
+	// A failed write is not retried for every incoming frame.
+	c.lastSnapshot = time.Now()
+	if err := c.saveToFile(); err != nil {
+		return err
+	}
+	c.dirty = false
+	return nil
+}
+
 func (c *Cache) saveToFile() error {
 	if c.filePath == "" {
 		return nil
 	}
-
-	file, err := os.Create(c.filePath)
-	if err != nil {
-		return fmt.Errorf("error creating cache file: %w", err)
-	}
-	defer file.Close()
-
 	data := make(map[string]int64, len(c.lru.cache))
 	for k, n := range c.lru.cache {
 		data[k] = n.timestamp.UnixNano()
 	}
-
-	if err := json.NewEncoder(file).Encode(data); err != nil {
-		return fmt.Errorf("error encoding cache data to JSON: %w", err)
+	file, err := os.CreateTemp(filepath.Dir(c.filePath), ".sparky-cache-*")
+	if err != nil {
+		return fmt.Errorf("create cache temp file: %w", err)
 	}
-
+	defer os.Remove(file.Name())
+	if err := json.NewEncoder(file).Encode(data); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("encode cache data: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return fmt.Errorf("sync cache data: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close cache temp file: %w", err)
+	}
+	if err := os.Rename(file.Name(), c.filePath); err != nil {
+		return fmt.Errorf("replace cache file: %w", err)
+	}
+	// fsync the containing directory too: syncing the temporary file alone
+	// does not make the renamed pathname durable across a power failure.
+	directory, err := os.Open(filepath.Dir(c.filePath))
+	if err != nil {
+		return fmt.Errorf("open cache directory: %w", err)
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	if syncErr != nil {
+		return fmt.Errorf("sync cache directory: %w", syncErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close cache directory: %w", closeErr)
+	}
 	return nil
 }
 
@@ -160,13 +229,28 @@ func (c *Cache) loadFromFile() error {
 		return fmt.Errorf("error decoding cache data from JSON: %w", err)
 	}
 
+	// Restore chronological admission order, not randomized map order.
+	type entry struct {
+		key string
+		ts  time.Time
+	}
+	entries := make([]entry, 0, len(data))
 	now := time.Now()
 	for k, ts := range data {
 		timestamp := time.Unix(0, ts)
 		if c.ttl > 0 && now.Sub(timestamp) > c.ttl {
 			continue
 		}
-		c.lru.setWithTimestamp(k, timestamp)
+		entries = append(entries, entry{key: k, ts: timestamp})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].ts.Equal(entries[j].ts) {
+			return entries[i].key < entries[j].key
+		}
+		return entries[i].ts.Before(entries[j].ts)
+	})
+	for _, e := range entries {
+		c.lru.setWithTimestamp(e.key, e.ts)
 	}
 
 	return nil
