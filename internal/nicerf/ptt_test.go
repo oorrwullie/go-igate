@@ -268,3 +268,75 @@ func TestPTTCloseIdempotent(t *testing.T) {
 		t.Fatalf("arm after close: %v", err)
 	}
 }
+
+
+// blockingArmPTT simulates an off/receive command that stalls until its
+// context is cancelled. The final release made by Close is allowed to finish.
+type blockingArmPTT struct {
+	mu       sync.Mutex
+	calls    int
+	entered  chan struct{}
+	returned chan struct{}
+}
+
+func (p *blockingArmPTT) SetTransmit(ctx context.Context, enabled bool) error {
+	if enabled {
+		return errors.New("unexpected PTT assertion")
+	}
+	p.mu.Lock()
+	p.calls++
+	call := p.calls
+	p.mu.Unlock()
+	if call == 1 {
+		close(p.entered)
+		<-ctx.Done()
+		close(p.returned)
+		return ctx.Err()
+	}
+	return nil
+}
+
+func TestPTTCloseCancelsBlockedArm(t *testing.T) {
+	g := &blockingArmPTT{
+		entered:  make(chan struct{}),
+		returned: make(chan struct{}),
+	}
+	c, err := NewPTTController(g, &fakeAudio{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	armDone := make(chan error, 1)
+	go func() { armDone <- c.Arm(context.Background()) }()
+	select {
+	case <-g.entered:
+	case <-time.After(time.Second):
+		t.Fatal("Arm did not enter the initial off command")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close hung waiting for blocked Arm")
+	}
+	select {
+	case <-g.returned:
+	default:
+		t.Fatal("Close finished before the blocked Arm returned")
+	}
+	if err := <-armDone; !errors.Is(err, ErrPTTClosed) {
+		t.Fatalf("Arm returned %v; want ErrPTTClosed", err)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.calls != 2 {
+		t.Fatalf("expected canceled Arm and final receive release, got %d calls", g.calls)
+	}
+	if err := c.Transmit(context.Background(), "after close"); !errors.Is(err, ErrPTTClosed) {
+		t.Fatalf("transmission after close: %v", err)
+	}
+}
