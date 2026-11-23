@@ -193,3 +193,42 @@ func TestPositionFormatsForGeographicFiltering(t *testing.T) {
 		})
 	}
 }
+
+func TestPositionAmbiguityBounds(t *testing.T) {
+	tests := []struct {
+		name, payload string
+		wantOK bool
+		minLat, maxLat, minLon, maxLon float64
+	}{
+		{
+			name: "timestamped one-minute-digit ambiguity",
+			payload: "@121234z4903.5 N/07201.7 W>",
+			wantOK: true,
+			minLat: 49 + 3.5/60, maxLat: 49 + 3.6/60,
+			minLon: -(72 + 1.8/60), maxLon: -(72 + 1.7/60),
+		},
+		{
+			name: "untimestamped exact point",
+			payload: "!4010.20N/11137.80W-Test",
+			wantOK: true,
+			minLat: 40 + 10.2/60, maxLat: 40 + 10.2/60,
+			minLon: -(111+37.8/60), maxLon: -(111+37.8/60),
+		},
+		{name: "mismatched ambiguity", payload: "@121234z4903.5 N/07201.75W>", wantOK: false},
+		{name: "malformed minute", payload: "@121234z4963.5 N/07201.7 W>", wantOK: false},
+		{name: "positionless", payload: ":N0CALL   :hello", wantOK: false},
+	}
+	near := func(a, b float64) bool { return a-b < 0.000001 && b-a < 0.000001 }
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Packet{Payload: tt.payload}
+			a,b,c,d,ok := p.PositionBounds()
+			if ok != tt.wantOK {
+				t.Fatalf("PositionBounds ok=%v, want %v",ok,tt.wantOK)
+			}
+			if ok && (!near(a,tt.minLat) || !near(b,tt.maxLat) || !near(c,tt.minLon) || !near(d,tt.maxLon)) {
+				t.Fatalf("bounds=%f %f %f %f, want %f %f %f %f",a,b,c,d,tt.minLat,tt.maxLat,tt.minLon,tt.maxLon)
+			}
+		})
+	}
+}
