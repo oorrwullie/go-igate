@@ -26,6 +26,7 @@ func TestEditPreservesSecretsAndRejectsCSRF(t *testing.T){
  req:=httptest.NewRequest("GET","http://localhost:8080/edit",nil);req.SetBasicAuth("admin","this-is-a-long-test-password")
  rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
  if rec.Code!=200{t.Fatalf("GET returned %d",rec.Code)}
+ if !strings.Contains(rec.Header().Get("Content-Security-Policy"),"form-action 'self'"){t.Fatal("editor CSP blocks form posts")}
  if strings.Contains(rec.Body.String(),"test-super-secret"){t.Fatal("secret leaked")}
  token,err:=csrfToken(s);if err!=nil{t.Fatal(err)}
  _,rev,err:=s.Store.Load();if err!=nil{t.Fatal(err)}
