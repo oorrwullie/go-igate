@@ -5,8 +5,10 @@ or RF transmission is enabled by the `internal/nicerf` package.
 
 ## Sources
 
-- SA818S manual, rev 1.1 (protocol and pin definitions):
-  https://xonstorage.blob.core.windows.net/pdf/gnicerf_sa818su_xonlink.pdf
+- SA818S manual, rev 1.7 (manufacturer; command and pin definitions):
+  https://www.nicerf.com/upload/20250814/d374728c4b5426c63631449da8745cc6.pdf?file_name=SA818S+1W+Embedded+walkie+talkie+module+V1.7.pdf
+- SA818S manual, rev 1.1 (publicly archived fallback for command verification):
+  https://d3s5r33r268y59.cloudfront.net/datasheets/2570/2022-01-11-06-28-41/SA818S_1W_Embedded_walkie_talkie_module_V1.1.pdf
 - SA868S manual, rev 1.7 (protocol and pin definitions):
   https://www.nicerf.com/pdf/sa868s-2w-embedded-walkie-talkie-modulev1.7.pdf
 - NiceRF official product pages:
@@ -27,6 +29,30 @@ but its *first argument differs*:
 The codec never shares a first-field interpretation between models. The current
 SA868S implementation always selects low power. The same module also has an
 H/L hardware power-control pad; that is a separate electrical concern.
+
+### Documentation cross-check (2026-11-23)
+
+These are directly supported by the manuals, rather than inferred from fake
+serial responses:
+
+| Claim | SA818S | SA868S |
+| --- | --- | --- |
+| Group first field | `GBW`: 0 narrow / 1 wide (rev 1.7, page 7) | `TX POWER`: 0 high / 1 low (rev 1.7, page 7) |
+| Group response | `+DMOSETGROUP:0` success (page 7) | `+DMOSETGROUP:0` success (page 7) |
+| Filter setting | `AT+SETFILTER=1,1,1` switches emphasis, highpass, lowpass **off** (page 8) | Same polarity and `+DMOSETFILTER:0` success (page 8) |
+| Hardware control | PTT low = TX; PD high = normal operation; H/L grounded = low power, **never drive high** (pin table, page 10) | Same functions (pin table, page 9) |
+
+The manuals show ASCII command/response traffic with CRLF terminators and
+9600-baud 8N1 serial settings (SA818S rev 1.7 page 5; SA868S rev 1.7 page 5).
+This supports the command codec only; it does **not** prove the ordered boards
+implement identical firmware responses or behave safely on RF.
+
+The manufacturer says configured frequencies must align with 12.5/25 kHz
+steps. **144.3900 MHz does not lie on either raster**, despite appearing
+syntactically valid and being used by some SA818-based projects. Neither the
+codec nor its tests should be interpreted as proving this APRS frequency is
+accepted. We must fail closed if the module rejects the group command and
+measure actual RF frequency on a dummy load before transmission.
 
 The current codec intentionally uses no CTCSS/DCS (`0000`) and monitor-mode
 squelch (`0`) for the first bench setup. It rejects frequencies outside the
