@@ -74,18 +74,32 @@ func (c *PTTController) Arm(ctx context.Context) error {
 	if c.armed {
 		return nil
 	}
-	if err := ctx.Err(); err != nil {
+	// Arm is an active hardware operation holding the command token.
+	// Link it to shutdown so Close can interrupt a stalled, context-aware
+	// gate and then perform its own final PTT release.
+	combined, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(c.stopCtx, cancel)
+	defer func() { stop(); cancel() }()
+	if err := combined.Err(); err != nil {
 		return err
 	}
-	if err := c.gate.SetTransmit(ctx, false); err != nil {
+	if err := c.gate.SetTransmit(combined, false); err != nil {
+		// Cancellation on shutdown is expected, not a persistent hardware
+		// fault. The Close path makes its own independent release attempt.
+		if c.stopCtx.Err() != nil {
+			return ErrPTTClosed
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		c.fault = fmt.Errorf("initial receive state: %w", err)
 		return fmt.Errorf("%w: %v", ErrPTTFault, c.fault)
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	if err := c.stopCtx.Err(); err != nil {
 		return ErrPTTClosed
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	c.armed = true
 	return nil
