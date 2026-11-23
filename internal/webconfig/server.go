@@ -41,6 +41,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   http.Error(w,"Host not allowed",http.StatusForbidden)
   return
  }
+ if r.URL.Path == "/edit" {
+  if s == nil || s.Store == nil {http.Error(w,"Configuration unavailable",503);return}
+  s.serveEdit(w,r)
+  return
+ }
  if r.URL.Path != "/" {
   http.NotFound(w,r)
   return
