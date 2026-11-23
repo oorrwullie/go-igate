@@ -9,7 +9,6 @@ import (
  "net/http"
  "os"
  "strings"
- "sync"
 
  "github.com/oorrwullie/sparky/internal/config"
  "github.com/oorrwullie/sparky/internal/configeditor"
@@ -22,16 +21,13 @@ type editData struct{ Values editValues; Revision, Token string; Saved bool }
 
 // A single random CSRF token belongs to each independently running editor.
 // Basic authentication is required for both reading and saving the edit form.
-var tokenMu sync.Mutex
-var tokens=map[*Server][]byte{}
 func csrfToken(s *Server) ([]byte,error) {
- tokenMu.Lock()
- defer tokenMu.Unlock()
- if token,ok:=tokens[s];ok{return token,nil}
- token:=make([]byte,32)
- if _,err:=rand.Read(token);err!=nil{return nil,err}
- tokens[s]=token
- return token,nil
+ s.tokenOnce.Do(func(){
+  token:=make([]byte,32)
+  if _,err:=rand.Read(token);err!=nil{s.tokenErr=err;return}
+  s.token=token
+ })
+ return s.token,s.tokenErr
 }
 func editAuthorized(w http.ResponseWriter,r *http.Request) bool {
  password:=os.Getenv("SPARKY_CONFIG_PASSWORD")
