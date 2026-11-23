@@ -75,3 +75,9 @@ func TestBindAddressPolicy(t *testing.T) {
   if err:=s.ListenAndServe(addr);err==nil{t.Fatalf("accepted nonliteral loopback bind %q",addr)}
  }
 }
+
+func TestEffectiveMQTTTopic(t *testing.T) {
+ for _,tt:=range []struct{input,want string}{{"","openwebrx/APRS"},{"  ","openwebrx/APRS"},{" openwebrx/custom ","openwebrx/custom"}} {
+  if got:=effectiveMQTTTopic(tt.input);got!=tt.want{t.Errorf("got %q want %q",got,tt.want)}
+ }
+}
