@@ -45,8 +45,7 @@ func (s *Server) serveEdit(w http.ResponseWriter,r *http.Request) {
  _=editTemplate.Execute(w,data)
 }
 func (s *Server) saveEdit(w http.ResponseWriter,r *http.Request,token []byte) {
- expectedOrigin:="http://"+r.Host
- if r.TLS!=nil {expectedOrigin="https://"+r.Host}
+ expectedOrigin:=s.expectedOrigin(r)
  if r.Header.Get("Origin")!=expectedOrigin {http.Error(w,"Invalid request origin",403);return}
  r.Body=http.MaxBytesReader(w,r.Body,configeditor.MaxDocumentSize+4096)
  if err:=r.ParseForm();err!=nil{http.Error(w,"Invalid form",400);return}
