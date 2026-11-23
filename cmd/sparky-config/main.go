@@ -14,8 +14,9 @@ func main() {
  path:=flag.String("config","config.yml","path to Sparky configuration")
  cert:=flag.String("tls-cert","","TLS certificate PEM path (required for non-loopback)")
  key:=flag.String("tls-key","","TLS private key PEM path (required for non-loopback)")
+ publicOrigin:=flag.String("public-origin","","exact external HTTPS origin when using a localhost reverse proxy")
  flag.Parse()
- server:=&webconfig.Server{Store:&configeditor.Store{Path:*path}}
+ server:=&webconfig.Server{Store:&configeditor.Store{Path:*path},PublicOrigin:*publicOrigin}
  if *cert!="" || *key!="" {
   log.Printf("Sparky configuration UI HTTPS listener %s (login required)",*addr)
   log.Fatal(server.ListenAndServeTLS(*addr,*cert,*key))
