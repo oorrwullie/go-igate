@@ -31,12 +31,44 @@ go run ./cmd/sparky-config --listen 0.0.0.0:8443 \\
 Visit `https://<station-hostname>:8443/` using a hostname covered by the TLS
 certificate and trusted by the browser. You can bind to a particular LAN IP
 instead of every interface; a firewall should restrict access to trusted
-clients. Non-loopback listeners are **refused** without both TLS files.
+clients. Non-loopback listeners require TLS by default; the separate Routy LAN proxy
+mode below is an explicit exception.
 The UI requires login regardless of binding. HTTP Basic sends credentials
 with requests, so it is only suitable here over HTTPS or local HTTP; do not
 ignore certificate warnings or use a plaintext reverse proxy to expose it.
-If a reverse proxy is used, it must provide HTTPS to clients, restrict access,
-and forward to Sparky over a trusted loopback connection.
+## Routy on the same LAN
+
+Routy can live on another machine. It terminates public HTTPS using its normal
+Let's Encrypt configuration and proxies to Sparky's LAN address. Sparky
+requires an explicit opt-in because this backend hop uses **unencrypted HTTP**:
+
+```sh
+export SPARKY_CONFIG_PASSWORD='a-long-unique-random-password'
+go run ./cmd/sparky-config \\
+  --listen 192.168.1.42:8080 \\
+  --public-origin https://sparky.example.org \\
+  --trusted-proxy-ip 192.168.1.10 \\
+  --allow-lan-http
+```
+
+Replace the IP addresses with Sparky's and Routy's actual addresses.
+Configure Routy's upstream to `http://192.168.1.42:8080`, preserve the
+original browser `Host` header (`sparky.example.org`), and serve the
+public hostname over trusted HTTPS. Sparky verifies the configured hostname,
+the TCP source IP of Routy, the required login, and the exact HTTPS Origin
+on form submissions. It does **not** trust `X-Forwarded-For` or
+`X-Forwarded-Proto` as authorization evidence.
+
+**Required network boundary:** firewall Sparky's port 8080 so only Routy's
+LAN IP can reach it. Prefer a dedicated management VLAN or TLS on the
+backend link if the LAN is not trusted. HTTP Basic credentials are sent on
+every request, including the unencrypted LAN hop. For a fully encrypted
+backend, use Sparky's built-in `--tls-cert`/`--tls-key` mode and configure
+Routy to validate that upstream TLS certificate. Never expose the LAN HTTP
+port directly to the public Internet.
+
+Omit `--allow-lan-http` for the safe default: localhost-only HTTP, or
+explicit HTTPS for non-loopback network access.
 
 Exposing an administrative endpoint directly on the public Internet is not
 recommended: this version does not provide a hardened login workflow,
