@@ -1,11 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/oorrwullie/sparky/internal/log"
 )
@@ -22,22 +22,12 @@ func main() {
 		logger.Fatal(err.Error())
 	}
 
-	sigchan := make(chan os.Signal, 1)
-	signal.Notify(sigchan,
-		syscall.SIGINT,
-		syscall.SIGKILL,
-		syscall.SIGTERM,
-		syscall.SIGQUIT)
-
-	// Listen for exit signals, set up for a clean exit.
+	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer stopSignals()
 	go func() {
-		signal := <-sigchan
-		logger.Debug(fmt.Sprintf("Signal (%s) caught, terminating processes.", signal))
-
+		<-ctx.Done()
+		logger.Info("Shutdown signal received")
 		sparky.Stop()
-		time.Sleep(2 * time.Second)
-
-		os.Exit(0)
 	}()
 
 	logger.Debug("Listening for packets.")

@@ -5,7 +5,9 @@ import (
 	"io"
 	"log"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/oorrwullie/sparky/internal/config"
 )
@@ -83,4 +85,68 @@ func (tR *tReader) Read(p []byte) (n int, err error) {
 func (tR *tReader) Close() error {
 	tR.ReadBytes = []byte{}
 	return nil
+}
+
+func TestSdrPipeStopsWhenOutputIsBlocked(t *testing.T) {
+	s := &SdrCapture{
+		outputChan: make(chan []byte), // no consumer
+		stop:       make(chan struct{}),
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.pipeRtlFM(io.NopCloser(strings.NewReader("packet")), make([]byte, 16))
+	}()
+
+	select {
+	case <-done:
+		t.Fatal("capture unexpectedly completed without a consumer")
+	case <-time.After(30 * time.Millisecond):
+	}
+
+	// A closed stop channel releases a blocked output send.
+	s.stopOnce.Do(func() { close(s.stop) })
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("capture did not stop while output was blocked")
+	}
+}
+
+func TestSdrStopWithoutSuccessfulStart(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		attemptRun bool
+	}{
+		{name: "never started"},
+		{name: "start failed", attemptRun: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &SdrCapture{
+				Cmd:  exec.Command("sparky-nonexistent-rtl-fm-for-test"),
+				stop: make(chan struct{}),
+				done: make(chan struct{}),
+			}
+			if tc.attemptRun {
+				if err := s.Start(); err == nil {
+					t.Fatal("expected rtl_fm startup failure")
+				}
+			}
+
+			finished := make(chan struct{})
+			go func() {
+				s.Stop()
+				s.Stop() // Idempotent, including the failed-start case.
+				close(finished)
+			}()
+			select {
+			case <-finished:
+			case <-time.After(time.Second):
+				t.Fatal("Stop blocked without a running rtl_fm process")
+			}
+			if err := s.Start(); err == nil {
+				t.Fatal("Start must not restart a stopped capture")
+			}
+		})
+	}
 }

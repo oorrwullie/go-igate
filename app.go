@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/oorrwullie/sparky/internal/cache"
@@ -27,7 +28,9 @@ type (
 		multimon          *multimonpackage.Multimon
 		mqttInput         *openwebrx.MQTT
 		transmitter       *transmitter.Transmitter
-		stop              chan bool
+		stop              chan struct{}
+		stopOnce          sync.Once
+		shutdownComplete  chan struct{}
 		igate             *igate.IGate
 		digipeater        *digipeater.Digipeater
 		logger            *log.Logger
@@ -165,7 +168,8 @@ func NewSparky(logger *log.Logger) (*Sparky, error) {
 		cfg:               cfg,
 		captureOutputChan: captureOutputChan,
 		transmitter:       tx,
-		stop:              make(chan bool),
+		stop:              make(chan struct{}),
+		shutdownComplete:  make(chan struct{}),
 		igate:             ig,
 		logger:            logger,
 		cache:             appCache,
@@ -179,73 +183,81 @@ func NewSparky(logger *log.Logger) (*Sparky, error) {
 }
 
 func (d *Sparky) Run() error {
+	// Arm cleanup before starting workers so startup failures also stop resources.
+	go func() {
+		<-d.stop
+		var workers sync.WaitGroup
+		stop := func(name string, fn func()) {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				d.logger.Info("Stopping ", name)
+				fn()
+			}()
+		}
+
+		// Independent services can stop concurrently; no slow network shutdown
+		// should delay stopping the receiver or transmitter.
+		if d.igate != nil {
+			stop("iGate", d.igate.Stop)
+		}
+		if d.digipeater != nil {
+			stop("digipeater", d.digipeater.Stop)
+		}
+		if d.captureDevice != nil {
+			stop("capture device", d.captureDevice.Stop)
+		}
+		if d.multimon != nil {
+			stop("multimon-ng", d.multimon.Stop)
+		}
+		if d.mqttInput != nil {
+			stop("OpenWebRX+ MQTT input", d.mqttInput.Stop)
+		}
+		if d.transmitter != nil {
+			stop("transmitter", d.transmitter.Stop)
+		}
+		workers.Wait()
+		close(d.shutdownComplete)
+	}()
+	defer func() {
+		d.Stop()
+		<-d.shutdownComplete
+	}()
+
 	if d.transmitter != nil {
-		err := d.transmitter.Start()
-		if err != nil {
-			return fmt.Errorf("Error starting transmitter: %v", err)
+		if err := d.transmitter.Start(); err != nil {
+			return fmt.Errorf("starting transmitter: %w", err)
 		}
 	}
 
-	go func() {
-		for {
-			select {
-			case <-d.stop:
-				if d.cfg.IGate.Enabled {
-					d.logger.Info("Stopping IGate client")
-					d.igate.Stop()
-				}
-
-				if d.cfg.DigipeaterEnabled && d.digipeater != nil {
-					d.logger.Info("Stopping digipeater")
-					d.digipeater.Stop()
-				}
-
-				if d.captureDevice != nil {
-					d.logger.Info("Stopping capture device")
-					d.captureDevice.Stop()
-				}
-
-				if d.multimon != nil && d.multimon.Cmd.Process != nil {
-					d.logger.Info("Stopping multimon-ng process")
-					_ = d.multimon.Cmd.Process.Kill()
-				}
-
-				if d.mqttInput != nil {
-					d.logger.Info("Stopping OpenWebRX+ MQTT input")
-					d.mqttInput.Stop()
-				}
-
-				if d.transmitter != nil {
-					d.logger.Info("Stopping transmitter")
-					d.transmitter.Stop()
-				}
-
-				return
-			}
-		}
-	}()
-
 	var g errgroup.Group
-
-	if d.cfg.IGate.Enabled {
+	// An unexpected return from either service, including an error, must
+	// request cancellation so the other long-running service can exit.
+	if d.igate != nil {
 		g.Go(func() error {
+			defer d.Stop()
 			return d.igate.Run()
 		})
 	}
-
-	if d.cfg.DigipeaterEnabled && d.digipeater != nil {
+	if d.digipeater != nil {
 		g.Go(func() error {
+			defer d.Stop()
 			return d.digipeater.Run()
 		})
 	} else if d.cfg.DigipeaterEnabled {
 		d.logger.Warn("Digipeater enabled but transmitter is disabled; digipeater will not run")
 	}
 
+	if d.igate == nil && d.digipeater == nil {
+		<-d.stop // MQTT-only and disabled-worker configurations stay alive.
+		return nil
+	}
 	return g.Wait()
 }
 
+// Stop signals cancellation immediately and is safe to call repeatedly.
 func (d *Sparky) Stop() {
-	d.stop <- true
+	d.stopOnce.Do(func() { close(d.stop) })
 }
 
 func isNilCapture(c capture.Capture) bool {

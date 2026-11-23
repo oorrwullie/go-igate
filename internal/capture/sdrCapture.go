@@ -5,6 +5,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/oorrwullie/sparky/internal/config"
 	"github.com/oorrwullie/sparky/internal/log"
@@ -15,7 +16,13 @@ type SdrCapture struct {
 	logger     *log.Logger
 	outputChan chan []byte
 	Cmd        *exec.Cmd
-	stop       chan bool
+	stop       chan struct{}
+	stopOnce   sync.Once
+	done       chan struct{}
+	doneOnce   sync.Once
+	lifecycle  sync.Mutex
+	started    bool
+	stopped    bool
 }
 
 func NewSdrCapture(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) (*SdrCapture, error) {
@@ -47,38 +54,61 @@ func NewSdrCapture(cfg config.Sdr, outputChan chan []byte, logger *log.Logger) (
 		logger:     logger,
 		outputChan: outputChan,
 		Cmd:        cmd,
-		stop:       make(chan bool),
+		stop:       make(chan struct{}),
+		done:       make(chan struct{}),
 	}, nil
 }
 
 func (s *SdrCapture) Start() error {
+	s.lifecycle.Lock()
+	defer s.lifecycle.Unlock()
+
+	if s.stopped {
+		return fmt.Errorf("rtl_fm capture has already stopped")
+	}
+	if s.started {
+		return fmt.Errorf("rtl_fm capture already started")
+	}
+
 	out, err := s.Cmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("Error reading rtl_fm stdout: %s", err.Error())
+		s.stopped = true
+		s.doneOnce.Do(func() { close(s.done) })
+		return fmt.Errorf("opening rtl_fm stdout: %w", err)
 	}
-
-	err = s.Cmd.Start()
-	if err != nil {
-		return fmt.Errorf("Error starting rtl_fm: %v", err)
+	if err := s.Cmd.Start(); err != nil {
+		s.stopped = true
+		s.doneOnce.Do(func() { close(s.done) })
+		return fmt.Errorf("starting rtl_fm: %w", err)
 	}
+	s.started = true
 
 	go func() {
-		select {
-		case <-s.stop:
-			s.logger.Info("Stopping rtl_fm process")
-			s.Cmd.Process.Kill()
-		default:
-			buf := make([]byte, 4096)
-
-			s.pipeRtlFM(out, buf)
-		}
+		defer s.doneOnce.Do(func() { close(s.done) })
+		buf := make([]byte, 4096)
+		s.pipeRtlFM(out, buf)
+		_ = s.Cmd.Wait()
 	}()
-
 	return nil
 }
 
 func (s *SdrCapture) Stop() {
-	s.stop <- true
+	s.lifecycle.Lock()
+	s.stopped = true
+	s.stopOnce.Do(func() { close(s.stop) })
+	if s.started {
+		if s.Cmd.Process != nil {
+			_ = s.Cmd.Process.Kill() // Interrupt a blocked stdout read.
+		}
+	} else {
+		// A never-started or failed capture has no goroutine to signal done.
+		s.doneOnce.Do(func() { close(s.done) })
+	}
+	s.lifecycle.Unlock()
+
+	if s.done != nil {
+		<-s.done // The successful-start case waits until Cmd.Wait has reaped rtl_fm.
+	}
 }
 
 func (s *SdrCapture) Type() string {
@@ -93,15 +123,24 @@ func (s *SdrCapture) pipeRtlFM(out io.ReadCloser, buf []byte) {
 			if err == io.EOF {
 				break
 			}
-			s.logger.Error("Error reading rtl_fm stdout:", err)
-			return
+			select {
+			case <-s.stop:
+				return
+			default:
+				s.logger.Error("Error reading rtl_fm stdout:", err)
+				return
+			}
 		}
 
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
 
-			s.outputChan <- data
+			select {
+			case <-s.stop:
+				return
+			case s.outputChan <- data:
+			}
 		}
 	}
 }

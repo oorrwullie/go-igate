@@ -13,7 +13,8 @@ import (
 
 type Transmitter struct {
 	Tx        *Tx
-	stop      chan bool
+	stop      chan struct{}
+	stopOnce  sync.Once
 	logger    *log.Logger
 	soundcard *capture.SoundcardCapture
 }
@@ -36,7 +37,7 @@ func New(sc *capture.SoundcardCapture, logger *log.Logger) (*Transmitter, error)
 
 	return &Transmitter{
 		Tx:        tx,
-		stop:      make(chan bool),
+		stop:      make(chan struct{}),
 		logger:    logger,
 		soundcard: sc,
 	}, nil
@@ -62,7 +63,7 @@ func (t *Transmitter) Stop() {
 	t.soundcard.Stop()
 
 	t.logger.Info("Stopping transmitter...")
-	t.stop <- true
+	t.stopOnce.Do(func() { close(t.stop) })
 }
 
 func (t *Transmitter) Transmit(msg string) {
