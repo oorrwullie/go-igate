@@ -16,12 +16,12 @@ func (i *IGate) allowForward(packet *aprs.Packet) bool {
 		return true
 	}
 
-	lat, lon, ok := packet.Position()
+	minLat, maxLat, minLon, maxLon, ok := packet.PositionBounds()
 	if !ok {
+		// Truly positionless or unsupported reports retain existing policy.
 		return true
 	}
-
-	return i.geoFilter.contains(lat, lon)
+	return i.geoFilter.overlapsBounds(minLat, maxLat, minLon, maxLon)
 }
 
 type geoFilter struct {
@@ -34,6 +34,26 @@ func (g *geoFilter) contains(lat, lon float64) bool {
 	distance := haversineKm(g.latCenter, g.lonCenter, lat, lon)
 	return distance <= g.radiusKm
 }
+
+// overlapsBounds conservatively treats APRS ambiguity as an area.
+// The covering-circle test cannot reject a point that might be in range:
+// distance(filterCenter, cellCenter) <= radius + furthest cell corner.
+// A small number of near-boundary cells may be forwarded intentionally.
+func (g *geoFilter) overlapsBounds(minLat, maxLat, minLon, maxLon float64) bool {
+	centerLat := (minLat + maxLat) / 2
+	centerLon := (minLon + maxLon) / 2
+	coverRadius := 0.0
+	for _, lat := range []float64{minLat, maxLat} {
+		for _, lon := range []float64{minLon, maxLon} {
+			r := haversineKm(centerLat, centerLon, lat, lon)
+			if r > coverRadius {
+				coverRadius = r
+			}
+		}
+	}
+	return haversineKm(g.latCenter, g.lonCenter, centerLat, centerLon) <= g.radiusKm+coverRadius
+}
+
 
 func parseRangeFilter(filter string) (*geoFilter, error) {
 	filter = strings.TrimSpace(filter)

@@ -185,76 +185,311 @@ func (p *Packet) IsAckMessage() bool {
 	return false
 }
 
-// Position returns latitude and longitude in decimal degrees if the payload contains an
-// uncompressed position report (e.g. !DDMM.mmN/DDDMM.mmE). Otherwise ok will be false.
+// Position extracts coordinates from standard uncompressed or compressed
+// position reports, with or without the seven-byte APRS timestamp.
+// Unsupported formats return ok=false; callers determine the fallback policy.
 func (p *Packet) Position() (lat float64, lon float64, ok bool) {
-	if len(p.Payload) < 19 {
+	if len(p.Payload) == 0 {
 		return 0, 0, false
 	}
-
+	offset := 1
 	switch p.Payload[0] {
-	case '!', '=', '/', '@':
+	case '!', '=':
+	case '/', '@':
+		// APRS timestamp: six ASCII digits followed by z, /, or h.
+		if len(p.Payload) < 8 {
+			return 0, 0, false
+		}
+		for k := 1; k <= 6; k++ {
+			if !asciiDigit(p.Payload[k]) {
+				return 0, 0, false
+			}
+		}
+		first, _ := strconv.Atoi(p.Payload[1:3])
+		second, _ := strconv.Atoi(p.Payload[3:5])
+		third, _ := strconv.Atoi(p.Payload[5:7])
+		switch p.Payload[7] {
+		case 'z', '/':
+			// Day-of-month, hour, minute.
+			if first < 1 || first > 31 || second > 23 || third > 59 {
+				return 0, 0, false
+			}
+		case 'h':
+			// Hour, minute, second.
+			if first > 23 || second > 59 || third > 59 {
+				return 0, 0, false
+			}
+		default:
+			return 0, 0, false
+		}
+		offset = 8
 	default:
 		return 0, 0, false
 	}
-
-	if len(p.Payload) < 19 {
+	if len(p.Payload) <= offset {
 		return 0, 0, false
 	}
 
-	latField := p.Payload[1:9] // DDMM.mmN
-	if len(latField) != 8 {
+	// APRS 1.0.1 chapter 20 explicitly disallows numeric symbol-table
+	// identifiers in *compressed* reports (a-j represent digit overlays).
+	// A leading digit therefore unambiguously selects uncompressed syntax,
+	// including malformed or truncated uncompressed frames.
+	if asciiDigit(p.Payload[offset]) {
+		return uncompressedPosition(p.Payload, offset)
+	}
+	return compressedPosition(p.Payload, offset)
+}
+
+func asciiDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+// PositionBounds returns the geographic extent of a supported position.
+// Normal reports have zero extent. APRS position ambiguity uses blanks in
+// trailing minute digits: the sender reports a cell, not an exact point.
+// Unknown or malformed formats remain unknown (ok=false).
+func (p *Packet) PositionBounds() (minLat, maxLat, minLon, maxLon float64, ok bool) {
+	if lat, lon, exact := p.Position(); exact {
+		return lat, lat, lon, lon, true
+	}
+	payload := p.Payload
+	if len(payload) < 1 {
+		return 0, 0, 0, 0, false
+	}
+	offset := 1
+	switch payload[0] {
+	case '!', '=':
+	case '/', '@':
+		if len(payload) < 8 {
+			return 0, 0, 0, 0, false
+		}
+		for k := 1; k <= 6; k++ {
+			if !asciiDigit(payload[k]) {
+				return 0, 0, 0, 0, false
+			}
+		}
+		dayOrHour, _ := strconv.Atoi(payload[1:3])
+		hourOrMin, _ := strconv.Atoi(payload[3:5])
+		minOrSec, _ := strconv.Atoi(payload[5:7])
+		switch payload[7] {
+		case 'z', '/':
+			if dayOrHour < 1 || dayOrHour > 31 || hourOrMin > 23 || minOrSec > 59 {
+				return 0, 0, 0, 0, false
+			}
+		case 'h':
+			if dayOrHour > 23 || hourOrMin > 59 || minOrSec > 59 {
+				return 0, 0, 0, 0, false
+			}
+		default:
+			return 0, 0, 0, 0, false
+		}
+		offset = 8
+	default:
+		return 0, 0, 0, 0, false
+	}
+	if len(payload) < offset+19 || !asciiDigit(payload[offset]) {
+		return 0, 0, 0, 0, false
+	}
+	lat := []byte(payload[offset : offset+8])
+	lon := []byte(payload[offset+9 : offset+18])
+	if lat[4] != '.' || lon[5] != '.' {
+		return 0, 0, 0, 0, false
+	}
+	if !asciiDigit(lat[0]) || !asciiDigit(lat[1]) ||
+		!asciiDigit(lon[0]) || !asciiDigit(lon[1]) || !asciiDigit(lon[2]) {
+		return 0, 0, 0, 0, false
+	}
+	switch payload[offset+8] {
+	case '/', '\\':
+	default:
+		table := payload[offset+8]
+		if !asciiDigit(table) && (table < 'A' || table > 'Z') {
+			return 0, 0, 0, 0, false
+		}
+	}
+	if payload[offset+18] < '!' || payload[offset+18] > '~' {
+		return 0, 0, 0, 0, false
+	}
+	switch lat[7] {
+	case 'N', 'n', 'S', 's':
+	default:
+		return 0, 0, 0, 0, false
+	}
+	switch lon[8] {
+	case 'E', 'e', 'W', 'w':
+	default:
+		return 0, 0, 0, 0, false
+	}
+	// Blanks must be the same trailing minute-digit positions in both
+	// latitude and longitude. All other numeric positions must be digits.
+	latDigits := []int{2, 3, 5, 6}
+	lonDigits := []int{3, 4, 6, 7}
+	latAmbiguous := []int{6, 5, 3, 2}
+	lonAmbiguous := []int{7, 6, 4, 3}
+	for count := 1; count <= 4; count++ {
+		latBlank := make(map[int]bool, count)
+		lonBlank := make(map[int]bool, count)
+		for j := 0; j < count; j++ {
+			latBlank[latAmbiguous[j]] = true
+			lonBlank[lonAmbiguous[j]] = true
+		}
+		valid := true
+		for _, j := range latDigits {
+			if latBlank[j] {
+				if lat[j] != ' ' { valid = false }
+			} else if !asciiDigit(lat[j]) {
+				valid = false
+			}
+		}
+		for _, j := range lonDigits {
+			if lonBlank[j] {
+				if lon[j] != ' ' { valid = false }
+			} else if !asciiDigit(lon[j]) {
+				valid = false
+			}
+		}
+		if !valid {
+			continue
+		}
+		latDeg, _ := strconv.Atoi(string(lat[:2]))
+		lonDeg, _ := strconv.Atoi(string(lon[:3]))
+		for j := range lat {
+			if lat[j] == ' ' { lat[j] = '0' }
+		}
+		for j := range lon {
+			if lon[j] == ' ' { lon[j] = '0' }
+		}
+		latMinutes, _ := strconv.ParseFloat(string(lat[2:7]), 64)
+		lonMinutes, _ := strconv.ParseFloat(string(lon[3:8]), 64)
+		width := []float64{0, 0.1, 1, 10, 60}[count]
+		if latDeg > 90 || lonDeg > 180 ||
+			latMinutes+width > 60 || lonMinutes+width > 60 {
+			return 0, 0, 0, 0, false
+		}
+		minLat = float64(latDeg) + latMinutes/60
+		maxLat = float64(latDeg) + (latMinutes+width)/60
+		minLon = float64(lonDeg) + lonMinutes/60
+		maxLon = float64(lonDeg) + (lonMinutes+width)/60
+		if lat[7] == 'S' || lat[7] == 's' {
+			minLat, maxLat = -maxLat, -minLat
+		}
+		if lon[8] == 'W' || lon[8] == 'w' {
+			minLon, maxLon = -maxLon, -minLon
+		}
+		if minLat < -90 || maxLat > 90 || minLon < -180 || maxLon > 180 {
+			return 0, 0, 0, 0, false
+		}
+		return minLat, maxLat, minLon, maxLon, true
+	}
+	return 0, 0, 0, 0, false
+}
+
+
+// Fixed DDMM.mmN / DDDMM.mmE syntax: ParseFloat alone accepts NaN,
+// negatives and exponent notation, which are not valid APRS coordinates.
+func uncompressedPosition(payload string, offset int) (lat float64, lon float64, ok bool) {
+	if len(payload) < offset+19 {
 		return 0, 0, false
 	}
-
-	latDeg, err := strconv.ParseFloat(latField[:2], 64)
-	if err != nil {
+	latitude := payload[offset : offset+8]
+	longitude := payload[offset+9 : offset+18]
+	for _, k := range []int{0, 1, 2, 3, 5, 6} {
+		if !asciiDigit(latitude[k]) {
+			return 0, 0, false
+		}
+	}
+	if latitude[4] != '.' {
 		return 0, 0, false
 	}
-
-	latMin, err := strconv.ParseFloat(latField[2:7], 64)
-	if err != nil {
+	for _, k := range []int{0, 1, 2, 3, 4, 6, 7} {
+		if !asciiDigit(longitude[k]) {
+			return 0, 0, false
+		}
+	}
+	if longitude[5] != '.' {
 		return 0, 0, false
 	}
-
-	latDir := latField[7]
-
-	lonField := p.Payload[10:19] // DDDMM.mmE
-	if len(lonField) != 9 {
+	// Both table ID and symbol code are mandatory, printable APRS bytes.
+	if payload[offset+18] < '!' || payload[offset+18] > '~' {
 		return 0, 0, false
 	}
-
-	lonDeg, err := strconv.ParseFloat(lonField[:3], 64)
-	if err != nil {
+	// Only recognized symbol-table selectors count as valid positions.
+	switch payload[offset+8] {
+	case '/', '\\':
+	default:
+		if !asciiDigit(payload[offset+8]) &&
+			(payload[offset+8] < 'A' || payload[offset+8] > 'Z') {
+			return 0, 0, false
+		}
+	}
+	latDegrees, _ := strconv.Atoi(latitude[:2])
+	latMinutes, _ := strconv.ParseFloat(latitude[2:7], 64)
+	lonDegrees, _ := strconv.Atoi(longitude[:3])
+	lonMinutes, _ := strconv.ParseFloat(longitude[3:8], 64)
+	if latDegrees > 90 || lonDegrees > 180 || latMinutes >= 60 || lonMinutes >= 60 {
 		return 0, 0, false
 	}
-
-	lonMin, err := strconv.ParseFloat(lonField[3:8], 64)
-	if err != nil {
-		return 0, 0, false
-	}
-
-	lonDir := lonField[8]
-
-	lat = latDeg + latMin/60
-	lon = lonDeg + lonMin/60
-
-	switch latDir {
+	lat = float64(latDegrees) + latMinutes/60
+	lon = float64(lonDegrees) + lonMinutes/60
+	switch latitude[7] {
 	case 'N', 'n':
 	case 'S', 's':
 		lat = -lat
 	default:
 		return 0, 0, false
 	}
-
-	switch lonDir {
+	switch longitude[8] {
 	case 'E', 'e':
 	case 'W', 'w':
 		lon = -lon
 	default:
 		return 0, 0, false
 	}
+	if lat > 90 || lat < -90 || lon > 180 || lon < -180 {
+		return 0, 0, false
+	}
+	return lat, lon, true
+}
 
+// Compressed coordinates are four base-91 digits each, following the symbol
+// table ID. APRS specifies /, backslash, A-Z and a-j for compressed tables;
+// numeric overlays must use a-j, never a literal digit.
+func compressedPosition(payload string, offset int) (lat float64, lon float64, ok bool) {
+	if len(payload) < offset+13 {
+		return 0, 0, false
+	}
+	table := payload[offset]
+	switch {
+	case table == '/' || table == '\\':
+	case table >= 'A' && table <= 'Z':
+	case table >= 'a' && table <= 'j':
+	default:
+		return 0, 0, false
+	}
+	if payload[offset+9] < '!' || payload[offset+9] > '~' {
+		return 0, 0, false
+	}
+	decode := func(chars string) (int, bool) {
+		value := 0
+		for k := 0; k < len(chars); k++ {
+			if chars[k] < '!' || chars[k] > '{' {
+				return 0, false
+			}
+			value = value*91 + int(chars[k]-'!')
+		}
+		return value, true
+	}
+	y, ok := decode(payload[offset+1 : offset+5])
+	if !ok {
+		return 0, 0, false
+	}
+	x, ok := decode(payload[offset+5 : offset+9])
+	if !ok {
+		return 0, 0, false
+	}
+	lat = 90 - float64(y)/380926
+	lon = -180 + float64(x)/190463
+	if lat < -90 || lat > 90 || lon < -180 || lon > 180 {
+		return 0, 0, false
+	}
 	return lat, lon, true
 }
 
