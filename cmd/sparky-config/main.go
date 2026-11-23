@@ -1,4 +1,4 @@
-// sparky-config is a password-protected, loopback-only Sparky configuration UI.
+// sparky-config serves the authenticated Sparky configuration UI.
 package main
 
 import (
@@ -10,9 +10,16 @@ import (
 )
 
 func main() {
- addr:=flag.String("listen","127.0.0.1:8080","loopback TCP address")
+ addr:=flag.String("listen","127.0.0.1:8080","listen IP:port (non-loopback requires HTTPS)")
  path:=flag.String("config","config.yml","path to Sparky configuration")
+ cert:=flag.String("tls-cert","","TLS certificate PEM path (required for non-loopback)")
+ key:=flag.String("tls-key","","TLS private key PEM path (required for non-loopback)")
  flag.Parse()
- log.Printf("Sparky configuration UI listening on %s (loopback; password required)",*addr)
- log.Fatal((&webconfig.Server{Store:&configeditor.Store{Path:*path}}).ListenAndServe(*addr))
+ server:=&webconfig.Server{Store:&configeditor.Store{Path:*path}}
+ if *cert!="" || *key!="" {
+  log.Printf("Sparky configuration UI HTTPS listener %s (login required)",*addr)
+  log.Fatal(server.ListenAndServeTLS(*addr,*cert,*key))
+ }
+ log.Printf("Sparky configuration UI HTTP listener %s (loopback only; login required)",*addr)
+ log.Fatal(server.ListenAndServe(*addr))
 }
