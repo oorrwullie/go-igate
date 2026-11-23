@@ -9,7 +9,7 @@ import (
 )
 
 func TestValidationFeedbackNoSecretDisclosure(t *testing.T) {
- cases:=[]struct{cause,want string}{
+ cases:=[]struct{cause error;want string}{
   {errors.New("invalid configuration: map-flights requires openwebrx-mqtt.enabled"),"requires OpenWebRX MQTT"},
   {errors.New("invalid configuration: map-flights.station and map-flights.key are required"),"requires station ID"},
   {errors.New("invalid configuration: transmitter audio-level must be between 0 and 1"),"between 0 and 1"},
