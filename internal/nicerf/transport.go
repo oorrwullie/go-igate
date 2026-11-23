@@ -97,16 +97,27 @@ func (t *Transport) Exchange(ctx context.Context,command string,timeout time.Dur
  }
  defer func(){t.token<-struct{}{}}()
  if err:=t.check();err!=nil{return err}
+ // The token and ctx.Done may both be ready; do not poison a healthy
+ // session when cancellation won before any serial I/O.
+ if err:=ctx.Err();err!=nil{return err}
  deadline:=time.Now().Add(timeout)
  if d,ok:=ctx.Deadline();ok&&d.Before(deadline){deadline=d}
  write:=[]byte(command)
+ ioStarted:=false
  for len(write)>0 {
-  if err:=t.step(ctx,deadline,true);err!=nil{t.fail();return err}
+  if err:=t.step(ctx,deadline,true);err!=nil{
+   if ioStarted { t.fail() }
+   return err
+  }
+  ioStarted=true
   n,err:=t.port.Write(write)
   if n<0||n>len(write){t.fail();return errors.New("nicerf: invalid write count")}
   write=write[n:]
   if err!=nil{
-   if isTimeout(err)&&time.Now().Before(deadline)&&ctx.Err()==nil{continue}
+   // An I/O error after any attempted write makes the session ambiguous.
+   // Surface cancellation instead of the deadline-polling timeout.
+   if ctxErr:=ctx.Err();ctxErr!=nil{t.fail();return ctxErr}
+   if isTimeout(err)&&time.Now().Before(deadline)&&n==0{continue}
    t.fail();return fmt.Errorf("nicerf: write: %w",err)
   }
   if n==0 {t.fail();return io.ErrNoProgress}
@@ -117,6 +128,15 @@ func (t *Transport) Exchange(ctx context.Context,command string,timeout time.Dur
   if err:=t.step(ctx,deadline,false);err!=nil{t.fail();return err}
   n,err:=t.port.Read(one[:])
   if n<0||n>1{t.fail();return errors.New("nicerf: invalid read count")}
+  // io.Reader may return n > 0 together with a non-nil error.
+  // Never accept an ACK's final newline if its read also failed.
+  if err!=nil {
+   if ctxErr:=ctx.Err();ctxErr!=nil{t.fail();return ctxErr}
+   if !(n==0&&isTimeout(err)&&time.Now().Before(deadline)){
+    t.fail();return fmt.Errorf("nicerf: read: %w",err)
+   }
+   continue
+  }
   if n==1{
    reply=append(reply,one[0])
    if one[0]=='\n'{
@@ -124,10 +144,6 @@ func (t *Transport) Exchange(ctx context.Context,command string,timeout time.Dur
     if err:=ValidateResponse(command,string(reply));err!=nil{t.fail();return fmt.Errorf("nicerf: response: %w",err)}
     return nil
    }
-  }
-  if err!=nil{
-   if isTimeout(err)&&time.Now().Before(deadline)&&ctx.Err()==nil{continue}
-   t.fail();return fmt.Errorf("nicerf: read: %w",err)
   }
   if n==0 {t.fail();return io.ErrNoProgress}
  }
