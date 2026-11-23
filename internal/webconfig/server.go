@@ -114,7 +114,7 @@ func (s *Server) allowedRequest(r *http.Request) bool {
  // For a loopback-only deployment, allow local addresses and local Host
  // headers. When an operator opts into LAN HTTP, do not accept arbitrary
  // plaintext requests even if they spoof localhost in Host.
- if source.IsLoopback() && localHost(r.Host) {return true}
+ if localHost(r.Host) && (source.IsLoopback() || s==nil || !s.AllowLANHTTP) {return true}
  if s==nil || s.PublicOrigin=="" {return false}
  u,err:=parsePublicOrigin(s.PublicOrigin)
  if err!=nil || r.Host!=u.Host{return false}
