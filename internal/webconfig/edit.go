@@ -2,6 +2,7 @@ package webconfig
 
 import (
  "crypto/rand"
+ _ "embed"
  "crypto/subtle"
  "encoding/hex"
  "errors"
@@ -13,6 +14,9 @@ import (
  "github.com/oorrwullie/sparky/internal/configeditor"
  "gopkg.in/yaml.v3"
 )
+
+//go:embed editor.js
+var editorScript []byte
 
 var editTemplate=template.Must(template.New("edit").Parse(editHTML))
 type editValues struct{ Callsign string; IGate, Digipeater, SDR, Transmitter, MQTT, ADSB bool }
@@ -64,7 +68,10 @@ func (s *Server) saveEdit(w http.ResponseWriter,r *http.Request,token []byte) {
  _,err=s.Store.Save(candidate,revision)
  if errors.Is(err,configeditor.ErrConflict){http.Error(w,"Configuration changed; reload",409);return}
  if errors.Is(err,configeditor.ErrDurability){http.Error(w,"Configuration saved, but filesystem durability is unconfirmed; inspect before restarting",500);return}
- if err!=nil{http.Error(w,"Configuration rejected or save failed; check server logs",400);return}
+ if err!=nil{
+  http.Error(w,validationFeedback(err),http.StatusBadRequest)
+  return
+ }
  http.Redirect(w,r,"/edit?saved=1",http.StatusSeeOther)
 }
 func patchEditable(original []byte,v editValues)([]byte,error){
@@ -104,4 +111,28 @@ func setEditable(node *yaml.Node,path []string,value,tag string)error{
   }
  }
  return nil
+}
+
+// validationFeedback maps known, non-secret validation errors to actionable
+// public messages. Never send arbitrary parser/storage error strings to HTML:
+// they can include user-controlled YAML scalars or filesystem paths.
+func validationFeedback(err error) string {
+ if err==nil {return ""}
+ msg:=err.Error()
+ switch {
+ case strings.Contains(msg,"transmitter audio-level"):
+  return "Audio level must be between 0 and 1. No changes were saved."
+ case strings.Contains(msg,"map-flights requires"):
+  return "map.flights requires OpenWebRX MQTT input. Enable MQTT or disable map.flights. No changes were saved."
+ case strings.Contains(msg,"map-flights.station and map-flights.key"):
+  return "map.flights requires station ID and API key in config.yml before it can be enabled. No changes were saved."
+ case strings.Contains(msg,"map-flights.topic"):
+  return "map.flights MQTT topic must be a specific topic, not a wildcard. No changes were saved."
+ case strings.Contains(msg,"map-flights.broker"):
+  return "map.flights requires an SSL broker URL. No changes were saved."
+ case strings.Contains(msg,"openwebrx-mqtt.embedded-broker.listen-address"):
+  return "The embedded MQTT broker must listen on a valid loopback address. No changes were saved."
+ default:
+  return "Configuration rejected or could not be saved. Inspect YAML and server logs; no successful save was reported."
+ }
 }
