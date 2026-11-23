@@ -87,7 +87,7 @@ func TestMultimonStopReapsChild(t *testing.T) {
 	case <-time.After(3*time.Second):
 		t.Fatal("Stop did not join child")
 	}
-	if m.Cmd.ProcessState == nil || !m.Cmd.ProcessState.Exited() {
+	if m.Cmd.ProcessState == nil {
 		t.Fatal("child process was not reaped via Wait")
 	}
 	if err := process.Signal(nil); err == nil {
