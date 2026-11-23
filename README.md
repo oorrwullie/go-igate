@@ -14,6 +14,10 @@ Sparky is an open-source radio data gateway written in Go. It receives, processe
 
 Sparky began as an RTL-SDR APRS iGate, inspired by [Ionosphere](https://github.com/cceremuga/ionosphere). Its current capabilities extend beyond an iGate.
 
+## Why Sparky?
+
+The name is a nod to **Sparky**, the radio operator Radar frequently talks to in *M\*A\*S\*H*. He's the voice at the other end of the radio, helping messages get where they need to go. That's a fitting namesake for software that listens to radio traffic and routes it between the airwaves and connected services.
+
 ## Current capabilities
 
 ### APRS
