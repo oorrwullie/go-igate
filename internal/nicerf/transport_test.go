@@ -230,3 +230,48 @@ func TestTransportCancellationDuringWrite(t *testing.T){
   t.Fatalf("partial write session reusable: %v",err)
  }
 }
+
+
+func TestTransportQueuedTimeoutNeverWritesAndPreservesSession(t *testing.T) {
+ transport,peer:=connected(t)
+ firstSeen:=make(chan struct{})
+ releaseFirst:=make(chan struct{})
+ serverDone:=make(chan error,1)
+ go func(){
+  first:=make([]byte,len(Handshake()))
+  if _,err:=io.ReadFull(peer,first);err!=nil{serverDone<-err;return}
+  if string(first)!=Handshake(){serverDone<-errors.New("first command mismatch");return}
+  close(firstSeen)
+  <-releaseFirst
+  if _,err:=peer.Write([]byte("+DMOCONNECT:0\r\n"));err!=nil{serverDone<-err;return}
+
+  // The next command must be the third call's handshake, not the expired
+  // second call's filter command. A token wait timeout may not send bytes.
+  next:=make([]byte,len(Handshake()))
+  if _,err:=io.ReadFull(peer,next);err!=nil{serverDone<-err;return}
+  if string(next)!=Handshake(){serverDone<-errors.New("expired queued command reached peer");return}
+  _,err:=peer.Write([]byte("+DMOCONNECT:0\r\n"))
+  serverDone<-err
+ }()
+
+ firstResult:=make(chan error,1)
+ go func(){firstResult<-transport.Exchange(context.Background(),Handshake(),time.Second)}()
+ select{case <-firstSeen:case <-time.After(time.Second):t.Fatal("first command not received")}
+
+ start:=time.Now()
+ err:=transport.Exchange(context.Background(),FiltersOff(),25*time.Millisecond)
+ elapsed:=time.Since(start)
+ if !errors.Is(err,context.DeadlineExceeded){
+  t.Fatalf("queued request returned %v, want deadline exceeded",err)
+ }
+ if elapsed>150*time.Millisecond{
+  t.Fatalf("queued request waited %v instead of honoring 25ms timeout",elapsed)
+ }
+ close(releaseFirst)
+ if err:=<-firstResult;err!=nil{t.Fatalf("active exchange failed after queued timeout: %v",err)}
+
+ if err:=transport.Exchange(context.Background(),Handshake(),time.Second);err!=nil{
+  t.Fatalf("queued timeout poisoned session: %v",err)
+ }
+ if err:=<-serverDone;err!=nil{t.Fatal(err)}
+}
