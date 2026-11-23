@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/sparky-readme-banner.svg" alt="Sparky — radio data, connected: APRS, ADS-B, MQTT and Go" width="100%">
+  <img src="assets/sparky-readme-banner.png" alt="Sparky, the Go gopher, operating a vintage field radio" width="100%">
 </p>
 
 Sparky is an open-source radio data gateway written in Go. It receives, processes, and routes radio data between receivers, transmitters, and network services. Today it focuses on **APRS** and **ADS-B**, with room for additional protocols and hardware backends as the project evolves.
