@@ -98,9 +98,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   SDRFrequency:cfg.Sdr.Frequency,IGate:cfg.IGate.Enabled,
   APRSIS:cfg.IGate.Aprsis.Enabled,Digipeater:cfg.DigipeaterEnabled,
   Transmitter:cfg.Transmitter.Enabled,MQTT:cfg.OpenWebRXMQTT.Enabled,
-  MQTTTopic:cfg.OpenWebRXMQTT.Topic,ADSB:cfg.MapFlights.Enabled,
+  MQTTTopic:effectiveMQTTTopic(cfg.OpenWebRXMQTT.Topic),ADSB:cfg.MapFlights.Enabled,
  }
  if err:=page.Execute(w,data);err!=nil {return}
+}
+
+// effectiveMQTTTopic mirrors the runtime OpenWebRX subscription fallback.
+func effectiveMQTTTopic(topic string) string {
+ topic=strings.TrimSpace(topic)
+ if topic=="" {return "openwebrx/APRS"}
+ return topic
 }
 
 // allowedRequest accepts direct TLS, local loopback requests, or the exact
