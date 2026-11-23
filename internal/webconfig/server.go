@@ -8,13 +8,19 @@ import (
  "net"
  "net/http"
  "strings"
+ "sync"
  "time"
 
  "github.com/oorrwullie/sparky/internal/config"
  "github.com/oorrwullie/sparky/internal/configeditor"
 )
 
-type Server struct { Store *configeditor.Store }
+type Server struct {
+ Store *configeditor.Store
+ tokenOnce sync.Once
+ token []byte
+ tokenErr error
+}
 
 type view struct {
  Callsign string
