@@ -21,12 +21,42 @@
  <circle cx="148" cy="240" r="6" fill="#44dbea"/><circle cx="244" cy="257" r="5" fill="#44dbea"/>
  <circle cx="590" cy="238" r="5" fill="#44dbea"/>
 </g>
-<g transform="translate(945 37)">
- <circle cx="0" cy="126" r="127" fill="none" stroke="#60d8e7" stroke-opacity=".18" stroke-width="1"/>
- <circle cx="0" cy="126" r="90" fill="none" stroke="#60d8e7" stroke-opacity=".2" stroke-width="1"/>
- <path d="M0 78V238M-65 238H65M0 78L-54 238M0 78L54 238M-35 190H35M-24 147H24M-12 106H12" fill="none" stroke="url(#accent)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
- <circle cy="72" r="11" fill="#5cf1f0"/>
- <path d="M-27 46Q0 20 27 46M-46 30Q0 -14 46 30M27 46Q0 20 -27 46M46 30Q0 -14 -46 30" fill="none" stroke="#59e6f0" stroke-width="6" stroke-linecap="round"/>
+<g transform="translate(943 36)">
+<!-- Radio-wave arcs and the radio tower remain behind the character. -->
+<g opacity=".65" fill="none" stroke="#57e5ed" stroke-width="4" stroke-linecap="round">
+ <path d="M-115 35Q-140 60-115 85M-132 18Q-173 60-132 102"/>
+ <path d="M115 35Q140 60 115 85M132 18Q173 60 132 102"/>
+</g>
+<!-- Body, ears and turquoise gopher head. -->
+<ellipse cx="0" cy="292" rx="113" ry="70" fill="#147c9c" stroke="#09283a" stroke-width="8"/>
+<circle cx="-92" cy="115" r="34" fill="#48b9cd" stroke="#09283a" stroke-width="8"/>
+<circle cx="-92" cy="116" r="18" fill="#f0ad6b"/>
+<circle cx="92" cy="115" r="34" fill="#48b9cd" stroke="#09283a" stroke-width="8"/>
+<circle cx="92" cy="116" r="18" fill="#f0ad6b"/>
+<ellipse cx="0" cy="160" rx="119" ry="122" fill="#36b7d1" stroke="#09283a" stroke-width="9"/>
+<path d="M-80 66Q-10-10 79 58" fill="none" stroke="#182b36" stroke-width="19" stroke-linecap="round"/>
+<path d="M-80 63Q-10-11 79 55" fill="none" stroke="#c9a36b" stroke-width="8" stroke-linecap="round"/>
+<rect x="-126" y="93" width="38" height="89" rx="18" fill="#263c4b" stroke="#c9a36b" stroke-width="7"/>
+<rect x="88" y="93" width="38" height="89" rx="18" fill="#263c4b" stroke="#c9a36b" stroke-width="7"/>
+<!-- Bright Go-gopher eyes and muzzle. -->
+<ellipse cx="-47" cy="143" rx="54" ry="66" fill="#fff" stroke="#102b3a" stroke-width="7"/>
+<ellipse cx="46" cy="143" rx="54" ry="66" fill="#fff" stroke="#102b3a" stroke-width="7"/>
+<ellipse cx="-23" cy="148" rx="17" ry="24" fill="#091b29"/>
+<ellipse cx="27" cy="148" rx="17" ry="24" fill="#091b29"/>
+<circle cx="-29" cy="139" r="6" fill="#fff"/>
+<circle cx="22" cy="139" r="6" fill="#fff"/>
+<ellipse cx="-27" cy="214" rx="36" ry="28" fill="#f6be7c" stroke="#102b3a" stroke-width="5"/>
+<ellipse cx="26" cy="214" rx="36" ry="28" fill="#f6be7c" stroke="#102b3a" stroke-width="5"/>
+<ellipse cx="0" cy="198" rx="19" ry="12" fill="#102b3a"/>
+<rect x="-22" y="231" width="21" height="36" rx="5" fill="#fff7de" stroke="#102b3a" stroke-width="4"/>
+<rect x="2" y="231" width="21" height="36" rx="5" fill="#fff7de" stroke="#102b3a" stroke-width="4"/>
+<!-- Vintage desk microphone and paws. -->
+<ellipse cx="-110" cy="296" rx="36" ry="17" fill="#eab57b" stroke="#102b3a" stroke-width="6"/>
+<ellipse cx="103" cy="296" rx="36" ry="17" fill="#eab57b" stroke="#102b3a" stroke-width="6"/>
+<rect x="-165" y="268" width="52" height="22" rx="11" fill="#203a49" stroke="#d6ac71" stroke-width="4"/>
+<rect x="-145" y="199" width="15" height="77" rx="6" fill="#d5b279" stroke="#132c3a" stroke-width="4"/>
+<rect x="-158" y="165" width="40" height="54" rx="18" fill="#ccb184" stroke="#122a39" stroke-width="5"/>
+<path d="M-149 181H-128M-149 192H-128M-149 203H-128" stroke="#142d3a" stroke-width="3"/>
 </g>
 <g transform="translate(68 58)">
  <rect x="0" y="0" width="81" height="81" rx="18" fill="#2d526a" fill-opacity=".65" stroke="#65d9e7" stroke-opacity=".6" stroke-width="2"/>
