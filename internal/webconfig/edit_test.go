@@ -47,3 +47,34 @@ func TestEditPreservesSecretsAndRejectsCSRF(t *testing.T){
 func TestEditableRejectsInvalidNestedType(t *testing.T){
  if _,err:=patchEditable([]byte("igate: this-should-be-a-map\n"),editValues{});err==nil{t.Fatal("overwrote non-map igate field")}
 }
+
+func TestTrustedRoutySaveUsesPublicHTTPSOrigin(t *testing.T) {
+ t.Setenv("SPARKY_CONFIG_PASSWORD","this-is-a-long-test-password")
+ p:=filepath.Join(t.TempDir(),"config.yml")
+ if err:=os.WriteFile(p,[]byte("station-callsign: N0CALL\n"),0600);err!=nil {t.Fatal(err)}
+ s:=&Server{Store:&configeditor.Store{Path:p},PublicOrigin:"https://sparky.example.org",TrustedProxyIP:"192.168.1.10",AllowLANHTTP:true}
+ token,err:=csrfToken(s);if err!=nil {t.Fatal(err)}
+ _,revision,err:=s.Store.Load();if err!=nil {t.Fatal(err)}
+ form:=url.Values{"revision":{revision},"csrf":{hex.EncodeToString(token)},"callsign":{"N0CALL-7"}}
+ attempt:=func(origin string,remote string)int{
+  req:=httptest.NewRequest("POST","http://127.0.0.1:8080/edit",strings.NewReader(form.Encode()))
+  req.Host="sparky.example.org"
+  req.RemoteAddr=remote
+  req.Header.Set("Content-Type","application/x-www-form-urlencoded")
+  req.Header.Set("Origin",origin)
+  req.SetBasicAuth("admin","this-is-a-long-test-password")
+  rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
+  return rec.Code
+ }
+ if status:=attempt("https://attacker.example.org","192.168.1.10:54321");status!=403 {
+  t.Fatalf("accepted cross-origin post: %d",status)
+ }
+ if status:=attempt("https://sparky.example.org","192.168.1.20:54321");status!=403 {
+  t.Fatalf("accepted untrusted proxy source: %d",status)
+ }
+ if status:=attempt("https://sparky.example.org","192.168.1.10:54321");status!=303 {
+  t.Fatalf("trusted proxy save failed: %d",status)
+ }
+ saved,_,err:=s.Store.Load()
+ if err!=nil||!strings.Contains(string(saved),"N0CALL-7"){t.Fatalf("save not committed: %v",err)}
+}
