@@ -146,3 +146,48 @@ func TestRemoteListenerRequiresTLSCredentials(t *testing.T) {
   t.Fatal("accepted invalid TLS credential paths")
  }
 }
+
+func TestTrustedRoutyLANProxy(t *testing.T) {
+ s:=testServer(t)
+ s.PublicOrigin="https://sparky.example.org"
+ s.TrustedProxyIP="192.168.1.10"
+ s.AllowLANHTTP=true
+ for _,tc:=range []struct{
+  name,host,remote string;want int
+ }{
+  {"trusted Routy","sparky.example.org","192.168.1.10:45678",200},
+  {"wrong source","sparky.example.org","192.168.1.20:45678",403},
+  {"spoofed local hostname","localhost:8080","192.168.1.20:45678",403},
+  {"wrong hostname","evil.example.org","192.168.1.10:45678",403},
+ } {
+  t.Run(tc.name,func(t *testing.T){
+   req:=httptest.NewRequest("GET","http://127.0.0.1:8080/",nil)
+   req.Host=tc.host
+   req.RemoteAddr=tc.remote
+   req.SetBasicAuth("admin","this-is-a-long-test-password")
+   rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
+   if rec.Code!=tc.want {t.Fatalf("%s returned %d want %d",tc.name,rec.Code,tc.want)}
+  })
+ }
+}
+
+func TestPublicOriginValidation(t *testing.T) {
+ for _,origin:=range []string{"http://sparky.example.org","https://sparky.example.org/path","https://user@sparky.example.org","https://sparky.example.org?x=y","https://"} {
+  if _,err:=parsePublicOrigin(origin);err==nil {t.Fatalf("accepted invalid origin %q",origin)}
+ }
+ if _,err:=parsePublicOrigin("https://sparky.example.org");err!=nil {t.Fatal(err)}
+}
+
+func TestLANOptInRejectsIncompleteConfiguration(t *testing.T) {
+ for _,tc:=range []struct{
+  name string;server Server
+ }{
+  {"no origin",Server{AllowLANHTTP:true,TrustedProxyIP:"192.168.1.10"}},
+  {"no proxy IP",Server{AllowLANHTTP:true,PublicOrigin:"https://sparky.example.org"}},
+  {"invalid proxy IP",Server{AllowLANHTTP:true,PublicOrigin:"https://sparky.example.org",TrustedProxyIP:"Routy"}},
+ } {
+  t.Run(tc.name,func(t *testing.T){
+   if err:=tc.server.ListenAndServe("0.0.0.0:0");err==nil {t.Fatal("accepted unsafe LAN HTTP configuration")}
+  })
+ }
+}
