@@ -2,7 +2,7 @@ package multimon
 
 import (
 	"bufio"
-	"io"
+	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
@@ -28,6 +28,11 @@ type Multimon struct {
 	inputBytes      atomic.Uint64
 	stopHealth      chan struct{}
 	stopHealthOnce  sync.Once
+	lifecycleMu     sync.Mutex
+	stopCh          chan struct{}
+	done            chan struct{}
+	started         bool
+	stopped         bool
 }
 
 // New creates a new multimon-ng instance
@@ -61,95 +66,133 @@ func New(cfg config.Multimon, inputChan chan []byte, ps *pubsub.PubSub, cache *c
 		tx:              tx,
 		stationCallsign: strings.ToUpper(strings.TrimSpace(stationCallsign)),
 		stopHealth:      make(chan struct{}),
+		stopCh:          make(chan struct{}),
 	}
 }
 
-// Start starts the multimon-ng process and reads from the input and writes to the output channel
+// Start owns exactly one child process and its corresponding Cmd.Wait.
+// Startup completes synchronously so callers cannot race an unstarted child.
 func (m *Multimon) Start() error {
-	// Start the multimon-ng process
+	m.lifecycleMu.Lock()
+	defer m.lifecycleMu.Unlock()
+	if m.stopped {
+		return fmt.Errorf("multimon-ng already stopped")
+	}
+	if m.started {
+		return nil
+	}
+	if m.stopCh == nil {
+		m.stopCh = make(chan struct{})
+	}
+	inPipe, err := m.Cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("multimon-ng stdin: %w", err)
+	}
+	outPipe, err := m.Cmd.StdoutPipe()
+	if err != nil {
+		_ = inPipe.Close()
+		return fmt.Errorf("multimon-ng stdout: %w", err)
+	}
+	if err := m.Cmd.Start(); err != nil {
+		_ = inPipe.Close()
+		_ = outPipe.Close()
+		return fmt.Errorf("start multimon-ng: %w", err)
+	}
+	m.started = true
+	m.done = make(chan struct{})
+	m.logger.Info("multimon-ng decoder started: ", m.Cmd.Path, " ", strings.Join(m.Cmd.Args[1:], " "))
+	if m.cfg.ReceiveDiagnostics {
+		go m.logInputHealth()
+	}
+	readerDone := make(chan struct{})
+	writerDone := make(chan struct{})
 	go func() {
-		inPipe, err := m.Cmd.StdinPipe()
-		if err != nil {
-			m.logger.Error("Error opening multimon-ng stdin:", err)
-			return
-		}
-
-		outPipe, err := m.Cmd.StdoutPipe()
-		if err != nil {
-			m.logger.Error("Error opening multimon-ng stdout: ", err)
-			return
-		}
-
-		err = m.Cmd.Start()
-		if err != nil {
-			m.logger.Error("Error starting multimon-ng: ", err)
-			return
-		}
-		m.logger.Info("multimon-ng decoder started: ", m.Cmd.Path, " ", strings.Join(m.Cmd.Args[1:], " "))
-		if m.cfg.ReceiveDiagnostics {
-			go m.logInputHealth()
-		}
-
-		// Start goroutines to read from the input channel and write to the output channel
-		go func(in io.WriteCloser) {
-			defer in.Close()
-			for {
-				data, ok := <-m.inputChan
+		defer close(writerDone)
+		defer inPipe.Close()
+		for {
+			select {
+			case <-m.stopCh:
+				return
+			case <-readerDone:
+				return
+			case data, ok := <-m.inputChan:
 				if !ok {
 					return
 				}
-				written, err := in.Write(data)
-				if written > 0 && m.cfg.ReceiveDiagnostics {
-					m.inputBytes.Add(uint64(written))
+				n, err := inPipe.Write(data)
+				if n > 0 && m.cfg.ReceiveDiagnostics {
+					m.inputBytes.Add(uint64(n))
 				}
 				if err != nil {
 					m.logger.Error("Error writing to multimon-ng: ", err)
 					return
 				}
 			}
-		}(inPipe)
-
-		// This is reading from the output of multimon-ng and writing to the output channel
-		// This is where the APRS packets are read from multimon-ng
-		// and sent to the output channel
-		go func(out io.ReadCloser) {
-			defer m.stopInputHealth()
-			scanner := bufio.NewScanner(out)
-			for scanner.Scan() {
-				msg := scanner.Text()
-				normalized := normalizeMultimonMessage(msg)
-				if normalized == "" {
-					continue
-				}
-				m.logger.Debug("Got message: ", msg)
-
-				duplicate := m.cache.Set(normalized, time.Now())
-				if duplicate && !m.isSelfMessage(normalized) {
-					m.logger.Info("Duplicate packet received: ", msg)
-					continue
-				}
-
-				if duplicate {
-					m.logger.Debug("Allowing duplicate for station beacon: ", normalized)
-				} else {
-					m.logger.Info("packet received: ", msg)
-				}
-
-				// if m.tx != nil {
-				// 	fmt.Println("initiating tx backoff...")
-				// 	go m.tx.RxBackoff()
-				// }
-				m.pubsub.Publish(normalized)
-			}
-
-			if err := scanner.Err(); err != nil {
-				m.logger.Error("Error reading from multimon-ng: ", err)
-			}
-
-		}(outPipe)
+		}
 	}()
-
+	go func() {
+		defer close(readerDone)
+		defer m.stopInputHealth()
+		scanner := bufio.NewScanner(outPipe)
+		for scanner.Scan() {
+			msg := scanner.Text()
+			normalized := normalizeMultimonMessage(msg)
+			if normalized == "" {
+				continue
+			}
+			m.logger.Debug("Got message: ", msg)
+			duplicate := m.cache.Set(normalized, time.Now())
+			if duplicate && !m.isSelfMessage(normalized) {
+				m.logger.Info("Duplicate packet received: ", msg)
+				continue
+			}
+			if duplicate {
+				m.logger.Debug("Allowing duplicate for station beacon: ", normalized)
+			} else {
+				m.logger.Info("packet received: ", msg)
+			}
+			m.pubsub.Publish(normalized)
+		}
+		if err := scanner.Err(); err != nil {
+			m.logger.Error("Error reading from multimon-ng: ", err)
+		}
+	}()
+	go func() {
+		<-readerDone
+		<-writerDone
+		err := m.Cmd.Wait()
+		if err != nil {
+			select {
+			case <-m.stopCh:
+			default:
+				m.logger.Warn("multimon-ng exited: ", err)
+			}
+		}
+		close(m.done)
+	}()
 	return nil
+}
+
+// Stop terminates the decoder and waits until the sole Cmd.Wait reaps it.
+// Never-started and failed-start instances return without blocking.
+func (m *Multimon) Stop() {
+	m.lifecycleMu.Lock()
+	if !m.stopped {
+		m.stopped = true
+		if m.stopCh == nil {
+			m.stopCh = make(chan struct{})
+		}
+		close(m.stopCh)
+		m.stopInputHealth()
+	}
+	done := m.done
+	if m.started && m.Cmd.Process != nil {
+		_ = m.Cmd.Process.Kill()
+	}
+	m.lifecycleMu.Unlock()
+	if done != nil {
+		<-done
+	}
 }
 
 func (m *Multimon) logInputHealth() {
