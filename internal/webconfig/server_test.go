@@ -4,6 +4,7 @@ import (
  "net/http"
  "crypto/tls"
  "net/http/httptest"
+ "io"
  "os"
  "path/filepath"
  "strings"
@@ -21,7 +22,7 @@ func testServer(t *testing.T)*Server{
  return &Server{Store:&configeditor.Store{Path:path}}
 }
 func TestReadOnlyPageRedactsSecrets(t *testing.T){
- s:=testServer(t);req:=httptest.NewRequest("GET","http://127.0.0.1:8080/",nil)
+ s:=testServer(t);req:=localTestRequest("GET","http://127.0.0.1:8080/",nil)
  req.SetBasicAuth("admin","this-is-a-long-test-password")
  rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
  if rec.Code!=200{t.Fatalf("status: %d %s",rec.Code,rec.Body.String())}
@@ -41,7 +42,7 @@ func TestRejectExternalHostAndMutations(t *testing.T){
   {"localhost:8080","PUT",405},
  }
  for _,tc:=range cases{
-  req:=httptest.NewRequest(tc.method,"http://127.0.0.1:8080/",nil);req.Host=tc.host
+  req:=localTestRequest(tc.method,"http://127.0.0.1:8080/",nil);req.Host=tc.host
   req.SetBasicAuth("admin","this-is-a-long-test-password")
   rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
   if rec.Code!=tc.code{t.Errorf("%s %s: got %d, want %d",tc.host,tc.method,rec.Code,tc.code)}
@@ -52,7 +53,7 @@ func TestInvalidConfigDoesNotExposeContents(t *testing.T){
  if err:=os.WriteFile(p,[]byte("transmitter:\n  audio-level: 7\npassword: VERY_SECRET"),0600);err!=nil{t.Fatal(err)}
  t.Setenv("SPARKY_CONFIG_PASSWORD","this-is-a-long-test-password")
  s:=&Server{Store:&configeditor.Store{Path:p}}
- req:=httptest.NewRequest("GET","http://localhost:8080/",nil)
+ req:=localTestRequest("GET","http://localhost:8080/",nil)
  req.SetBasicAuth("admin","this-is-a-long-test-password")
  rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
  if rec.Code!=http.StatusServiceUnavailable||strings.Contains(rec.Body.String(),"VERY_SECRET"){t.Fatal("invalid configuration disclosed")}
@@ -70,7 +71,7 @@ func TestTemplateEscaping(t *testing.T) {
  if err:=os.WriteFile(p,[]byte("station-callsign: '"+marker+"'\n"),0600);err!=nil{t.Fatal(err)}
  t.Setenv("SPARKY_CONFIG_PASSWORD","this-is-a-long-test-password")
  s:=&Server{Store:&configeditor.Store{Path:p}}
- req:=httptest.NewRequest("GET","http://localhost:8080/",nil)
+ req:=localTestRequest("GET","http://localhost:8080/",nil)
  req.SetBasicAuth("admin","this-is-a-long-test-password")
  rec:=httptest.NewRecorder()
  s.ServeHTTP(rec,req)
@@ -96,7 +97,7 @@ func TestEveryRouteRequiresCredentials(t *testing.T) {
    {"correct","admin","this-is-a-long-test-password",0},
   } {
    t.Run(path+"/"+tc.name,func(t *testing.T){
-    req:=httptest.NewRequest("GET","http://localhost:8080"+path,nil)
+    req:=localTestRequest("GET","http://localhost:8080"+path,nil)
     if tc.user!="" {req.SetBasicAuth(tc.user,tc.password)}
     rec:=httptest.NewRecorder()
     s.ServeHTTP(rec,req)
@@ -113,7 +114,7 @@ func TestPasswordMissingOrShortFailsClosed(t *testing.T) {
  s:=testServer(t)
  for _,pass:=range []string{"","weak"}{
   t.Setenv("SPARKY_CONFIG_PASSWORD",pass)
-  req:=httptest.NewRequest("GET","http://localhost:8080/",nil)
+  req:=localTestRequest("GET","http://localhost:8080/",nil)
   req.SetBasicAuth("admin",pass)
   rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
   if rec.Code!=http.StatusServiceUnavailable {t.Fatalf("password length %d: status %d",len(pass),rec.Code)}
@@ -161,7 +162,7 @@ func TestTrustedRoutyLANProxy(t *testing.T) {
   {"wrong hostname","evil.example.org","192.168.1.10:45678",403},
  } {
   t.Run(tc.name,func(t *testing.T){
-   req:=httptest.NewRequest("GET","http://127.0.0.1:8080/",nil)
+   req:=localTestRequest("GET","http://127.0.0.1:8080/",nil)
    req.Host=tc.host
    req.RemoteAddr=tc.remote
    req.SetBasicAuth("admin","this-is-a-long-test-password")
@@ -189,5 +190,24 @@ func TestLANOptInRejectsIncompleteConfiguration(t *testing.T) {
   t.Run(tc.name,func(t *testing.T){
    if err:=tc.server.ListenAndServe("0.0.0.0:0");err==nil {t.Fatal("accepted unsafe LAN HTTP configuration")}
   })
+ }
+}
+
+func localTestRequest(method, target string, body io.Reader) *http.Request {
+ r:=httptest.NewRequest(method,target,body)
+ r.RemoteAddr="127.0.0.1:55432"
+ return r
+}
+
+func TestSpoofedLoopbackHostFromLANIsRejected(t *testing.T) {
+ s:=testServer(t)
+ for _,host:=range []string{"localhost:8080","127.0.0.1:8080","[::1]:8080"} {
+  req:=httptest.NewRequest("GET","http://127.0.0.1:8080/",nil)
+  req.RemoteAddr="192.168.1.30:43210"
+  req.Host=host
+  req.SetBasicAuth("admin","this-is-a-long-test-password")
+  w:=httptest.NewRecorder()
+  s.ServeHTTP(w,req)
+  if w.Code!=http.StatusForbidden {t.Fatalf("spoofed Host %q accepted: %d",host,w.Code)}
  }
 }
