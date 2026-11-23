@@ -104,6 +104,9 @@ func setEditable(node *yaml.Node,path []string,value,tag string)error{
   }
   if i==len(path)-1{
    if child.Kind!=0 && child.Kind!=yaml.ScalarNode{return errors.New("editable field must be scalar")}
+   if child.Anchor!="" && (child.Value!=value || child.Tag!=tag) {
+    return errors.New("cannot modify anchored setting through web editor")
+   }
    child.Kind=yaml.ScalarNode;child.Tag=tag;child.Value=value;child.Style=0
   }else{
    if child.Kind==0 {child.Kind=yaml.MappingNode;child.Tag="!!map"}
