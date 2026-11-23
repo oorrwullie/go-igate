@@ -132,7 +132,7 @@ When message gating is disabled, RF packets sent back to APRS-IS use `qAO`. When
 
 ## Renaming from go-igate
 
-The application and Go module are being renamed to **Sparky**. The planned canonical module path is `github.com/oorrwullie/sparky` (previously `github.com/oorrwullie/go-igate`). When the GitHub repository is renamed, existing clones can update their remote with:
+The application, Go module, and GitHub repository have been renamed to **Sparky**. The canonical module path is `github.com/oorrwullie/sparky` (previously `github.com/oorrwullie/go-igate`). Existing clones can update their remote with:
 
 ```bash
 git remote set-url origin https://github.com/oorrwullie/sparky.git
@@ -155,4 +155,4 @@ Contributions are what make the open source community such an amazing place to l
 Distributed under the MIT License. See `LICENSE` for more information.
 
 ## Contact
-Project repository (renaming to `oorrwullie/sparky`): [https://github.com/oorrwullie/go-igate](https://github.com/oorrwullie/go-igate)
+Project repository: [https://github.com/oorrwullie/sparky](https://github.com/oorrwullie/sparky)
