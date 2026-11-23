@@ -7,7 +7,6 @@ import (
  "errors"
  "html/template"
  "net/http"
- "os"
  "strings"
 
  "github.com/oorrwullie/sparky/internal/config"
@@ -29,19 +28,7 @@ func csrfToken(s *Server) ([]byte,error) {
  })
  return s.token,s.tokenErr
 }
-func editAuthorized(w http.ResponseWriter,r *http.Request) bool {
- password:=os.Getenv("SPARKY_CONFIG_PASSWORD")
- if len(password)<16 {http.Error(w,"Editing disabled; configure SPARKY_CONFIG_PASSWORD (at least 16 characters)",503);return false}
- _,provided,ok:=r.BasicAuth()
- if !ok || subtle.ConstantTimeCompare([]byte(provided),[]byte(password))!=1 {
-  w.Header().Set("WWW-Authenticate",`Basic realm="Sparky local editor"`)
-  http.Error(w,"Authentication required",401)
-  return false
- }
- return true
-}
 func (s *Server) serveEdit(w http.ResponseWriter,r *http.Request) {
- if !editAuthorized(w,r){return}
  token,err:=csrfToken(s)
  if err!=nil{http.Error(w,"Editor unavailable",503);return}
  if r.Method==http.MethodPost {s.saveEdit(w,r,token);return}
