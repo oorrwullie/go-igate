@@ -75,7 +75,7 @@ openwebrx-mqtt:
 map-flights:
   enabled: true
   broker: ssl://mqtt.map.flights:8883
-  station: N7RIX
+  station: N0CALL
   key: "YOUR_MAP_FLIGHTS_STATION_KEY"
   topic: openwebrx/ADSB
 ```

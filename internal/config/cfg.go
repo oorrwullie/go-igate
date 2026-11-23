@@ -137,15 +137,20 @@ type (
 )
 
 func GetConfig() (Config, error) {
+	f, err := os.ReadFile("config.yml")
+	if err != nil {
+		return Config{}, fmt.Errorf("Could not load config file: %v", err)
+	}
+	return ParseConfigBytes(f)
+}
+
+// ParseConfigBytes applies the same configuration validation and runtime defaults
+// as startup. The web editor uses this before writing a new configuration.
+func ParseConfigBytes(data []byte) (Config, error) {
 	var cfg Config
 	const defaultTxDelay = time.Second
 
-	f, err := os.ReadFile("config.yml")
-	if err != nil {
-		return cfg, fmt.Errorf("Could not load config file: %v", err)
-	}
-
-	err = yaml.Unmarshal(f, &cfg)
+	err := yaml.Unmarshal(data, &cfg)
 	if err != nil {
 		return cfg, fmt.Errorf("Could not parse config file: %v", err)
 	}
