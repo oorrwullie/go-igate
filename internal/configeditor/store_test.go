@@ -42,3 +42,17 @@ func TestRejectSymlinkAndOversizedFile(t *testing.T) {
 	if err:=os.WriteFile(target,[]byte(strings.Repeat("x",MaxDocumentSize+1)),0600);err!=nil{t.Fatal(err)}
 	if _,_,err:=(&Store{Path:target}).Load();err==nil{t.Fatal("oversized file accepted")}
 }
+
+func TestPostRenameSyncFailureReturnsCommittedRevision(t *testing.T) {
+	p:=filepath.Join(t.TempDir(),"config.yml")
+	if err:=os.WriteFile(p,[]byte("station-callsign: N0CALL\n"),0600);err!=nil{t.Fatal(err)}
+	s:=&Store{Path:p,syncDirectory:func(string)error{return errors.New("injected sync failure")}}
+	_,rev,err:=s.Load();if err!=nil{t.Fatal(err)}
+	next:=[]byte("station-callsign: N0CALL-10\n")
+	newRev,err:=s.Save(next,rev)
+	if !errors.Is(err,ErrDurability){t.Fatalf("expected durability error: %v",err)}
+	if newRev==""||newRev==rev{t.Fatal("committed revision not returned")}
+	got,readRev,err:=s.Load()
+	if err!=nil||string(got)!=string(next)||readRev!=newRev{t.Fatalf("committed content mismatch: %q %s %v",got,readRev,err)}
+	if _,err:=s.Save(next,rev);!errors.Is(err,ErrConflict){t.Fatalf("old revision should conflict: %v",err)}
+}
