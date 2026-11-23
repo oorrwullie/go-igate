@@ -1,47 +1,50 @@
 <p align="center">
-  <img src="assets/sparky-gopher-mascot.png" alt="Sparky, the Go gopher radio operator" width="260">
+  <img src="assets/sparky-readme-banner.png" alt="Sparky, the Go gopher, operating a vintage field radio" width="100%">
 </p>
 
-# Sparky
+Sparky is an open-source radio data gateway written in Go. It receives, processes, and routes radio data between receivers, transmitters, and network services. Today it focuses on **APRS** and **ADS-B**, with room for additional protocols and hardware backends as the project evolves.
 
-<p align="center">An APRS and ADS-B radio gateway built with Go.</p>
+Sparky began as an RTL-SDR APRS iGate, inspired by [Ionosphere](https://github.com/cceremuga/ionosphere). Its current capabilities extend beyond an iGate.
+
+## Why Sparky?
+
+<img src="assets/sparky-gopher-mascot.png" alt="Sparky, the Go gopher wearing a radio headset" width="185" align="right">
+
+The name is a nod to **Sparky**, the radio operator Radar frequently talks to in *M\*A\*S\*H*. He's the voice at the other end of the radio, helping messages get where they need to go. That's a fitting namesake for software that listens to radio traffic and routes it between the airwaves and connected services.
+
+## Current capabilities
 
 <p align="center">
-  <img src="assets/sparky-radio-command-center.png" alt="Sparky operating an APRS and ADS-B radio command center" width="900">
+  <img src="assets/sparky-radio-command-center.png" alt="Sparky operating a radio command center with APRS and ADS-B displays" width="850">
 </p>
 
-Receive, decode, log, upload [APRS](http://www.aprs.org/) packets using low cost [RTL-SDR](http://osmocom.org/projects/sdr/wiki/rtl-sdr) devices.
+### APRS
+- Receive APRS through an RTL-SDR with `rtl_fm` and `multimon-ng`, or from a sound-card audio input.
+- Receive decoded APRS reports from OpenWebRX+ over MQTT (instead of the local receive decoder).
+- Parse and deduplicate APRS packets, gate RF traffic to APRS-IS, and optionally gate eligible APRS-IS messages back to RF.
+- Digipeat using configurable path and alias rules; transmit AFSK1200 through sound-card audio.
+- Schedule RF and APRS-IS beacons, with optional aprs.fi verification and watchdog checks.
 
-This project is a rewrite of [Ionosphere](https://github.com/cceremuga/ionosphere) with a number of bug fixes and simplifications.
+### ADS-B and MQTT
+- Accept OpenWebRX+ MQTT reports using an external broker or an optional loopback-only embedded broker.
+- Forward OpenWebRX+ ADS-B reports to map.flights over MQTT, with forwarding diagnostics.
 
-## Description
-
-Using this software you can receive APRS packets from the airwaves, decode them, log them to a file and upload them to the APRS-IS network.
-
-The software is written in Go and uses the [RTL-SDR](http://osmocom.org/projects/sdr/wiki/rtl-sdr) library to receive the packets. The packets are then packets are then passed to 
-[multimon-ng](https://github.com/EliasOenal/multimon-ng) for decoding. The decoded packets are then uploaded to the APRS-IS network.
-
-## Features
-
-- Receive APRS packets from the airwaves.
-- Decode APRS packets.
-- Log APRS packets to a file.
-- Upload APRS packets to the APRS-IS network.
-- Configurable RTL-SDR device.
-- Optional APRS receive from OpenWebRX+ over MQTT.
+**Scope:** ADS-B forwarding relies on OpenWebRX+ to decode aircraft reports; Sparky does not currently decode raw ADS-B samples itself. The embedded MQTT broker is provided for the local OpenWebRX+ integration, not as a general-purpose public broker. RF transmission currently uses a sound-card audio output and an external radio; native RF transmitter-module control is not yet implemented.
 
 ## Getting Started
-First you need to install the dependencies. Make sure you are running the latest version of Go or at least the version specified in the go.mod file.
+Install the prerequisites for your chosen receive/transmit backend, then build and configure Sparky.
 
 ### Dependencies
-To run Sparky, the following are required.
+**Build dependencies (all configurations):** `pkg-config` and the PortAudio development headers are required because the capture package currently imports PortAudio unconditionally, including for MQTT-only use. On Debian/Ubuntu, install `pkg-config` and `portaudio19-dev` before building.
 
-* An RTL-SDR compatible device.
-* [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr)
-* [multimon-ng](https://github.com/EliasOenal/multimon-ng)
-* [alsa-utils](https://alsa-project.org/wiki/Main_Page) (`aplay`) when using the soundcard transmitter
- 
-- Go version go1.22.5
+**Runtime dependencies (depending on backend):**
+
+* An RTL-SDR compatible device (for SDR reception).
+* [rtl_fm](http://osmocom.org/projects/sdr/wiki/rtl-sdr) (for SDR reception)
+* [multimon-ng](https://github.com/EliasOenal/multimon-ng) (for local audio decoding)
+* [alsa-utils](https://alsa-project.org/wiki/Main_Page) (`aplay`) when using the sound-card transmitter
+
+**Go toolchain:** Go 1.22.4 or later (see `go.mod`).
 
 ## Usage
 
@@ -83,22 +86,14 @@ The feed sends aircraft reports as OpenWebRX+ produces them. The receiver must k
 
 When map.flights forwarding is enabled, Sparky logs a once-per-minute ADS-B forwarding summary with incoming reports, completed QoS 0 MQTT publishes, failures, rejected reports, queue drops, queue depth, connection state, and age of the last received report. A completed QoS 0 publish only means Sparky's MQTT client completed the send; MQTT does not confirm that map.flights displayed the aircraft. Check the station page separately for ingestion and display.
 
-### Installing with make
-
-#### Build the application
-`make build`
-
-#### Run the application
-`make run`
-
-### Installing the service with make
-`make install-service`
-
-### Running the application for testing
+### Build and run
 
 ```bash
-go run main.go
+make build       # Build Sparky
+make run         # Run it locally
 ```
+
+To install the provided systemd service, run `make install-service`. For a quick development run, use `go run .`.
 
 ### Log rotation
 
@@ -122,8 +117,18 @@ When message gating is disabled, RF packets sent back to APRS-IS use `qAO`. When
 - APRS expects fixed stations to be visible within a 10–30 minute “net cycle.” Configure the primary RF beacon (your wide path) around 30 minutes and add a secondary direct beacon near 10 minutes to refresh local maps without flooding the network.
 - In `config.yml` the `additional-rf-beacons` list lets you schedule those direct packets. Leave the `path` empty to transmit truly direct; adding text like `DIRECT` creates a literal hop and is not recommended.
 - Disable APRS-IS (`disable-tcp: true`) if you only want RF packets on aprs.fi. Re-enable it with a conservative `is-interval` when Internet visibility is important.
-- After editing the configuration, run `make` to rebuild the binary and restart the `aprs` service so the new schedule takes effect.
+- Configuration changes are read at startup, so **restart the installed systemd unit** after editing `config.yml`; no rebuild is needed for configuration-only changes. Use `sudo systemctl restart sparky.service` for a new Sparky installation or `sudo systemctl restart aprs.service` for an existing installation that retains the original unit name.
 - If aprs.fi occasionally drops your IGate, enable `igate.beacon.aprsfi-verification` with your aprs.fi API key and set `watchdog-interval` (for example `30m`). The watchdog polls aprs.fi and, when your call hasn't been heard for longer than `watchdog-max-age` (defaults to twice the interval), it automatically schedules an RF beacon to refresh the map.
+
+## Renaming from go-igate
+
+The application, Go module, and GitHub repository have been renamed to **Sparky**. The canonical module path is `github.com/oorrwullie/sparky` (previously `github.com/oorrwullie/go-igate`). Existing clones can update their remote with:
+
+```bash
+git remote set-url origin https://github.com/oorrwullie/sparky.git
+```
+
+Update any Go imports or automation that use the old module path, and review systemd service names and binary paths before deployment. The program binary and included service template are already named `sparky`. This rename does not introduce new radio behavior; keep your existing `config.yml` and verify the service configuration for your installation.
 
 ## Contributing
 
@@ -139,5 +144,5 @@ Contributions are what make the open source community such an amazing place to l
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
-## Contact
-Project Link: [https://github.com/oorrwullie/go-igate](https://github.com/oorrwullie/go-igate)
+## Repository
+Project repository: [https://github.com/oorrwullie/sparky](https://github.com/oorrwullie/sparky)

@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/oorrwullie/go-igate/internal/aprs"
-	"github.com/oorrwullie/go-igate/internal/config"
-	"github.com/oorrwullie/go-igate/internal/digipeater"
-	"github.com/oorrwullie/go-igate/internal/log"
-	"github.com/oorrwullie/go-igate/internal/transmitter"
+	"github.com/oorrwullie/sparky/internal/aprs"
+	"github.com/oorrwullie/sparky/internal/config"
+	"github.com/oorrwullie/sparky/internal/digipeater"
+	"github.com/oorrwullie/sparky/internal/log"
+	"github.com/oorrwullie/sparky/internal/transmitter"
 )
 
 func TestIGate_startBeacon(t *testing.T) {

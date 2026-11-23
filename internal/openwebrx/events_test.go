@@ -6,8 +6,8 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/oorrwullie/go-igate/internal/config"
-	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/oorrwullie/sparky/internal/config"
+	"github.com/oorrwullie/sparky/internal/log"
 )
 
 type fakeMapFlightsPublisher struct {

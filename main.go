@@ -7,7 +7,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/oorrwullie/sparky/internal/log"
 )
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	digiGate, err := NewDigiGate(logger)
+	sparky, err := NewSparky(logger)
 	if err != nil {
 		logger.Fatal(err.Error())
 	}
@@ -34,7 +34,7 @@ func main() {
 		signal := <-sigchan
 		logger.Debug(fmt.Sprintf("Signal (%s) caught, terminating processes.", signal))
 
-		digiGate.Stop()
+		sparky.Stop()
 		time.Sleep(2 * time.Second)
 
 		os.Exit(0)
@@ -42,7 +42,7 @@ func main() {
 
 	logger.Debug("Listening for packets.")
 
-	err = digiGate.Run()
+	err = sparky.Run()
 	if err != nil {
 		logger.Fatal(err)
 	}

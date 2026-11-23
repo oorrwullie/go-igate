@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/oorrwullie/go-igate/internal/capture"
-	"github.com/oorrwullie/go-igate/internal/log"
+	"github.com/oorrwullie/sparky/internal/capture"
+	"github.com/oorrwullie/sparky/internal/log"
 )
 
 type Transmitter struct {

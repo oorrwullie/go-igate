@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/oorrwullie/go-igate/internal/aprs"
-	"github.com/oorrwullie/go-igate/internal/config"
+	"github.com/oorrwullie/sparky/internal/aprs"
+	"github.com/oorrwullie/sparky/internal/config"
 )
 
 // Rewriter applies digipeater path rules without transmitting.
