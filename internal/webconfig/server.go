@@ -22,9 +22,15 @@ import (
 
 type Server struct {
  Store *configeditor.Store
- // PublicOrigin opts into HTTPS termination by a trusted same-host proxy.
- // It must be an exact https://origin, without a path.
+ // PublicOrigin is the browser-visible HTTPS origin (for example,
+ // https://sparky.example.org). Forwarded-* headers are never trusted.
  PublicOrigin string
+ // TrustedProxyIP is Routy's source IP. In LAN proxy mode only that source
+ // may send requests to the plaintext listener with PublicOrigin's Host.
+ TrustedProxyIP string
+ // AllowLANHTTP is an explicit acknowledgment that Routy-to-Sparky traffic
+ // is unencrypted. A firewall must restrict the listener to TrustedProxyIP.
+ AllowLANHTTP bool
  tokenOnce sync.Once
  token []byte
  tokenErr error
@@ -97,17 +103,24 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  if err:=page.Execute(w,data);err!=nil {return}
 }
 
-// allowedRequest accepts direct loopback requests, direct TLS requests and
-// exactly one configured HTTPS origin from a same-host loopback proxy.
-// Forwarded-* headers are never trusted for authorization.
+// allowedRequest accepts direct TLS, local loopback requests, or the exact
+// public Host from an explicitly trusted proxy source IP. Forwarded-* headers
+// are never trusted for authorization.
 func (s *Server) allowedRequest(r *http.Request) bool {
- if r.TLS!=nil { return true }
- if localHost(r.Host) {return true}
+ if r.TLS!=nil {return true}
+ sourceHost,_,err:=net.SplitHostPort(r.RemoteAddr)
+ source:=net.ParseIP(sourceHost)
+ if err!=nil || source==nil {return false}
+ // For a loopback-only deployment, allow local addresses and local Host
+ // headers. When an operator opts into LAN HTTP, do not accept arbitrary
+ // plaintext requests even if they spoof localhost in Host.
+ if source.IsLoopback() && localHost(r.Host) {return true}
  if s==nil || s.PublicOrigin=="" {return false}
  u,err:=parsePublicOrigin(s.PublicOrigin)
  if err!=nil || r.Host!=u.Host{return false}
- host,_,err:=net.SplitHostPort(r.RemoteAddr)
- return err==nil && func()bool{ip:=net.ParseIP(host);return ip!=nil&&ip.IsLoopback()}()
+ if s.TrustedProxyIP=="" {return source.IsLoopback()}
+ proxyIP:=net.ParseIP(s.TrustedProxyIP)
+ return proxyIP!=nil && source.Equal(proxyIP)
 }
 
 func parsePublicOrigin(origin string) (*url.URL,error) {
@@ -133,8 +146,8 @@ func (s *Server) expectedOrigin(r *http.Request) string {
 }
 
 // authorized protects every route, including the overview and error pages.
-// Plain HTTP is permitted only on the loopback listener. Remote access
-// requires HTTPS configured with an explicit certificate and private key.
+// HTTP Basic authentication is always required. Operator-enabled LAN proxy
+// mode relies on TLS termination at Routy and firewall isolation of the hop.
 func (s *Server) authorized(w http.ResponseWriter,r *http.Request) bool {
  password:=os.Getenv("SPARKY_CONFIG_PASSWORD")
  if len(password)<16 {
@@ -165,8 +178,8 @@ func localHost(hostport string) bool {
  return ip!=nil && ip.IsLoopback()
 }
 
-// ListenAndServe keeps the original safe default: plaintext HTTP bound to an
-// explicit loopback IP address. LAN exposure requires ListenAndServeTLS.
+// ListenAndServe defaults to loopback-only HTTP. Non-loopback plaintext
+// requires an explicit, restricted LAN proxy configuration.
 func (s *Server) ListenAndServe(addr string) error {
  return s.listen(addr,"","")
 }
@@ -189,9 +202,20 @@ func (s *Server) listen(addr,certFile,keyFile string) error {
  ip:=net.ParseIP(host)
  if ip==nil {return errors.New("listener requires a literal IP address")}
  secure:=certFile!="" && keyFile!=""
- if s.PublicOrigin!="" && (!ip.IsLoopback() || secure) {return errors.New("public origin proxy mode requires a loopback HTTP listener with no direct TLS") }
- if !ip.IsLoopback() && !secure {
-  return errors.New("non-loopback web configuration listener requires HTTPS certificate and key")
+ if s.PublicOrigin!="" && secure {return errors.New("public origin proxy mode cannot be combined with direct TLS")}
+ if s.AllowLANHTTP {
+  if ip.IsLoopback() {return errors.New("LAN HTTP opt-in requires a non-loopback bind address")}
+  if s.PublicOrigin=="" {return errors.New("LAN HTTP proxy requires a public HTTPS origin")}
+  trusted:=net.ParseIP(s.TrustedProxyIP)
+  if trusted==nil || trusted.IsUnspecified() || trusted.IsMulticast() {
+   return errors.New("LAN HTTP proxy requires a valid trusted proxy IP")
+  }
+  if secure {return errors.New("LAN HTTP opt-in cannot be combined with direct TLS")}
+ } else if !ip.IsLoopback() && !secure {
+  return errors.New("non-loopback HTTP requires explicit LAN proxy opt-in or direct TLS")
+ }
+ if s.TrustedProxyIP!="" && net.ParseIP(s.TrustedProxyIP)==nil {
+  return errors.New("trusted proxy IP must be a literal IP address")
  }
  if (certFile=="") != (keyFile=="") {return errors.New("incomplete TLS configuration")}
  var cert tls.Certificate
