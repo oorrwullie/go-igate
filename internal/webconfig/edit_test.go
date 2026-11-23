@@ -78,3 +78,34 @@ func TestTrustedRoutySaveUsesPublicHTTPSOrigin(t *testing.T) {
  saved,_,err:=s.Store.Load()
  if err!=nil||!strings.Contains(string(saved),"N0CALL-7"){t.Fatalf("save not committed: %v",err)}
 }
+
+func TestAnchoredEditableScalarCannotChangeAliasConsumers(t *testing.T) {
+ original:=[]byte("station-callsign: N0CALL\nopenwebrx-mqtt:\n  enabled: &switch true\ncustom-enabled: *switch\n")
+ _,err:=patchEditable(original,editValues{Callsign:"N0CALL",MQTT:false})
+ if err==nil || !strings.Contains(err.Error(),"anchored setting") {
+  t.Fatalf("changing anchor should fail: %v",err)
+ }
+ // An unchanged anchored field remains valid, including its alias consumer.
+ preserved,err:=patchEditable(original,editValues{Callsign:"N0CALL",MQTT:true})
+ if err!=nil {t.Fatalf("unchanged anchored setting rejected: %v",err)}
+ if !strings.Contains(string(preserved),"*switch") {t.Fatal("alias lost")}
+}
+
+func TestEditorUsesSameOriginReferrerPolicy(t *testing.T) {
+ s:=testServer(t)
+ req:=localTestRequest("GET","http://localhost:8080/edit",nil)
+ req.SetBasicAuth("admin","this-is-a-long-test-password")
+ rec:=httptest.NewRecorder()
+ s.ServeHTTP(rec,req)
+ if rec.Code!=200 {t.Fatalf("GET /edit status %d",rec.Code)}
+ if got:=rec.Header().Get("Referrer-Policy");got!="same-origin" {
+  t.Fatalf("editor referrer policy %q, want same-origin",got)
+ }
+ req=localTestRequest("GET","http://localhost:8080/",nil)
+ req.SetBasicAuth("admin","this-is-a-long-test-password")
+ rec=httptest.NewRecorder()
+ s.ServeHTTP(rec,req)
+ if got:=rec.Header().Get("Referrer-Policy");got!="no-referrer" {
+  t.Fatalf("overview referrer policy %q, want no-referrer",got)
+ }
+}
