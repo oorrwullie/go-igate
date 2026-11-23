@@ -89,19 +89,30 @@ func (t *Transport) Exchange(ctx context.Context,command string,timeout time.Dur
  case strings.HasPrefix(command,"AT+DMOSETGROUP="):
  default: return errors.New("nicerf: unsupported command")
  }
+ // The exchange deadline includes waiting for the command token.
+ // An expired queued request must never be written to the serial stream.
+ deadline:=time.Now().Add(timeout)
+ if d,ok:=ctx.Deadline();ok&&d.Before(deadline){deadline=d}
  if err:=t.check();err!=nil{return err}
+ if err:=ctx.Err();err!=nil{return err}
+ remaining:=time.Until(deadline)
+ if remaining<=0{return context.DeadlineExceeded}
+ timer:=time.NewTimer(remaining)
+ defer timer.Stop()
  select {
  case <-ctx.Done():return ctx.Err()
  case <-t.closed:return ErrClosed
+ case <-timer.C:
+  if err:=ctx.Err();err!=nil{return err}
+  return context.DeadlineExceeded
  case <-t.token:
  }
  defer func(){t.token<-struct{}{}}()
  if err:=t.check();err!=nil{return err}
- // The token and ctx.Done may both be ready; do not poison a healthy
- // session when cancellation won before any serial I/O.
+ // Even if token acquisition wins a race against cancellation or expiry,
+ // refuse to touch the port when the caller's budget is already gone.
  if err:=ctx.Err();err!=nil{return err}
- deadline:=time.Now().Add(timeout)
- if d,ok:=ctx.Deadline();ok&&d.Before(deadline){deadline=d}
+ if !time.Now().Before(deadline){return context.DeadlineExceeded}
  write:=[]byte(command)
  ioStarted:=false
  for len(write)>0 {
