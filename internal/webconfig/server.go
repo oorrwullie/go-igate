@@ -10,6 +10,7 @@ import (
  "html/template"
  "net"
  "net/http"
+ "net/url"
  "os"
  "strings"
  "sync"
@@ -21,6 +22,9 @@ import (
 
 type Server struct {
  Store *configeditor.Store
+ // PublicOrigin opts into HTTPS termination by a trusted same-host proxy.
+ // It must be an exact https://origin, without a path.
+ PublicOrigin string
  tokenOnce sync.Once
  token []byte
  tokenErr error
@@ -47,7 +51,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  w.Header().Set("X-Frame-Options", "DENY")
  w.Header().Set("Referrer-Policy", "no-referrer")
  w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
- if r.TLS == nil && !localHost(r.Host) {
+ if !s.allowedRequest(r) {
   http.Error(w,"Host not allowed",http.StatusForbidden)
   return
  }
@@ -91,6 +95,41 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   MQTTTopic:cfg.OpenWebRXMQTT.Topic,ADSB:cfg.MapFlights.Enabled,
  }
  if err:=page.Execute(w,data);err!=nil {return}
+}
+
+// allowedRequest accepts direct loopback requests, direct TLS requests and
+// exactly one configured HTTPS origin from a same-host loopback proxy.
+// Forwarded-* headers are never trusted for authorization.
+func (s *Server) allowedRequest(r *http.Request) bool {
+ if r.TLS!=nil { return true }
+ if localHost(r.Host) {return true}
+ if s==nil || s.PublicOrigin=="" {return false}
+ u,err:=parsePublicOrigin(s.PublicOrigin)
+ if err!=nil || r.Host!=u.Host{return false}
+ host,_,err:=net.SplitHostPort(r.RemoteAddr)
+ return err==nil && func()bool{ip:=net.ParseIP(host);return ip!=nil&&ip.IsLoopback()}()
+}
+
+func parsePublicOrigin(origin string) (*url.URL,error) {
+ u,err:=url.Parse(origin)
+ if err!=nil || u.Scheme!="https" || u.Host=="" || u.Hostname()=="" ||
+  u.User!=nil || u.Path!="" || u.RawQuery!="" || u.Fragment!="" || u.Opaque!="" {
+  return nil, errors.New("public origin must be a single https://hostname[:port] without a path")
+ }
+ return u,nil
+}
+
+// expectedOrigin uses a configured public URL only for a trusted proxy
+// request. Non-proxied requests use the actual request scheme and Host.
+func (s *Server) expectedOrigin(r *http.Request) string {
+ if r.TLS==nil && s!=nil && s.PublicOrigin!="" {
+  if u,err:=parsePublicOrigin(s.PublicOrigin);err==nil && r.Host==u.Host {
+   return u.String()
+  }
+ }
+ scheme:="http"
+ if r.TLS!=nil{scheme="https"}
+ return scheme+"://"+r.Host
 }
 
 // authorized protects every route, including the overview and error pages.
@@ -142,11 +181,15 @@ func (s *Server) ListenAndServeTLS(addr, certFile, keyFile string) error {
 
 func (s *Server) listen(addr,certFile,keyFile string) error {
  if addr=="" {addr="127.0.0.1:8080"}
+ if s.PublicOrigin!="" {
+  if _,err:=parsePublicOrigin(s.PublicOrigin);err!=nil{return err}
+ }
  host,_,err:=net.SplitHostPort(addr)
  if err!=nil {return fmt.Errorf("invalid web configuration listener %q: %w",addr,err)}
  ip:=net.ParseIP(host)
  if ip==nil {return errors.New("listener requires a literal IP address")}
  secure:=certFile!="" && keyFile!=""
+ if s.PublicOrigin!="" && (!ip.IsLoopback() || secure) {return errors.New("public origin proxy mode requires a loopback HTTP listener with no direct TLS") }
  if !ip.IsLoopback() && !secure {
   return errors.New("non-loopback web configuration listener requires HTTPS certificate and key")
  }
