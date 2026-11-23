@@ -73,6 +73,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   return
  }
  if r.URL.Path == "/edit" {
+  w.Header().Set("Referrer-Policy", "same-origin")
   w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
   if s == nil || s.Store == nil {http.Error(w,"Configuration unavailable",503);return}
   s.serveEdit(w,r)
