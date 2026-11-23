@@ -22,9 +22,9 @@ use an SSH port forward **or opt into direct HTTPS** on a LAN address:
 
 ```sh
 export SPARKY_CONFIG_PASSWORD='a-long-unique-random-password'
-go run ./cmd/sparky-config --listen 0.0.0.0:8443 \\
-  --config ./config.yml \\
-  --tls-cert /path/to/fullchain.pem \\
+go run ./cmd/sparky-config --listen 0.0.0.0:8443 \
+  --config ./config.yml \
+  --tls-cert /path/to/fullchain.pem \
   --tls-key /path/to/privatekey.pem
 ```
 
@@ -35,7 +35,8 @@ clients. Non-loopback listeners require TLS by default; the separate Routy LAN p
 mode below is an explicit exception.
 The UI requires login regardless of binding. HTTP Basic sends credentials
 with requests, so it is only suitable here over HTTPS or local HTTP; do not
-ignore certificate warnings or use a plaintext reverse proxy to expose it.
+ignore certificate warnings. Plaintext proxying is supported only as the
+explicitly restricted Routy LAN deployment described below.
 ## Routy on the same LAN
 
 Routy can live on another machine. It terminates public HTTPS using its normal
@@ -44,10 +45,10 @@ requires an explicit opt-in because this backend hop uses **unencrypted HTTP**:
 
 ```sh
 export SPARKY_CONFIG_PASSWORD='a-long-unique-random-password'
-go run ./cmd/sparky-config \\
-  --listen 192.168.1.42:8080 \\
-  --public-origin https://sparky.example.org \\
-  --trusted-proxy-ip 192.168.1.10 \\
+go run ./cmd/sparky-config \
+  --listen 192.168.1.42:8080 \
+  --public-origin https://sparky.example.org \
+  --trusted-proxy-ip 192.168.1.10 \
   --allow-lan-http
 ```
 
@@ -85,9 +86,10 @@ Sparky's startup parser, rejects a stale revision, and **does not restart**
 or apply changes to the running application.
 
 The editor uses an unpredictable CSRF token and requires a same-origin POST.
-Browser response caching and framing are disabled. Authentication is required for both the read-only overview and editor;
-neither page exposes stored configuration credentials. Use a distinct secret: this is a lightweight local admin interface,
-not a hardened Internet-facing administration system.
+Browser response caching and framing are disabled. Both the overview and editor
+require authentication; neither page exposes stored configuration credentials.
+Use a distinct secret: this is a lightweight administrative interface, not a
+hardened Internet-facing login service.
 
 **The service restart control remains intentionally disabled.** It will be
 implemented as a separately reviewed, narrowly privileged operation.
