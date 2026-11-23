@@ -3,7 +3,6 @@ package multimon
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"os/exec"
 	"strings"
 	"sync"
