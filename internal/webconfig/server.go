@@ -107,20 +107,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // public Host from an explicitly trusted proxy source IP. Forwarded-* headers
 // are never trusted for authorization.
 func (s *Server) allowedRequest(r *http.Request) bool {
+ // Direct TLS traffic is authenticated separately and can use the hostname
+ // covered by the operator-provided certificate.
  if r.TLS!=nil {return true}
  sourceHost,_,err:=net.SplitHostPort(r.RemoteAddr)
+ if err!=nil {return false}
  source:=net.ParseIP(sourceHost)
- if err!=nil || source==nil {return false}
- // For a loopback-only deployment, allow local addresses and local Host
- // headers. When an operator opts into LAN HTTP, do not accept arbitrary
- // plaintext requests even if they spoof localhost in Host.
- if localHost(r.Host) && (source.IsLoopback() || s==nil || !s.AllowLANHTTP) {return true}
+ if source==nil {return false}
+
+ // A forged Host header must never make a remote HTTP peer local.
+ if localHost(r.Host) {return source.IsLoopback()}
  if s==nil || s.PublicOrigin=="" {return false}
  u,err:=parsePublicOrigin(s.PublicOrigin)
- if err!=nil || r.Host!=u.Host{return false}
- if s.TrustedProxyIP=="" {return source.IsLoopback()}
- proxyIP:=net.ParseIP(s.TrustedProxyIP)
- return proxyIP!=nil && source.Equal(proxyIP)
+ if err!=nil || r.Host!=u.Host {return false}
+ // A same-host proxy can connect over the loopback interface.
+ if source.IsLoopback(){return true}
+ // A LAN plaintext hop requires explicit opt-in and an exact source IP.
+ if !s.AllowLANHTTP {return false}
+ trusted:=net.ParseIP(s.TrustedProxyIP)
+ return trusted!=nil && source.Equal(trusted)
 }
 
 func parsePublicOrigin(origin string) (*url.URL,error) {
