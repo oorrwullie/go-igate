@@ -19,7 +19,7 @@ h1{font-size:25px;color:var(--green);margin:4px 0 0}h2{font-size:15px;color:var(
 @media(max-width:650px){.layout{display:block;padding:15px}nav{border-right:0;border-bottom:1px solid var(--line);display:flex;overflow:auto;gap:4px;margin-bottom:18px}nav a{white-space:nowrap}header{padding:14px}.actions{margin-left:0}.grid{grid-template-columns:1fr}}
 </style></head><body>
 <header><div><div class="brand">&gt;_ SPARKY</div><div class="sub">RADIO DATA GATEWAY // CONFIG</div></div><span class="chip">● VIEW ONLY</span>
-<div class="actions"><button disabled title="Editing will be enabled in a later stage">Save Changes</button><button disabled title="Service restart will be enabled in a later stage">Restart Service</button></div></header>
+<div class="actions"><a href="/edit" style="padding:9px 14px;border:1px solid var(--cyan);border-radius:5px">Edit settings</a><button disabled title="Saving is available on the Edit settings page">Save Changes</button><button disabled title="Service restart will be enabled in a later stage">Restart Service</button></div></header>
 <div class="layout">
 <nav aria-label="Sections"><a href="#overview" class="selected">~/ overview</a><a href="#aprs"># APRS / iGate</a><a href="#receive"># Receive</a><a href="#mqtt"># MQTT / ADS-B</a><a href="#system"># System</a></nav>
 <main><h1 id="overview">$ sparky config --inspect</h1><p>Live configuration snapshot. Editing and restart controls are intentionally unavailable in this first slice.</p>
