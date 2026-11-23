@@ -19,11 +19,17 @@ const MaxDocumentSize = 256 << 10
 
 var ErrConflict = errors.New("configuration changed on disk; reload before saving")
 
+// ErrDurability means the replacement succeeded, but crash durability could not
+// be confirmed. Save returns the new revision alongside this error.
+var ErrDurability = errors.New("configuration saved, but directory sync failed; durability unconfirmed")
+
 // Store provides optimistic concurrency for one running Sparky process. It
 // does not attempt to coordinate concurrent independent editor processes.
 type Store struct {
 	Path string
 	mu sync.Mutex
+	// syncDirectory is injectable for deterministic failure testing.
+	syncDirectory func(string) error
 }
 
 func digest(data []byte) string {
@@ -44,7 +50,14 @@ func (s *Store) load() ([]byte, string, error) {
 	if s.Path == "" {
 		return nil, "", errors.New("configuration path is empty")
 	}
-	info, err := os.Lstat(s.Path)
+	// Open atomically with O_NOFOLLOW, O_NONBLOCK and O_CLOEXEC. A separate
+	// Lstat check would race with a directory-entry replacement.
+	f, err := openRegularNoFollow(s.Path)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
 	if err != nil {
 		return nil, "", err
 	}
@@ -54,11 +67,6 @@ func (s *Store) load() ([]byte, string, error) {
 	if info.Size() > MaxDocumentSize {
 		return nil, "", fmt.Errorf("configuration exceeds %d bytes", MaxDocumentSize)
 	}
-	f, err := os.Open(s.Path)
-	if err != nil {
-		return nil, "", err
-	}
-	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, MaxDocumentSize+1))
 	if err != nil {
 		return nil, "", err
@@ -124,14 +132,25 @@ func (s *Store) Save(candidate []byte, expectedRevision string) (string, error) 
 	if err := os.Rename(f.Name(), s.Path); err != nil {
 		return "", err
 	}
-	// On Linux this makes the directory entry durable after a crash.
+	// The rename has committed the new file. Never report an ordinary failed
+	// save after this point: callers need the new revision to avoid retrying
+	// against a stale token.
+	newRevision := digest(candidate)
+	syncDirectory := s.syncDirectory
+	if syncDirectory == nil {
+		syncDirectory = syncDir
+	}
+	if err := syncDirectory(dir); err != nil {
+		return newRevision, fmt.Errorf("%w: %v", ErrDurability, err)
+	}
+	return newRevision, nil
+}
+
+func syncDir(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer d.Close()
-	if err := d.Sync(); err != nil {
-		return "", err
-	}
-	return digest(candidate), nil
+	return d.Sync()
 }
