@@ -2,11 +2,14 @@
 package webconfig
 
 import (
+ "crypto/sha256"
+ "crypto/subtle"
  "errors"
  "fmt"
  "html/template"
  "net"
  "net/http"
+ "os"
  "strings"
  "sync"
  "time"
@@ -47,6 +50,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   http.Error(w,"Host not allowed",http.StatusForbidden)
   return
  }
+ if !s.authorized(w,r) {return}
  if r.URL.Path == "/edit" {
   w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
   if s == nil || s.Store == nil {http.Error(w,"Configuration unavailable",503);return}
@@ -86,6 +90,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   MQTTTopic:cfg.OpenWebRXMQTT.Topic,ADSB:cfg.MapFlights.Enabled,
  }
  if err:=page.Execute(w,data);err!=nil {return}
+}
+
+// authorized protects every route, including the overview and error pages.
+// Basic authentication is intentionally restricted to the loopback-only
+// listener. Access across machines requires an encrypted SSH tunnel.
+func (s *Server) authorized(w http.ResponseWriter,r *http.Request) bool {
+ password:=os.Getenv("SPARKY_CONFIG_PASSWORD")
+ if len(password)<16 {
+  http.Error(w,"Configuration interface disabled: set SPARKY_CONFIG_PASSWORD (16+ characters)",http.StatusServiceUnavailable)
+  return false
+ }
+ user,given,ok:=r.BasicAuth()
+ expectedUser:=sha256.Sum256([]byte("admin"))
+ actualUser:=sha256.Sum256([]byte(user))
+ expectedPass:=sha256.Sum256([]byte(password))
+ actualPass:=sha256.Sum256([]byte(given))
+ if !ok || subtle.ConstantTimeCompare(actualUser[:],expectedUser[:])!=1 || subtle.ConstantTimeCompare(actualPass[:],expectedPass[:])!=1 {
+  w.Header().Set("WWW-Authenticate",`Basic realm="Sparky Configuration", charset="UTF-8"`)
+  http.Error(w,"Authentication required",http.StatusUnauthorized)
+  return false
+ }
+ return true
 }
 
 // localHost prevents cross-site DNS rebinding requests to a loopback listener.
