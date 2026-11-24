@@ -1,12 +1,14 @@
 package webconfig
 
 import (
+ "bytes"
  "crypto/rand"
  _ "embed"
  "crypto/subtle"
  "encoding/hex"
  "errors"
  "html/template"
+ "io"
  "net/http"
  "strings"
 
@@ -76,7 +78,14 @@ func (s *Server) saveEdit(w http.ResponseWriter,r *http.Request,token []byte) {
 }
 func patchEditable(original []byte,v editValues)([]byte,error){
  var root yaml.Node
- if err:=yaml.Unmarshal(original,&root);err!=nil{return nil,err}
+ decoder:=yaml.NewDecoder(bytes.NewReader(original))
+ if err:=decoder.Decode(&root);err!=nil{return nil,err}
+ // Avoid dropping any later YAML documents while editing the first.
+ var extra yaml.Node
+ if err:=decoder.Decode(&extra);err!=io.EOF{
+  if err!=nil{return nil,err}
+  return nil,errors.New("multi-document YAML cannot be edited through the web interface")
+ }
  if len(root.Content)!=1 || root.Content[0].Kind!=yaml.MappingNode{return nil,errors.New("expected YAML mapping")}
  options:=[]struct{path []string; value string; tag string}{
   {[]string{"station-callsign"},v.Callsign,"!!str"},
@@ -92,8 +101,10 @@ func patchEditable(original []byte,v editValues)([]byte,error){
 }
 func asBool(v bool)string{if v{return "true"};return "false"}
 func setEditable(node *yaml.Node,path []string,value,tag string)error{
+ anchoredAncestor:=false
  for i,k:=range path{
   if node.Kind!=yaml.MappingNode{return errors.New("expected YAML mapping")}
+  if node.Anchor!=""{anchoredAncestor=true}
   var child *yaml.Node
   for j:=0;j+1<len(node.Content);j+=2{
    if node.Content[j].Value==k {child=node.Content[j+1];break}
@@ -104,6 +115,9 @@ func setEditable(node *yaml.Node,path []string,value,tag string)error{
   }
   if i==len(path)-1{
    if child.Kind!=0 && child.Kind!=yaml.ScalarNode{return errors.New("editable field must be scalar")}
+   if anchoredAncestor && (child.Kind==0 || child.Value!=value || child.Tag!=tag) {
+    return errors.New("cannot modify setting under anchored YAML mapping")
+   }
    if child.Anchor!="" && (child.Value!=value || child.Tag!=tag) {
     return errors.New("cannot modify anchored setting through web editor")
    }
