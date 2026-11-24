@@ -1,5 +1,8 @@
 # Configuration editor UX enhancements
 
+> **Historical implementation note:** this document describes an earlier incremental UI stage, not the current feature set. For shipped behavior, setup, authentication, restart, and live status, use the [operator quick start](operator-quickstart.md).
+
+
 This PR builds on #47 (which must merge first). It does not change the
 authentication, proxy network model, YAML storage API, or restart authority.
 
