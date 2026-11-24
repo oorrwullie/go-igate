@@ -86,8 +86,15 @@ func kubernetesAlnum(c byte) bool {
 // dots, with a combined maximum length of 253 bytes.
 func validKubernetesDeploymentName(s string) bool {
  if len(s)<1||len(s)>253 {return false}
+ // Kubernetes DNS1123 subdomains have a 253-byte total limit, but do
+ // not inherit the 63-byte DNS label length restriction used by namespaces.
  for _,label:=range strings.Split(s,".") {
-  if !validKubernetesDNSLabel(label){return false}
+  if len(label)==0 || !kubernetesAlnum(label[0]) || !kubernetesAlnum(label[len(label)-1]) {
+   return false
+  }
+  for i:=0;i<len(label);i++ {
+   if !kubernetesAlnum(label[i]) && label[i]!='-' {return false}
+  }
  }
  return true
 }
