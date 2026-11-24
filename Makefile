@@ -12,7 +12,7 @@ GOBASE=$(shell pwd)
 GOBIN=$(GOBASE)/$(BUILD_DIR)
 GOPATH=$(shell go env GOPATH)
 
-.PHONY: all build clean run test install-service install-config-service reference-audio
+.PHONY: all build clean run test init-config install-service install-config-service reference-audio
 
 all: build
 
@@ -21,6 +21,15 @@ build:
 	@mkdir -p $(GOBIN)
 	@go build -o $(GOBIN)/$(BINARY_NAME) .
 	@go build -o $(GOBIN)/$(CONFIG_BINARY_NAME) ./cmd/sparky-config
+
+# Explicit first-run setup. Never overwrite a configured station or follow a
+# symlink to write elsewhere; bash/sh noclobber fails before opening the file.
+# Use the same bin/ working directory as the bundled gateway systemd unit.
+init-config:
+	@mkdir -p "$(GOBIN)"
+	@set -C; umask 077; cat config.yml.example > "$(GOBIN)/config.yml" || { echo "Configuration not created: $(GOBIN)/config.yml already exists or is not writable" >&2; exit 1; }
+	@echo "Created $(GOBIN)/config.yml with transmit/digipeat disabled."
+	@echo "Edit station-callsign and receive settings before starting Sparky."
 
 clean:
 	@echo "Cleaning"
