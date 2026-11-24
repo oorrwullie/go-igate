@@ -15,4 +15,9 @@
   form.addEventListener("submit", () => {
     submitting = true;
   });
+  // Back/forward cache restores this JS closure together with the form.
+  // A previous submission must not disable future unsaved-change warnings.
+  window.addEventListener("pageshow", () => {
+    submitting = false;
+  });
 })();
