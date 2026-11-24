@@ -25,7 +25,7 @@ unit which survives restarts of `sparky.service`.
 
    ```sh
    sudo install -d -m 0755 /etc/sparky
-   sudo sh -c 'umask 077; printf "SPARKY_CONFIG_PASSWORD=%s\\n" "$1" > /etc/sparky/config-ui.env' sh 'REPLACE-WITH-A-LONG-RANDOM-PASSWORD'
+   sudo sh -c 'umask 077; printf "SPARKY_CONFIG_PASSWORD=%s\n" "$1" > /etc/sparky/config-ui.env' sh 'REPLACE-WITH-A-LONG-RANDOM-PASSWORD'
    sudo chmod 0600 /etc/sparky/config-ui.env
    ```
 
