@@ -53,10 +53,7 @@ The installer uses `go run ./cmd/sparky-device-check --config bin/config.yml`
 **as the intended non-root service user**, before any privileged unit writes.
 The check follows Sparky's configured receive selection (OpenWebRX+ MQTT,
 sound-card capture, or RTL-SDR), and checks sound-card output when TX is
-enabled. It detects common RTL-SDR Realtek USB IDs, tests the discovered
-`/dev/bus/usb` nodes for read/write access and checks for accessible ALSA
-PCM device nodes when needed. Missing hardware or failed access stops
-installation with suggestions. Run the same preflight manually after
+enabled. It detects common RTL-SDR Realtek USB IDs and checks **only an unambiguously selected** device node for access (a unique default tuner or matching USB serial). When multiple tuners exist, librtlsdr's numeric indices cannot be reliably inferred from sysfs ordering, so the check prints an **advisory**, rather than rejecting unrelated devices or falsely certifying the selected one. Unknown serials and unsupported USB IDs are likewise advisory and require a manual `rtl_test -d` verification. It also checks accessible ALSA PCM nodes when needed. A confirmed device permission failure blocks installation with specific instructions. Run the same preflight manually after
 changing group membership or connecting hardware:
 
 ```sh
