@@ -31,6 +31,11 @@ fi
 make -n install-service > "$tmp/install-recipe"
 grep -F '"$(id -u)" -ne 0' "$tmp/install-recipe"
 grep -F 'sudo systemctl cat sparky.service' "$tmp/install-recipe"
+grep -F 'go run ./cmd/sparky-device-check --config' "$tmp/install-recipe"
+# Do not touch the service if the preflight detects an unavailable radio.
+# The backend-specific unit tests provide fake sysfs/USB fixtures.
+go test ./cmd/sparky-device-check -count=1
+
 grep -F "set -C; umask 022; cat > /etc/systemd/system/sparky.service" "$tmp/install-recipe"
 
 # A deliberately mismatched selected user must fail before invoking sudo.
