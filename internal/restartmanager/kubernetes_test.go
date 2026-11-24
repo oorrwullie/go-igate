@@ -50,12 +50,20 @@ func TestKubernetesRestartRejectsRBACAndDoesNotEchoBody(t *testing.T){
 }
 
 func TestKubernetesServiceNamesValidated(t *testing.T){
- for _,name:=range []string{"sparky","my-sparky-2","s"}{
-  if !validKubernetesName(name){t.Errorf("valid name rejected: %s",name)}
+ for _,name:=range []string{"sparky","my-sparky-2","s","2m-gateway","radio.gateway","2m.radio-gateway"}{
+  if !validKubernetesDeploymentName(name){t.Errorf("valid Deployment name rejected: %s",name)}
  }
- for _,name:=range []string{"","-bad","bad-","SomeService","bad/name","..","bad.name","a;rm -rf"}{
-  if validKubernetesName(name){t.Errorf("invalid name accepted: %q",name)}
+ for _,name:=range []string{"","-bad","bad-","SomeService","bad/name","..","bad..name","a;rm -rf",strings.Repeat("a",254)}{
+  if validKubernetesDeploymentName(name){t.Errorf("invalid Deployment name accepted: %q",name)}
  }
+ for _,name:=range []string{"radio","2m-gateway","a-b"}{
+  if !validKubernetesNamespace(name){t.Errorf("valid namespace rejected: %q",name)}
+ }
+ for _,name:=range []string{"radio.gateway",".bad","bad-","Upper",""}{
+  if validKubernetesNamespace(name){t.Errorf("invalid namespace accepted: %q",name)}
+ }
+ // DNS subdomain names may exceed a single label up to the Kubernetes limit.
+ if !validKubernetesDeploymentName(strings.Repeat("a",63)+"."+strings.Repeat("b",63)){t.Fatal("multi-label Deployment rejected")}
 }
 
 func TestKubernetesEndpointCannotUseHTTP(t *testing.T){
