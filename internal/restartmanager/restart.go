@@ -61,6 +61,11 @@ func resolve(goos,manager,target,helper string,isDir func(string)bool,find func(
  if manager=="custom" {
   if !filepath.IsAbs(helper) || helper=="/" {return Plan{},errors.New("custom restart helper must be an absolute executable path")}
   if target!="" {return Plan{},errors.New("custom restart helper does not accept a service target")}
+  info,err:=os.Stat(helper)
+  if err!=nil{return Plan{},fmt.Errorf("custom restart helper unavailable: %w",err)}
+  if !info.Mode().IsRegular() || info.Mode().Perm()&0111==0 {
+   return Plan{},errors.New("custom restart helper must be a regular executable file")
+  }
   return Plan{Manager:"custom",Executable:helper},nil
  }
  if !validTarget(target) {return Plan{},errors.New("invalid restart service target")}
