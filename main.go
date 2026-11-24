@@ -5,14 +5,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"net"
 	"net/http"
 	"time"
-	"strings"
 	"syscall"
 
 	"github.com/oorrwullie/sparky/internal/log"
-	"github.com/oorrwullie/sparky/internal/observability"
 )
 
 func main() {
@@ -22,39 +19,27 @@ func main() {
 		os.Exit(1)
 	}
 
-	sparky, err := NewSparky(logger)
-	if err != nil {
-		logger.Fatal(err.Error())
-	}
-
-	// A disabled-by-default listener is owned by the gateway process, not the
-	// separate administrative config UI. It never accesses radio hardware.
-	var o11yServer *http.Server
-	if addr:=strings.TrimSpace(os.Getenv("SPARKY_OBSERVABILITY_ADDR"));addr!="" {
-		host,_,err:=net.SplitHostPort(addr)
-		if err!=nil {logger.Fatal("invalid SPARKY_OBSERVABILITY_ADDR: ",err)}
-		ip:=net.ParseIP(host)
-		if ip==nil {
-			logger.Fatal("SPARKY_OBSERVABILITY_ADDR requires a literal IP")
-		}
-		if !ip.IsLoopback() && os.Getenv("SPARKY_OBSERVABILITY_ALLOW_REMOTE")!="1" {
-			logger.Fatal("remote metrics exposure requires SPARKY_OBSERVABILITY_ALLOW_REMOTE=1 and network access controls")
-		}
-		registry:=observability.New()
-		sparky.SetObservability(registry)
-		listener,err:=net.Listen("tcp",addr)
-		if err!=nil{logger.Fatal("observability listener: ",err)}
-		o11yServer=&http.Server{
+	// Reserve the optional metrics listener before NewSparky can start SDR
+	// subprocesses or acquire radio hardware.
+	sparky, registry, listener, err := prepareGateway(
+		os.Getenv("SPARKY_OBSERVABILITY_ADDR"),
+		os.Getenv("SPARKY_OBSERVABILITY_ALLOW_REMOTE")=="1",
+		func() (*Sparky,error) {return NewSparky(logger)},
+	)
+	if err!=nil {logger.Fatal(err)}
+	if listener!=nil {
+		defer listener.Close()
+		server:=&http.Server{
 			Handler:registry.Handler(), ReadHeaderTimeout:2*time.Second,
 			ReadTimeout:5*time.Second,WriteTimeout:5*time.Second,
 			IdleTimeout:15*time.Second,MaxHeaderBytes:4096,
 		}
+		defer server.Close()
 		go func(){
-			if err:=o11yServer.Serve(listener);err!=nil && err!=http.ErrServerClosed{
+			if err:=server.Serve(listener);err!=nil&&err!=http.ErrServerClosed{
 				logger.Error("observability HTTP stopped: ",err)
 			}
 		}()
-		defer o11yServer.Close()
 	}
 
 	ctx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
