@@ -61,3 +61,17 @@ func TestMissingSupervisorExecutableFailsClosed(t *testing.T){
  _,err:=resolve("linux","openrc","","",func(string)bool{return false},noBinary)
  if err==nil || !strings.Contains(err.Error(),"unavailable"){t.Fatalf("missing binary not rejected: %v",err)}
 }
+
+func TestAutoManagerPrefersKubernetesOverHostInit(t *testing.T){
+ for _,tc:=range []struct{goos string;k8s bool;want string}{
+  {"linux",true,"kubernetes"},
+  {"linux",false,"auto"},
+  {"darwin",false,"launchd"},
+  {"darwin",true,"launchd"},
+  {"windows",false,"auto"},
+ }{
+  if got:=detectManager(tc.goos,tc.k8s);got!=tc.want{
+   t.Errorf("detectManager(%q,%t)=%q want %q",tc.goos,tc.k8s,got,tc.want)
+  }
+ }
+}
