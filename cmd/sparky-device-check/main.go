@@ -7,6 +7,10 @@ import (
  "flag"
  "fmt"
  "os"
+ "os/user"
+ "syscall"
+
+ "golang.org/x/sys/unix"
  "path/filepath"
  "strconv"
  "strings"
@@ -59,11 +63,20 @@ func checkedNode(r *result, path, kind string) {
  if g:=fileGroup(path);g!=""{group=g}
  r.problem("%s device %s is not readable and writable by this user (owner/group: %s)",kind,path,group)
  r.warn("For %s, inspect: ls -l %s; id -nG; getfacl %s (if installed)",kind,path,path)
- if group!=""&&group!="(unknown)" {
+ if group=="dialout"||group=="audio"||group=="video"||group=="plugdev" {
   r.warn("If your trusted device policy uses group %s, an administrator may grant that specific device group with: sudo usermod -aG %s %s; then fully log out and log back in before retrying. Do not run Sparky as root.",group,group,os.Getenv("USER"))
  }
 }
-func fileGroup(path string)string { return owningGroup(path) }
+func fileGroup(path string) string {
+ info,err:=os.Stat(path)
+ if err!=nil{return ""}
+ stat,ok:=info.Sys().(*syscall.Stat_t)
+ if !ok{return ""}
+ group,err:=user.LookupGroupId(strconv.FormatUint(uint64(stat.Gid),10))
+ if err!=nil{return ""}
+ return group.Name
+}
+func unixAccess(path string,mode uint32)error{return unix.Access(path,mode)}
 
 func findRTLNodes(sysroot,devroot string)([]string,error){
  paths,err:=filepath.Glob(filepath.Join(sysroot,"bus/usb/devices/*/idVendor"))
