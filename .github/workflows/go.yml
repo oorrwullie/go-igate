@@ -43,6 +43,14 @@ jobs:
         fi
         make -n install-config-service > /tmp/sparky-config-make-dry-run.txt
         grep -F 'systemctl enable --now sparky-config.service' /tmp/sparky-config-make-dry-run.txt
+        # Inspect expanded recipes: these must reach the shell as command substitutions.
+        grep -F '"$(id -un)"' /tmp/sparky-config-make-dry-run.txt
+        grep -F '"$(sudo stat -c %a /etc/sparky/config-ui.env)"' /tmp/sparky-config-make-dry-run.txt
+        grep -F '"$(sudo stat -c %u /etc/sparky/config-ui.env)"' /tmp/sparky-config-make-dry-run.txt
+        if grep -E '"" = "(600|0)"' /tmp/sparky-config-make-dry-run.txt; then
+          echo "Preflight shell substitution swallowed by Make" >&2
+          exit 1
+        fi
 
     - name: Test
       run: go test -v ./...
