@@ -62,8 +62,16 @@ func TestKubernetesServiceNamesValidated(t *testing.T){
  for _,name:=range []string{"radio.gateway",".bad","bad-","Upper",""}{
   if validKubernetesNamespace(name){t.Errorf("invalid namespace accepted: %q",name)}
  }
- // DNS subdomain names may exceed a single label up to the Kubernetes limit.
- if !validKubernetesDeploymentName(strings.Repeat("a",63)+"."+strings.Repeat("b",63)){t.Fatal("multi-label Deployment rejected")}
+ // Kubernetes applies 253 bytes to the full Deployment DNS subdomain,
+ // but namespace DNS labels are limited to 63 bytes.
+ atBoundary:=strings.Repeat("a",64)
+ if !validKubernetesDeploymentName(atBoundary){t.Fatal("valid 64-character Deployment rejected")}
+ if validKubernetesNamespace(atBoundary){t.Fatal("invalid 64-character namespace accepted")}
+ if !validKubernetesDeploymentName(strings.Repeat("a",253)){t.Fatal("valid 253-character Deployment rejected")}
+ if validKubernetesDeploymentName(strings.Repeat("a",254)){t.Fatal("invalid 254-character Deployment accepted")}
+ // Multiple labels are accepted without imposing a 63-byte per-label cap.
+ if !validKubernetesDeploymentName(strings.Repeat("a",64)+"."+strings.Repeat("b",64)){t.Fatal("multi-label Deployment rejected")}
+ if validKubernetesDeploymentName(strings.Repeat("a",125)+"."+strings.Repeat("b",128)){t.Fatal("254-character dotted Deployment accepted")}
 }
 
 func TestKubernetesEndpointCannotUseHTTP(t *testing.T){
