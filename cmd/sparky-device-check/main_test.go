@@ -2,6 +2,8 @@ package main
 
 import (
  "os"
+ "fmt"
+ "strconv"
  "path/filepath"
  "strings"
  "testing"
@@ -25,8 +27,7 @@ func TestPreflightMissingSDRIsActionable(t *testing.T){
  root:=t.TempDir()
  c:=deviceConfig(t,"sdr:\n  enabled: true\n")
  r:=checkDevices(c,root,root)
- if len(r.errors)!=1||!strings.Contains(r.errors[0],"RTL-SDR receiver enabled"){t.Fatalf("unexpected errors: %+v",r)}
- if len(r.warnings)==0||!strings.Contains(strings.Join(r.warnings," "),"rtl_test"){t.Fatalf("missing corrective guidance: %+v",r)}
+ if len(r.errors)!=0 || len(r.warnings)==0 || !strings.Contains(strings.Join(r.warnings," "),"rtl_test"){t.Fatalf("unknown hardware should be advisory with guidance: %+v",r)}
 }
 func TestPreflightSoundcardFallback(t *testing.T){
  root:=t.TempDir()
@@ -63,4 +64,54 @@ func TestPreflightRefusesOrdinaryFileMasqueradingAsDevice(t *testing.T){
  r:=result{}
  checkedNode(&r,node,"RTL-SDR")
  if len(r.errors)!=1||!strings.Contains(r.errors[0],"not a device node"){t.Fatalf("accepted fake node: %+v",r)}
+}
+
+func fakeRTLTuner(t *testing.T,root,entry,serial,bus,device string,allowed bool){
+ t.Helper()
+ dir:=filepath.Join(root,"sys","bus","usb","devices",entry)
+ if err:=os.MkdirAll(dir,0700);err!=nil{t.Fatal(err)}
+ for name,data:=range map[string]string{"idVendor":"0bda\n","idProduct":"2838\n","busnum":bus+"\n","devnum":device+"\n","serial":serial+"\n"} {
+  if err:=os.WriteFile(filepath.Join(dir,name),[]byte(data),0600);err!=nil{t.Fatal(err)}
+ }
+ usb:=filepath.Join(root,"dev","bus","usb")
+ if err:=os.MkdirAll(usb,0700);err!=nil{t.Fatal(err)}
+ node:=filepath.Join(usb,fmt.Sprintf("%03d",mustNum(t,bus)),fmt.Sprintf("%03d",mustNum(t,device)))
+ if err:=os.MkdirAll(filepath.Dir(node),0700);err!=nil{t.Fatal(err)}
+ if allowed {
+  if err:=os.Symlink("/dev/null",node);err!=nil{t.Fatal(err)}
+ }else{
+  if err:=os.WriteFile(node,[]byte("restricted test fixture"),0600);err!=nil{t.Fatal(err)}
+ }
+}
+func TestSelectedRTLSerialIgnoresOtherRestrictedDongle(t *testing.T){
+ root:=t.TempDir()
+ fakeRTLTuner(t,root,"1-1","APRS", "1","1",true)
+ fakeRTLTuner(t,root,"1-2","ADSB", "1","2",false)
+ c:=deviceConfig(t,"sdr:\n  enabled: true\n  device: APRS\n")
+ r:=checkDevices(c,filepath.Join(root,"sys"),filepath.Join(root,"dev"))
+ if len(r.errors)!=0||len(r.warnings)!=0{t.Fatalf("selected accessible SDR rejected: %+v",r)}
+ c.Sdr.Device="ADSB"
+ r=checkDevices(c,filepath.Join(root,"sys"),filepath.Join(root,"dev"))
+ if len(r.errors)!=1 || !strings.Contains(r.errors[0],"not a device node") {
+  t.Fatalf("restricted selected SDR not checked: %+v",r)
+ }
+}
+func TestAmbiguousRTLIndexAndUnknownSerialAreAdvisory(t *testing.T){
+ root:=t.TempDir()
+ fakeRTLTuner(t,root,"1-1","APRS","1","1",true)
+ fakeRTLTuner(t,root,"1-2","ADSB","1","2",false)
+ for _,selector:=range []string{"0","1","MISSING"}{
+  c:=deviceConfig(t,"sdr:\n  enabled: true\n  device: "+selector+"\n")
+  r:=checkDevices(c,filepath.Join(root,"sys"),filepath.Join(root,"dev"))
+  if len(r.errors)!=0||len(r.warnings)==0||!strings.Contains(strings.Join(r.warnings," "),"unverified"){
+   t.Fatalf("selector %q must report inconclusive discovery, not test unrelated device: %+v",selector,r)
+  }
+ }
+}
+
+func mustNum(t *testing.T,s string)int{
+ t.Helper()
+ n,err:=strconv.Atoi(s)
+ if err!=nil{t.Fatal(err)}
+ return n
 }
