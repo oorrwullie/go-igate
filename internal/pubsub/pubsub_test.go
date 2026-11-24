@@ -93,3 +93,27 @@ func TestConcurrentPublishersKeepSubscriberOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestPublishedDeliveriesCount(t *testing.T) {
+ p:=New()
+ first:=p.Subscribe()
+ second:=p.Subscribe()
+ p.Publish("packet")
+ if got:=p.Published();got!=2{t.Fatalf("published deliveries=%d want 2",got)}
+ <-first
+ <-second
+ p.Close()
+ p.Publish("ignored")
+ if got:=p.Published();got!=2{t.Fatalf("closed publish updated deliveries: %d",got)}
+}
+
+func BenchmarkPublishOneSubscriber(b *testing.B) {
+ p:=New()
+ received:=p.Subscribe()
+ // Drain synchronously without adding goroutine scheduling to the benchmark.
+ b.ReportAllocs()
+ for i:=0;i<b.N;i++{
+  p.Publish("N0CALL>APRS:benchmark")
+  select {case <-received:default:}
+ }
+}

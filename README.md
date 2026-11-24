@@ -93,7 +93,15 @@ make build       # Build Sparky
 make run         # Run it locally
 ```
 
-To install the provided systemd service, run `make install-service`. For a quick development run, use `go run .`.
+To install the provided systemd gateway service, run `make install-service`. For a quick development run, use `go run .`.
+
+`make build` also produces `bin/sparky-config`, the separate authenticated
+configuration interface. On Linux with systemd, opt into starting the UI
+at boot with `make install-config-service` **after** setting up its
+root-protected password environment file and non-root YAML access.
+The UI runs independently so gateway restarts do not kill the admin connection.
+See [configuration UI deployment](docs/web-config-deployment.md) for setup,
+least-privilege requirements, and non-systemd deployment notes.
 
 ### Log rotation
 

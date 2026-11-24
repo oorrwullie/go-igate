@@ -12,6 +12,7 @@ import (
 	"github.com/oorrwullie/sparky/internal/digipeater"
 	"github.com/oorrwullie/sparky/internal/igate"
 	"github.com/oorrwullie/sparky/internal/log"
+	"github.com/oorrwullie/sparky/internal/observability"
 	multimonpackage "github.com/oorrwullie/sparky/internal/multimon"
 	openwebrx "github.com/oorrwullie/sparky/internal/openwebrx"
 	"github.com/oorrwullie/sparky/internal/pubsub"
@@ -36,6 +37,7 @@ type (
 		logger            *log.Logger
 		cache             *cache.Cache
 		pubsub            *pubsub.PubSub
+		observability     *observability.Registry
 	}
 )
 
@@ -183,6 +185,15 @@ func NewSparky(logger *log.Logger) (*Sparky, error) {
 	return dg, nil
 }
 
+// SetObservability attaches a read-only registry before Run starts.
+func (d *Sparky) SetObservability(o *observability.Registry) {
+ d.observability=o
+ o.Snapshot=func()(uint64,uint64){
+  if d.pubsub==nil{return 0,0}
+  return d.pubsub.Published(),d.pubsub.Drops()
+ }
+}
+
 func (d *Sparky) Run() error {
 	// Arm cleanup before starting workers so startup failures also stop resources.
 	go func() {
@@ -241,6 +252,7 @@ func (d *Sparky) Run() error {
 		}
 	}
 
+	if d.observability != nil {d.observability.Ready()}
 	var g errgroup.Group
 	if d.pubsub != nil {
 		g.Go(func() error {
@@ -287,7 +299,10 @@ func (d *Sparky) Run() error {
 
 // Stop signals cancellation immediately and is safe to call repeatedly.
 func (d *Sparky) Stop() {
-	d.stopOnce.Do(func() { close(d.stop) })
+ d.stopOnce.Do(func() {
+  if d.observability!=nil {d.observability.Stopping()}
+  close(d.stop)
+ })
 }
 
 func isNilCapture(c capture.Capture) bool {

@@ -24,6 +24,12 @@ import (
 
 type Server struct {
  Store *configeditor.Store
+ // MetricsURL is a read-only loopback O11y endpoint fixed at startup.
+ MetricsURL string
+ MetricsClient *http.Client
+ // RestartService is an explicitly enabled fixed-target operation. Nil disables it.
+ RestartService func(context.Context) error
+ restartInFlight atomic.Bool
  // PublicOrigin is the browser-visible HTTPS origin (for example,
  // https://sparky.example.org). Forwarded-* headers are never trusted.
  PublicOrigin string
@@ -33,16 +39,13 @@ type Server struct {
  // AllowLANHTTP is an explicit acknowledgment that Routy-to-Sparky traffic
  // is unencrypted. A firewall must restrict the listener to TrustedProxyIP.
  AllowLANHTTP bool
- // RestartService is an explicitly enabled, fixed-target operation supplied
- // by the host. A nil callback keeps restart disabled (the default).
- RestartService func(context.Context) error
- restartInFlight atomic.Bool
  tokenOnce sync.Once
  token []byte
  tokenErr error
 }
 
 type view struct {
+ Status runtimeStatus
  Callsign string
  SDR bool
  SDRFrequency string
@@ -117,6 +120,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  w.Header().Set("Content-Type","text/html; charset=utf-8")
  if r.Method == http.MethodHead {return}
  data:=view{
+  Status:s.runtimeStatus(r.Context()),
   Callsign:cfg.StationCallsign, SDR:cfg.Sdr.Enabled,
   SDRFrequency:cfg.Sdr.Frequency,IGate:cfg.IGate.Enabled,
   APRSIS:cfg.IGate.Aprsis.Enabled,Digipeater:cfg.DigipeaterEnabled,
