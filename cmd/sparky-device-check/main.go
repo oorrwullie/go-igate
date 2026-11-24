@@ -105,7 +105,7 @@ func findRTLNodes(sysroot,devroot string)([]string,error){
 func checkDevices(cfg config.Config,sysroot,devroot string)result{
  var r result
  // MQTT reception bypasses the local RTL-SDR/sound-card receive backend.
- if !cfg.OpenWebRXMQTT.Enabled&&cfg.Sdr.Enabled {
+ if !cfg.OpenWebRXMQTT.Enabled && !cfg.SoundcardCapture && cfg.Sdr.Enabled {
   nodes,err:=findRTLNodes(sysroot,devroot)
   if err!=nil{r.problem("RTL-SDR enumeration: %v",err)
   }else if len(nodes)==0{
@@ -115,7 +115,7 @@ func checkDevices(cfg config.Config,sysroot,devroot string)result{
    for _,node:=range nodes{checkedNode(&r,node,"RTL-SDR")}
   }
  }
- if cfg.SoundcardCapture || cfg.Transmitter.Enabled {
+ if cfg.Transmitter.Enabled || (!cfg.OpenWebRXMQTT.Enabled && (cfg.SoundcardCapture || !cfg.Sdr.Enabled)) {
   // Only verify ACL/mode on the selected audio device(s) when those nodes
   // are known. Default PortAudio device selection needs host-level testing.
   r.warn("Audio capture/transmit is enabled. PortAudio device selection and ALSA/logind ACLs cannot be proven from config alone. Verify with the service account using arecord -l / aplay -l and a real receive/TX test; service accounts may not inherit interactive-session ACLs.")
