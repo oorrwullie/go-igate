@@ -37,8 +37,7 @@ installed operator files.
    `config.yml` relative to its working directory. Run the separate
    web UI from the repo root with
    `./bin/sparky-config --config ./bin/config.yml` after supplying
-   its independent admin password (see [operator quick start](operator-quickstart.md)
-   when #55 lands).
+   its independent admin password (see [web editor setup](web-config-edit.md)).
 
 ## Existing installations
 
