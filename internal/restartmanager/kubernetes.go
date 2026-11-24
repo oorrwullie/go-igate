@@ -36,11 +36,11 @@ func kubernetesPlan(target string)(Plan,error){
  if target=="" {target="deployment/sparky"}
  if !strings.HasPrefix(target,"deployment/") {return Plan{},errors.New("Kubernetes restart target must be deployment/<name>")}
  name:=strings.TrimPrefix(target,"deployment/")
- if !validKubernetesName(name){return Plan{},errors.New("invalid Kubernetes deployment name")}
+ if !validKubernetesDeploymentName(name){return Plan{},errors.New("invalid Kubernetes deployment name")}
  nsRaw,err:=os.ReadFile(serviceAccountDir+"/namespace")
  if err!=nil{return Plan{},fmt.Errorf("Kubernetes service account namespace unavailable: %w",err)}
  namespace:=strings.TrimSpace(string(nsRaw))
- if !validKubernetesName(namespace){return Plan{},errors.New("invalid Kubernetes namespace")}
+ if !validKubernetesNamespace(namespace){return Plan{},errors.New("invalid Kubernetes namespace")}
  host:=os.Getenv("KUBERNETES_SERVICE_HOST")
  port:=os.Getenv("KUBERNETES_SERVICE_PORT_HTTPS")
  if port=="" {port="443"}
@@ -63,12 +63,31 @@ func kubernetesPlan(target string)(Plan,error){
  return Plan{Manager:"kubernetes",kubernetes:cfg},nil
 }
 
-func validKubernetesName(s string)bool{
- if s==""||len(s)>63||s[0]<'a'||s[0]>'z' && (s[0]<'0'||s[0]>'9') {return false}
- if last:=s[len(s)-1]; !(last>='a'&&last<='z'||last>='0'&&last<='9'){return false}
- for _,c:=range s{
-  if c>='a'&&c<='z'||c>='0'&&c<='9'||c=='-' {continue}
+// Namespace names are DNS labels (RFC 1123), at most 63 characters.
+func validKubernetesNamespace(s string) bool {
+ return validKubernetesDNSLabel(s)
+}
+
+func validKubernetesDNSLabel(s string) bool {
+ if len(s)<1||len(s)>63 {return false}
+ if !kubernetesAlnum(s[0])||!kubernetesAlnum(s[len(s)-1]) {return false}
+ for i:=0;i<len(s);i++ {
+  if kubernetesAlnum(s[i])||s[i]=='-' {continue}
   return false
+ }
+ return true
+}
+
+func kubernetesAlnum(c byte) bool {
+ return c>='a'&&c<='z'||c>='0'&&c<='9'
+}
+
+// Deployment names are DNS subdomains: one or more DNS labels separated by
+// dots, with a combined maximum length of 253 bytes.
+func validKubernetesDeploymentName(s string) bool {
+ if len(s)<1||len(s)>253 {return false}
+ for _,label:=range strings.Split(s,".") {
+  if !validKubernetesDNSLabel(label){return false}
  }
  return true
 }
@@ -85,7 +104,7 @@ func loadKubernetesCA(filename string)(*x509.CertPool,error){
 // pod-template annotation. RBAC must grant patch only on the named deployment.
 // No shell, PID, pod deletion, or user-supplied API path is involved.
 func (k *KubernetesConfig) Restart(ctx context.Context)error{
- if k==nil||k.Client==nil||!validKubernetesName(k.Namespace)||!validKubernetesName(k.Deployment) {
+ if k==nil||k.Client==nil||!validKubernetesNamespace(k.Namespace)||!validKubernetesDeploymentName(k.Deployment) {
   return errors.New("Kubernetes restart adapter unavailable")
  }
  token,err:=os.ReadFile(k.TokenPath)
