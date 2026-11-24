@@ -78,13 +78,20 @@ func fileGroup(path string) string {
 }
 func unixAccess(path string,mode uint32)error{return unix.Access(path,mode)}
 
-func findRTLNodes(sysroot,devroot string)([]string,error){
+type rtlDevice struct {
+ path string
+ serial string
+}
+
+// Sysfs enumeration is not guaranteed to use the same index ordering as
+// librtlsdr. Only a unique device or exact serial match can be verified.
+func findRTLDevices(sysroot,devroot string)([]rtlDevice,error){
  paths,err:=filepath.Glob(filepath.Join(sysroot,"bus/usb/devices/*/idVendor"))
  if err!=nil{return nil,err}
- var found []string
+ var found []rtlDevice
  for _,p:=range paths {
   vendor,err:=os.ReadFile(p)
-  if err!=nil||strings.TrimSpace(string(vendor))!="0bda"{continue}
+  if err!=nil||strings.ToLower(strings.TrimSpace(string(vendor)))!="0bda"{continue}
   product,err:=os.ReadFile(filepath.Join(filepath.Dir(p),"idProduct"))
   if err!=nil{continue}
   switch strings.ToLower(strings.TrimSpace(string(product))){
@@ -97,22 +104,57 @@ func findRTLNodes(sysroot,devroot string)([]string,error){
   b,e1:=strconv.Atoi(strings.TrimSpace(string(bus)))
   d,e2:=strconv.Atoi(strings.TrimSpace(string(index)))
   if e1!=nil||e2!=nil{continue}
-  found=append(found,filepath.Join(devroot,"bus","usb",fmt.Sprintf("%03d",b),fmt.Sprintf("%03d",d)))
+  serial,_:=os.ReadFile(filepath.Join(filepath.Dir(p),"serial"))
+  found=append(found,rtlDevice{
+   path:filepath.Join(devroot,"bus","usb",fmt.Sprintf("%03d",b),fmt.Sprintf("%03d",d)),
+   serial:strings.TrimSpace(string(serial)),
+  })
  }
  return found,nil
+}
+func findRTLNodes(sysroot,devroot string)([]string,error){
+ devices,err:=findRTLDevices(sysroot,devroot)
+ if err!=nil{return nil,err}
+ nodes:=make([]string,0,len(devices))
+ for _,device:=range devices{nodes=append(nodes,device.path)}
+ return nodes,nil
+}
+func checkSelectedRTL(r *result,selector string,devices []rtlDevice){
+ selector=strings.TrimSpace(selector)
+ if len(devices)==0 {
+  r.warn("RTL-SDR requested but no known Realtek 0bda:2832/2838 USB devices found. Verify the configured sdr.device using lsusb and rtl_test -d <selector>; USB identity and permissions were not verified.")
+  return
+ }
+ // Device indices are assigned by librtlsdr, not sysfs. A unique physical
+ // tuner is unambiguous for index zero; multiple tuners are advisory.
+ index,err:=strconv.Atoi(selector)
+ if selector=="" {index=0;err=nil}
+ if err==nil {
+  if index==0 && len(devices)==1 {
+   checkedNode(r,devices[0].path,"selected RTL-SDR")
+   return
+  }
+  r.warn("RTL-SDR device index %q cannot be mapped reliably to a specific USB node among %d discovered tuners; access for the selected dongle is unverified. Run rtl_test -d %s as the service account and inspect its /dev/bus/usb node.",selector,len(devices),selector)
+  return
+ }
+ var matches []rtlDevice
+ for _,dev:=range devices {if dev.serial==selector {matches=append(matches,dev)}}
+ if len(matches)==1{
+  checkedNode(r,matches[0].path,"selected RTL-SDR")
+  return
+ }
+ r.warn("RTL-SDR serial %q matched %d supported USB devices; selected device access is unverified. Check rtl_test -d %s, lsusb, and device serials as the service account.",selector,len(matches),selector)
 }
 
 func checkDevices(cfg config.Config,sysroot,devroot string)result{
  var r result
  // MQTT reception bypasses the local RTL-SDR/sound-card receive backend.
  if !cfg.OpenWebRXMQTT.Enabled && !cfg.SoundcardCapture && cfg.Sdr.Enabled {
-  nodes,err:=findRTLNodes(sysroot,devroot)
-  if err!=nil{r.problem("RTL-SDR enumeration: %v",err)
-  }else if len(nodes)==0{
-   r.problem("RTL-SDR receiver enabled but no supported Realtek 0bda:2832/2838 USB tuner detected")
-   r.warn("Plug in the RTL-SDR, check lsusb and rtl_test, or disable sdr.enabled / select OpenWebRX+ MQTT before installation. Other SDR USB IDs may need a separate rule/check.")
-  }else{
-   for _,node:=range nodes{checkedNode(&r,node,"RTL-SDR")}
+  devices,err:=findRTLDevices(sysroot,devroot)
+  if err!=nil{
+   r.warn("RTL-SDR USB enumeration failed: %v; verify selected device manually with rtl_test",err)
+  }else {
+   checkSelectedRTL(&r,cfg.Sdr.Device,devices)
   }
  }
  if cfg.Transmitter.Enabled || (!cfg.OpenWebRXMQTT.Enabled && (cfg.SoundcardCapture || !cfg.Sdr.Enabled)) {
