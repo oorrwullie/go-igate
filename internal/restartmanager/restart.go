@@ -27,9 +27,7 @@ func Resolve(manager, target, helper string) (Plan,error) {
  // Kubernetes pods frequently have no host init system visible. Prefer
  // Kubernetes only with explicit in-cluster evidence, not /proc/1 guesses.
  if manager=="" || manager=="auto" {
-  if runtime.GOOS=="linux" && os.Getenv("KUBERNETES_SERVICE_HOST")!="" {
-   manager="kubernetes"
-  }
+  manager=detectManager(runtime.GOOS,os.Getenv("KUBERNETES_SERVICE_HOST")!="")
  }
  if manager=="kubernetes" {
   if runtime.GOOS!="linux" {return Plan{},errors.New("Kubernetes restart requires Linux")}
@@ -40,6 +38,14 @@ func Resolve(manager, target, helper string) (Plan,error) {
   st,err:=os.Stat(p)
   return err==nil && st.IsDir()
  },findBinary)
+}
+
+// detectManager checks the orchestrator before falling back to the host
+// platform. A container's PID 1 is not proof of any particular init system.
+func detectManager(goos string,inKubernetes bool)string{
+ if goos=="linux" && inKubernetes{return "kubernetes"}
+ if goos=="darwin"{return "launchd"}
+ return "auto"
 }
 
 func resolve(goos,manager,target,helper string,isDir func(string)bool,find func(string)(string,error))(Plan,error){
