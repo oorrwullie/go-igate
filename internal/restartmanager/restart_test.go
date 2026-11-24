@@ -11,7 +11,7 @@ import (
 
 func TestRestartPlansAcrossPlatforms(t *testing.T){
  helper:=filepath.Join(t.TempDir(),"sparky-restart")
- if err:=os.WriteFile(helper,[]byte("#!/bin/sh\\nexit 0\\n"),0700);err!=nil{t.Fatal(err)}
+ if err:=os.WriteFile(helper,[]byte("#!/bin/sh\nexit 0\n"),0700);err!=nil{t.Fatal(err)}
  exists:=func(s string)bool{return s=="/run/systemd/system"}
  find:=func(name string)(string,error){return "/usr/bin/"+name,nil}
  cases:=[]struct{os,manager,target,helper,wantManager,wantBin string;wantArgs []string}{
