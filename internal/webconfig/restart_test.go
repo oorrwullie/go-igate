@@ -5,6 +5,9 @@ import (
  "encoding/hex"
  "errors"
  "net/http"
+ "net"
+ "time"
+ "io"
  "net/http/httptest"
  "net/url"
  "strings"
@@ -104,4 +107,44 @@ func TestRestartFormVisibleOnlyWhenEnabled(t *testing.T){
   t.Fatalf("enabled restart form absent: %d",w.Code)
  }
  if !strings.Contains(w.Body.String(),`name="confirm"`){t.Fatal("confirmation checkbox absent")}
+}
+
+func TestRestartLiveListenerCompletesBeyondOldWriteTimeout(t *testing.T) {
+ s:=testServer(t)
+ s.RestartService=func(context.Context)error {
+  time.Sleep(11*time.Second)
+  return nil
+ }
+ if got:=newHTTPServer(s).WriteTimeout;got<20*time.Second{
+  t.Fatalf("enabled restart write timeout is %v",got)
+ }
+ if got:=newHTTPServer(&Server{}).WriteTimeout;got!=10*time.Second{
+  t.Fatalf("default write timeout unexpectedly changed to %v",got)
+ }
+ listener,err:=net.Listen("tcp","127.0.0.1:0")
+ if err!=nil{t.Fatal(err)}
+ server:=newHTTPServer(s)
+ done:=make(chan error,1)
+ go func(){done<-server.Serve(listener)}()
+ defer func(){
+  _=server.Close()
+  <-done
+ }()
+ token,err:=csrfToken(s)
+ if err!=nil{t.Fatal(err)}
+ address:="http://"+listener.Addr().String()
+ form:=url.Values{"csrf":{hex.EncodeToString(token)},"confirm":{"restart"}}
+ req,err:=http.NewRequest("POST",address+"/restart",strings.NewReader(form.Encode()))
+ if err!=nil{t.Fatal(err)}
+ req.Header.Set("Origin",address)
+ req.Header.Set("Content-Type","application/x-www-form-urlencoded")
+ req.SetBasicAuth("admin","this-is-a-long-test-password")
+ client:=&http.Client{Timeout:19*time.Second}
+ resp,err:=client.Do(req)
+ if err!=nil{t.Fatalf("live restart response failed: %v",err)}
+ defer resp.Body.Close()
+ body,err:=io.ReadAll(resp.Body)
+ if err!=nil{t.Fatal(err)}
+ if resp.StatusCode!=200{t.Fatalf("restart returned %d: %s",resp.StatusCode,body)}
+ if !strings.Contains(string(body),"Restart requested"){t.Fatal("restart success response missing")}
 }
