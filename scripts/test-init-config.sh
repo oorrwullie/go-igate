@@ -14,7 +14,8 @@ cmp "$repo_root/config.yml.example" "$dest/config.yml"
 permissions="$(stat -c '%a' "$dest/config.yml")"
 test "$permissions" = "600" || { echo "new config permissions $permissions, expected 600" >&2; exit 1; }
 
-grep -q '^enable-digipeater: false
+grep -q '^enable-digipeater: false$' "$dest/config.yml"
+awk '/^igate:/{flag=1;next} flag && /^  enabled:/{exit ($2=="false")?0:1}' "$dest/config.yml"
 awk '/^transmitter:/{flag=1;next} flag && /^  enabled:/{exit ($2=="false")?0:1}' "$dest/config.yml"
 
 # Refuse a second initialization and preserve the initial file byte-for-byte.
