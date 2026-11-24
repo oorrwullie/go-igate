@@ -45,6 +45,11 @@ func resolve(goos,manager,target,helper string,isDir func(string)bool,find func(
   return Plan{Manager:"custom",Executable:helper},nil
  }
  if !validTarget(target) {return Plan{},errors.New("invalid restart service target")}
+ // Only launchd uses a domain/label path. Linux manager targets are fixed
+ // service names, never paths or traversal into another service directory.
+ if manager!="launchd" && strings.Contains(target,"/") {
+  return Plan{},errors.New("Linux restart target must be a service name, not a path")
+ }
  var binary string
  var args []string
  switch manager {
