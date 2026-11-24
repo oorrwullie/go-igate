@@ -2,13 +2,11 @@
 package main
 
 import (
- "context"
  "flag"
  "log"
- "os/exec"
- "runtime"
 
  "github.com/oorrwullie/sparky/internal/configeditor"
+ "github.com/oorrwullie/sparky/internal/restartmanager"
  "github.com/oorrwullie/sparky/internal/webconfig"
 )
 
@@ -20,17 +18,19 @@ func main() {
  publicOrigin:=flag.String("public-origin","","browser-visible HTTPS origin when Routy terminates TLS")
  proxyIP:=flag.String("trusted-proxy-ip","","Routy source IP (required for non-loopback HTTP proxying)")
  allowLANHTTP:=flag.Bool("allow-lan-http",false,"explicitly permit unencrypted Routy-to-Sparky LAN hop")
- enableRestart:=flag.Bool("enable-restart",false,"opt in to fixed sparky.service restart (requires separate OS permission)")
+ enableRestart:=flag.Bool("enable-restart",false,"opt in to restarting only the operator-selected Sparky service (requires OS permission)")
+ restartManager:=flag.String("restart-manager","auto","restart supervisor: auto, systemd, openrc, sysv, runit, s6, launchd, custom")
+ restartTarget:=flag.String("restart-target","","fixed service/launchd target; empty uses the manager-specific Sparky default")
+ restartHelper:=flag.String("restart-helper","","absolute path to a fixed, operator-managed restart helper (only for --restart-manager custom)")
  flag.Parse()
  server:=&webconfig.Server{Store:&configeditor.Store{Path:*path},PublicOrigin:*publicOrigin,TrustedProxyIP:*proxyIP,AllowLANHTTP:*allowLANHTTP}
  if *enableRestart {
-  if runtime.GOOS!="linux" {log.Fatal("--enable-restart requires Linux with systemd")}
-  // No shell, variable target, or inherited PATH resolution. The editor
-  // process must have narrowly configured OS permission to restart this
-  // one unit; it does not grant itself elevated privileges.
-  server.RestartService=func(ctx context.Context) error {
-   return exec.CommandContext(ctx,"/usr/bin/systemctl","restart","sparky.service").Run()
-  }
+  plan,err:=restartmanager.Resolve(*restartManager,*restartTarget,*restartHelper)
+  if err!=nil{log.Fatalf("configure restart: %v",err)}
+  log.Printf("Restart adapter enabled: %s (target configured at startup; OS permissions required)",plan.Manager)
+  server.RestartService=plan.Run
+ } else if *restartManager!="auto" || *restartTarget!="" || *restartHelper!="" {
+  log.Fatal("restart options require --enable-restart")
  }
  if *cert!="" || *key!="" {
   log.Printf("Sparky configuration UI HTTPS listener %s (login required)",*addr)
