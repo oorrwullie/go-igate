@@ -31,8 +31,14 @@ func main() {
 	// separate administrative config UI. It never accesses radio hardware.
 	var o11yServer *http.Server
 	if addr:=strings.TrimSpace(os.Getenv("SPARKY_OBSERVABILITY_ADDR"));addr!="" {
-		if _,_,err:=net.SplitHostPort(addr);err!=nil{
-			logger.Fatal("invalid SPARKY_OBSERVABILITY_ADDR: ",err)
+		host,_,err:=net.SplitHostPort(addr)
+		if err!=nil {logger.Fatal("invalid SPARKY_OBSERVABILITY_ADDR: ",err)}
+		ip:=net.ParseIP(host)
+		if ip==nil {
+			logger.Fatal("SPARKY_OBSERVABILITY_ADDR requires a literal IP")
+		}
+		if !ip.IsLoopback() && os.Getenv("SPARKY_OBSERVABILITY_ALLOW_REMOTE")!="1" {
+			logger.Fatal("remote metrics exposure requires SPARKY_OBSERVABILITY_ALLOW_REMOTE=1 and network access controls")
 		}
 		registry:=observability.New()
 		sparky.SetObservability(registry)
