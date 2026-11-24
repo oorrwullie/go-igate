@@ -260,17 +260,26 @@ func (s *Server) listen(addr,certFile,keyFile string) error {
  }
  listener,err:=net.Listen("tcp",addr)
  if err!=nil {return err}
- httpServer:=&http.Server{
-  Handler:s,
-  ReadHeaderTimeout:5*time.Second,
-  ReadTimeout:10*time.Second,
-  WriteTimeout:10*time.Second,
-  IdleTimeout:30*time.Second,
-  MaxHeaderBytes:1<<16,
- }
+ httpServer:=newHTTPServer(s)
  if secure {
   httpServer.TLSConfig=&tls.Config{MinVersion:tls.VersionTLS12,Certificates:[]tls.Certificate{cert}}
   return httpServer.ServeTLS(listener,"","")
  }
  return httpServer.Serve(listener)
+}
+
+// newHTTPServer preserves the short default timeout for read-only/edit traffic.
+// An enabled restart adapter can take up to 15 seconds, so the socket write
+// deadline must include that operation plus request/response overhead.
+func newHTTPServer(s *Server)*http.Server{
+ writeTimeout:=10*time.Second
+ if s!=nil && s.RestartService!=nil {writeTimeout=25*time.Second}
+ return &http.Server{
+  Handler:s,
+  ReadHeaderTimeout:5*time.Second,
+  ReadTimeout:10*time.Second,
+  WriteTimeout:writeTimeout,
+  IdleTimeout:30*time.Second,
+  MaxHeaderBytes:1<<16,
+ }
 }
