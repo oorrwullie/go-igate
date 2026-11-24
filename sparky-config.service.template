@@ -14,7 +14,9 @@ RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=read-only
+# Restrict writes to Sparky's existing working directory, where the legacy
+# gateway service already expects config.yml. Do not expose this port remotely.
+ReadWritePaths={{WORKING_DIRECTORY}}
 # Config YAML remains writable by the service account. The installer does not
 # grant broader privileges or enable web-triggered restart.
 
