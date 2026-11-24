@@ -14,6 +14,9 @@ func TestValidationFeedbackNoSecretDisclosure(t *testing.T) {
   {errors.New("invalid configuration: map-flights.station and map-flights.key are required"),"requires station ID"},
   {errors.New("invalid configuration: transmitter audio-level must be between 0 and 1"),"between 0 and 1"},
   {errors.New("secret value leaked: PRIVATE_API_KEY_abc"),"Inspect YAML"},
+  {errors.New("open /tmp/map-flights.broker/config.yml: permission denied"),"Inspect YAML"},
+  {errors.New("mkdir /tmp/map-flights requires/failed: permission denied"),"Inspect YAML"},
+  {errors.New("failed to stat transmitter audio-level /tmp/private"),"Inspect YAML"},
  }
  for _,tc:=range cases {
   got:=validationFeedback(tc.cause)
@@ -36,6 +39,7 @@ func TestEditorScriptRequiresLoginAndCorrectMethods(t *testing.T) {
  s.ServeHTTP(w,req)
  if w.Code!=http.StatusOK{t.Fatalf("script status: %d",w.Code)}
  if !strings.Contains(w.Body.String(),"beforeunload"){t.Fatal("missing dirty form guard")}
+ if !strings.Contains(w.Body.String(),`addEventListener("pageshow"`) {t.Fatal("missing bfcache restoration guard")}
  if !strings.HasPrefix(w.Header().Get("Content-Type"),"text/javascript"){t.Fatal("unexpected script content type")}
  if w.Header().Get("Cache-Control")!="no-store"{t.Fatal("script caching not disabled")}
 
