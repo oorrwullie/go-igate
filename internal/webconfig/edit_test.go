@@ -8,6 +8,7 @@ import (
  "path/filepath"
  "strings"
  "testing"
+ "gopkg.in/yaml.v3"
  "github.com/oorrwullie/sparky/internal/configeditor"
 )
 
@@ -107,5 +108,50 @@ func TestEditorUsesSameOriginReferrerPolicy(t *testing.T) {
  s.ServeHTTP(rec,req)
  if got:=rec.Header().Get("Referrer-Policy");got!="no-referrer" {
   t.Fatalf("overview referrer policy %q, want no-referrer",got)
+ }
+}
+
+func TestMultiDocumentYAMLRejectedWithoutWriting(t *testing.T) {
+ t.Setenv("SPARKY_CONFIG_PASSWORD","this-is-a-long-test-password")
+ original:=[]byte("station-callsign: N0CALL\n---\nstation-callsign: SECOND\ncustom-secret: retained\n")
+ p:=filepath.Join(t.TempDir(),"config.yml")
+ if err:=os.WriteFile(p,original,0600);err!=nil{t.Fatal(err)}
+ s:=&Server{Store:&configeditor.Store{Path:p}}
+ token,err:=csrfToken(s);if err!=nil{t.Fatal(err)}
+ _,rev,err:=s.Store.Load();if err!=nil{t.Fatal(err)}
+ form:=url.Values{"csrf":{hex.EncodeToString(token)},"revision":{rev},"callsign":{"N0CALL-7"}}
+ req:=localTestRequest("POST","http://localhost:8080/edit",strings.NewReader(form.Encode()))
+ req.Header.Set("Content-Type","application/x-www-form-urlencoded")
+ req.Header.Set("Origin","http://localhost:8080")
+ req.SetBasicAuth("admin","this-is-a-long-test-password")
+ rec:=httptest.NewRecorder();s.ServeHTTP(rec,req)
+ if rec.Code!=400{t.Fatalf("expected rejected multi-document save; got %d",rec.Code)}
+ saved,err:=os.ReadFile(p)
+ if err!=nil{t.Fatal(err)}
+ if string(saved)!=string(original){t.Fatalf("rejected save modified YAML: %q",saved)}
+}
+
+func TestAnchoredAncestorMappingCannotChangeAliasedValues(t *testing.T) {
+ original:=[]byte("station-callsign: N0CALL\nsdr: &settings\n  enabled: true\nbackup: *settings\n")
+ _,err:=patchEditable(original,editValues{Callsign:"N0CALL",SDR:false})
+ if err==nil || !strings.Contains(err.Error(),"anchored YAML mapping"){
+  t.Fatalf("expected rejection of anchored mapping mutation: %v",err)
+ }
+ // Leaving the anchor unchanged must not break its alias.
+ saved,err:=patchEditable(original,editValues{Callsign:"N0CALL",SDR:true})
+ if err!=nil{t.Fatalf("unchanged mapping rejected: %v",err)}
+ var doc struct{
+  SDR struct{Enabled bool `yaml:"enabled"`} `yaml:"sdr"`
+  Backup struct{Enabled bool `yaml:"enabled"`} `yaml:"backup"`
+ }
+ if err:=yaml.Unmarshal(saved,&doc);err!=nil{t.Fatal(err)}
+ if !doc.SDR.Enabled||!doc.Backup.Enabled{t.Fatal("anchor consumer changed")}
+}
+
+func TestAnchoredAncestorRejectsCreatingMissingField(t *testing.T) {
+ original:=[]byte("station-callsign: N0CALL\nsdr: &settings {}\nbackup: *settings\n")
+ _,err:=patchEditable(original,editValues{Callsign:"N0CALL"})
+ if err==nil || !strings.Contains(err.Error(),"anchored YAML mapping"){
+  t.Fatalf("expected rejection of field addition to anchored mapping: %v",err)
  }
 }
