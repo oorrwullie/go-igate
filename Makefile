@@ -61,7 +61,7 @@ install-service:
 install-config-service: build
 	@test "$$(id -u)" -ne 0 || { echo "Run make as a non-root user; sudo is invoked only for installation"; exit 1; }
 	@sudo test -f $(CONFIG_ENV_FILE) || { echo "Missing $(CONFIG_ENV_FILE); create it with SPARKY_CONFIG_PASSWORD (16+ characters) first"; exit 1; }
-	@test "$(sudo stat -c %a $(CONFIG_ENV_FILE))" = "600" || { echo "$(CONFIG_ENV_FILE) must have permissions 0600"; exit 1; }
+	@test "$$(sudo stat -c %a $(CONFIG_ENV_FILE))" = "600" || { echo "$(CONFIG_ENV_FILE) must have permissions 0600"; exit 1; }
 	@test -f $(GOBIN)/config.yml && test -r $(GOBIN)/config.yml && test -w $(GOBIN) || { echo "The UI user must be able to read bin/config.yml and write its directory"; exit 1; }
 	@sudo grep -Eq '^SPARKY_CONFIG_PASSWORD=.{16,}$$' $(CONFIG_ENV_FILE) || { echo "$(CONFIG_ENV_FILE) needs SPARKY_CONFIG_PASSWORD with 16+ characters"; exit 1; }
 	@echo "Installing $(CONFIG_BINARY_NAME) as an independent, opt-in systemd service"
