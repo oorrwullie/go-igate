@@ -17,12 +17,25 @@ type Plan struct {
  Manager string
  Executable string
  Args []string
+ kubernetes *KubernetesConfig
 }
 
 // Resolve chooses a fixed restart plan at process startup. "auto" is
 // conservative: only systemd or launchd is automatically detected.
 // Other Linux supervisors must be explicitly selected by the operator.
 func Resolve(manager, target, helper string) (Plan,error) {
+ // Kubernetes pods frequently have no host init system visible. Prefer
+ // Kubernetes only with explicit in-cluster evidence, not /proc/1 guesses.
+ if manager=="" || manager=="auto" {
+  if runtime.GOOS=="linux" && os.Getenv("KUBERNETES_SERVICE_HOST")!="" {
+   manager="kubernetes"
+  }
+ }
+ if manager=="kubernetes" {
+  if runtime.GOOS!="linux" {return Plan{},errors.New("Kubernetes restart requires Linux")}
+  if helper!="" {return Plan{},errors.New("Kubernetes restart does not accept a helper")}
+  return kubernetesPlan(target)
+ }
  return resolve(runtime.GOOS,manager,target,helper,func(p string) bool {
   st,err:=os.Stat(p)
   return err==nil && st.IsDir()
@@ -118,6 +131,7 @@ func findBinary(name string)(string,error){
 // Run never invokes a shell. The selected plan is immutable once installed
 // in the server, and neither browser input nor config YAML changes its target.
 func (p Plan) Run(ctx context.Context)error{
+ if p.kubernetes!=nil {return p.kubernetes.Restart(ctx)}
  if p.Executable=="" {return errors.New("restart adapter not configured")}
  return exec.CommandContext(ctx,p.Executable,p.Args...).Run()
 }
