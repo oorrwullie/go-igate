@@ -2,6 +2,7 @@
 package webconfig
 
 import (
+ "context"
  "crypto/sha256"
  "crypto/subtle"
  "crypto/tls"
@@ -14,6 +15,7 @@ import (
  "os"
  "strings"
  "sync"
+ "sync/atomic"
  "time"
 
  "github.com/oorrwullie/sparky/internal/config"
@@ -31,6 +33,10 @@ type Server struct {
  // AllowLANHTTP is an explicit acknowledgment that Routy-to-Sparky traffic
  // is unencrypted. A firewall must restrict the listener to TrustedProxyIP.
  AllowLANHTTP bool
+ // RestartService is an explicitly enabled, fixed-target operation supplied
+ // by the host. A nil callback keeps restart disabled (the default).
+ RestartService func(context.Context) error
+ restartInFlight atomic.Bool
  tokenOnce sync.Once
  token []byte
  tokenErr error
@@ -70,6 +76,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   }
   w.Header().Set("Content-Type","text/javascript; charset=utf-8")
   if r.Method==http.MethodGet {_,_=w.Write(editorScript)}
+  return
+ }
+ if r.URL.Path == "/restart" {
+  w.Header().Set("Referrer-Policy","same-origin")
+  w.Header().Set("Content-Security-Policy","default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+  s.serveRestart(w,r)
   return
  }
  if r.URL.Path == "/edit" {
