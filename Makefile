@@ -22,13 +22,21 @@ build:
 	@go build -o $(GOBIN)/$(BINARY_NAME) .
 	@go build -o $(GOBIN)/$(CONFIG_BINARY_NAME) ./cmd/sparky-config
 
-# Explicit first-run setup. Never overwrite a configured station or follow a
-# symlink to write elsewhere; bash/sh noclobber fails before opening the file.
-# Use the same bin/ working directory as the bundled gateway systemd unit.
+# Create a complete private config in the destination filesystem, then publish
+# it with a hard link. ln fails when *anything* occupies config.yml (including
+# regular files, symlinks, FIFOs and directories), without opening that target.
+# The temporary file is never treated as an initialized station config.
 init-config:
 	@mkdir -p "$(GOBIN)"
-	@set -C; umask 077; cat config.yml.example > "$(GOBIN)/config.yml" || { echo "Configuration not created: $(GOBIN)/config.yml already exists or is not writable" >&2; exit 1; }
-	@echo "Created $(GOBIN)/config.yml with transmit/digipeat disabled."
+	@set -eu; umask 077; \
+	  tmp=$$(mktemp "$(GOBIN)/.sparky-config-init.XXXXXXXX") || exit 1; \
+	  trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
+	  cat config.yml.example > "$$tmp"; \
+	  chmod 600 "$$tmp"; \
+	  if ! ln "$$tmp" "$(GOBIN)/config.yml"; then \
+	    echo "Configuration not created: $(GOBIN)/config.yml exists or cannot be created" >&2; exit 1; \
+	  fi
+	@echo "Created $(GOBIN)/config.yml with iGate/transmit/digipeat disabled."
 	@echo "Edit station-callsign and receive settings before starting Sparky."
 
 clean:
