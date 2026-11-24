@@ -38,6 +38,9 @@ jobs:
             -e "s|{{SERVICE_USER}}|$(id -un)|g" \
             sparky-config.service.template > /tmp/sparky-config-ci.service
         ! grep -q '{{' /tmp/sparky-config-ci.service
+        make -n install-config-service > /tmp/sparky-config-make-dry-run.txt
+        grep -F 'sudo stat -c %a' /tmp/sparky-config-make-dry-run.txt
+        grep -F 'systemctl enable --now sparky-config.service' /tmp/sparky-config-make-dry-run.txt
 
     - name: Test
       run: go test -v ./...
