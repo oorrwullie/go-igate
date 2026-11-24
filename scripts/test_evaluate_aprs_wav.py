@@ -81,7 +81,9 @@ class ReplayTests(unittest.TestCase):
         self.assertTrue(output.is_file())
         self.expected.write_text("OTHER>APRS:>not-present\n", encoding="utf-8")
         self.assertEqual(evaluator.main(good), 1)
-        self.assertEqual(evaluator.main(good + ["--timeout", "-1"]), 2)
+        with self.assertRaises(SystemExit) as raised:
+            evaluator.main(good + ["--timeout", "-1"])
+        self.assertEqual(raised.exception.code, 2)
 
     def test_missing_audio_or_empty_ground_truth(self):
         self.expected.write_text("", encoding="utf-8")
