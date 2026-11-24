@@ -19,7 +19,7 @@ const editHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><me
 <label><input type="checkbox" name="adsb" {{if .Values.ADSB}}checked{{end}}> map.flights ADS-B forwarding</label>
 </section><button type="submit">Save Changes</button></form>
 {{if .RestartEnabled}}
-<section class="card"><h2>03 // Service restart</h2><p class="info">Saving does not apply configuration. Restarting interrupts Sparky briefly and may disrupt active RF and network operations.</p>
+<section class="card" id="restart"><h2>03 // Service restart</h2><p class="info">Saving does not apply configuration. Restarting interrupts Sparky briefly and may disrupt active RF and network operations.</p>
 <form method="post" action="/restart"><input type="hidden" name="csrf" value="{{.Token}}">
 <label><input type="checkbox" name="confirm" value="restart" required> I understand this will restart the running Sparky service</label>
 <button type="submit">Restart Sparky</button></form></section>

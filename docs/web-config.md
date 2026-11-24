@@ -1,5 +1,8 @@
 # Web configuration — implementation notes
 
+> **Historical implementation note:** this document describes an earlier incremental UI stage, not the current feature set. For shipped behavior, setup, authentication, restart, and live status, use the [operator quick start](operator-quickstart.md).
+
+
 The approved Stage 4 interface is a dark terminal-inspired Go web UI. This
 first slice contains **only** the configuration-file storage primitive; it
 does not expose an HTTP listener, render the interface, or restart the service.

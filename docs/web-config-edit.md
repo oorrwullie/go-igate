@@ -1,5 +1,8 @@
 # Web configuration: first structured editor
 
+> **Historical implementation note:** this document describes an earlier incremental UI stage, not the current feature set. For shipped behavior, setup, authentication, restart, and live status, use the [operator quick start](operator-quickstart.md).
+
+
 This slice adds `/edit` to the standalone `sparky-config` interface from PR #46.
 It is not started by the normal Sparky service.
 
