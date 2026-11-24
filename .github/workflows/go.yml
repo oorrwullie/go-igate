@@ -52,6 +52,9 @@ jobs:
           exit 1
         fi
 
+    - name: Test safe first-run setup
+      run: bash scripts/test-init-config.sh
+
     - name: Test
       run: go test -v ./...
 
