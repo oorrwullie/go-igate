@@ -1,0 +1,22 @@
+[Unit]
+Description=Sparky Configuration UI
+Documentation=https://github.com/oorrwullie/sparky
+After=network.target
+
+[Service]
+Type=simple
+User={{SERVICE_USER}}
+WorkingDirectory={{WORKING_DIRECTORY}}
+EnvironmentFile=/etc/sparky/config-ui.env
+ExecStart={{EXEC_START}} --config {{WORKING_DIRECTORY}}config.yml --listen 127.0.0.1:8080
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Config YAML remains writable by the service account. The installer does not
+# grant broader privileges or enable web-triggered restart.
+
+[Install]
+WantedBy=multi-user.target
