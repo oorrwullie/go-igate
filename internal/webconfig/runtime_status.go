@@ -5,6 +5,7 @@ import (
  "errors"
  "fmt"
  "io"
+ "math"
  "net"
  "net/http"
  "net/url"
@@ -49,7 +50,7 @@ func (s *Server) runtimeStatus(ctx context.Context) runtimeStatus {
  if client==nil{
   client=&http.Client{
    Timeout:400*time.Millisecond,
-   Transport:&http.Transport{Proxy:nil},
+   Transport:&http.Transport{Proxy:nil,DisableKeepAlives:true},
    CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse},
   }
  }
@@ -75,7 +76,7 @@ func (s *Server) runtimeStatus(ctx context.Context) runtimeStatus {
  }
  if values["sparky_ready"]!="0"&&values["sparky_ready"]!="1"{return result}
  seconds,err:=strconv.ParseFloat(values["sparky_uptime_seconds"],64)
- if err!=nil||seconds<0||seconds>1e12{return result}
+ if err!=nil||math.IsNaN(seconds)||math.IsInf(seconds,0)||seconds<0||seconds>1e12{return result}
  delivered,err:=strconv.ParseUint(values["sparky_pubsub_deliveries_total"],10,64)
  if err!=nil{return result}
  dropped,err:=strconv.ParseUint(values["sparky_pubsub_dropped_deliveries_total"],10,64)
