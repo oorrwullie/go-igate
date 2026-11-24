@@ -28,6 +28,17 @@ jobs:
     - name: Build
       run: go build -v ./...
 
+    - name: Verify gateway and companion UI build
+      run: |
+        make build
+        test -x bin/sparky
+        test -x bin/sparky-config
+        sed -e "s|{{WORKING_DIRECTORY}}|$PWD/bin/|g" \
+            -e "s|{{EXEC_START}}|$PWD/bin/sparky-config|g" \
+            -e "s|{{SERVICE_USER}}|$(id -un)|g" \
+            sparky-config.service.template > /tmp/sparky-config-ci.service
+        ! grep -q '{{' /tmp/sparky-config-ci.service
+
     - name: Test
       run: go test -v ./...
 
