@@ -1,5 +1,8 @@
 # Stage 4, slice 2: read-only terminal-style preview
 
+> **Historical implementation note:** this document describes an earlier incremental UI stage, not the current feature set. For shipped behavior, setup, authentication, restart, and live status, use the [operator quick start](operator-quickstart.md).
+
+
 Run `go run ./cmd/sparky-config --config ./config.yml` from the installation
 working directory, then browse to `http://127.0.0.1:8080/` **on that machine**.
 For remote administration, use an SSH local port forward instead of exposing
