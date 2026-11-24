@@ -122,6 +122,14 @@ func setEditable(node *yaml.Node,path []string,value,tag string)error{
 func validationFeedback(err error) string {
  if err==nil {return ""}
  msg:=err.Error()
+ // Store.Save wraps parser errors with this prefix. Filesystem failures may
+ // include configuration-shaped text in paths; never interpret those as
+ // validation failures or leak their details.
+ constPrefix:="invalid configuration: "
+ if !strings.HasPrefix(msg,constPrefix) {
+  return "Configuration rejected or could not be saved. Inspect YAML and server logs; no successful save was reported."
+ }
+ msg=strings.TrimPrefix(msg,constPrefix)
  switch {
  case strings.Contains(msg,"transmitter audio-level"):
   return "Audio level must be between 0 and 1. No changes were saved."
