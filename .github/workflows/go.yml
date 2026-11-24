@@ -37,7 +37,10 @@ jobs:
             -e "s|{{EXEC_START}}|$PWD/bin/sparky-config|g" \
             -e "s|{{SERVICE_USER}}|$(id -un)|g" \
             sparky-config.service.template > /tmp/sparky-config-ci.service
-        ! grep -q '{{' /tmp/sparky-config-ci.service
+        if grep -q '{{' /tmp/sparky-config-ci.service; then
+          echo "Unrendered systemd template placeholders" >&2
+          exit 1
+        fi
         make -n install-config-service > /tmp/sparky-config-make-dry-run.txt
         grep -F 'sudo stat -c %a' /tmp/sparky-config-make-dry-run.txt
         grep -F 'systemctl enable --now sparky-config.service' /tmp/sparky-config-make-dry-run.txt
