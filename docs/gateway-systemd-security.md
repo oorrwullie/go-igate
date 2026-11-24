@@ -13,8 +13,10 @@ Only fixed unit installation and service management use `sudo`.
 
 1. Create a dedicated non-root account or choose an existing limited account.
    Run build and installation *as that account*, not with `sudo make`.
-   Confirm the account has permission to access its chosen SDR/serial/audio
-   devices; do not put the gateway in the `root` group.
+   The installer checks discoverable RTL-SDR USB and ALSA PCM permissions for
+   the configured backend **before installing the unit**. Missing access
+   stops installation and prints device-specific diagnostic commands. Do not
+   put the gateway in the `root` group.
 2. Configure `bin/config.yml` with your station identity and receive backend.
    `make init-config` (once available from PR #56) copies a non-overwriting
    receive-only sample. For older revisions, create/review the file manually.
@@ -44,6 +46,44 @@ executables and the configuration file; write access to it is broader than
 ideal. We retain that model for compatibility with existing cache/config
 semantics. A future dedicated config/state layout can reduce the writable
 surface after separate migration and hardware tests.
+
+## Device access preflight and safe fixes
+
+The installer uses `go run ./cmd/sparky-device-check --config bin/config.yml`
+**as the intended non-root service user**, before any privileged unit writes.
+The check follows Sparky's configured receive selection (OpenWebRX+ MQTT,
+sound-card capture, or RTL-SDR), and checks sound-card output when TX is
+enabled. It detects common RTL-SDR Realtek USB IDs, tests the discovered
+`/dev/bus/usb` nodes for read/write access and checks for accessible ALSA
+PCM device nodes when needed. Missing hardware or failed access stops
+installation with suggestions. Run the same preflight manually after
+changing group membership or connecting hardware:
+
+```sh
+go run ./cmd/sparky-device-check --config bin/config.yml
+id -nG
+lsusb
+ls -l /dev/bus/usb/*/* /dev/snd/pcm* 2>/dev/null
+```
+
+Some RTL-SDR variants use different USB identifiers; if one is present but
+the preflight does not recognize it, inspect `lsusb`, the device's udev rule,
+and the `rtl_test` result before adjusting the device check. The checker
+does not mutate udev rules, groups or ACLs. **Never** use unrestricted
+`chmod 666`, blanket USB access, or run the gateway as root to get around
+a failed check. If a detected node belongs to a narrowly scoped device
+group (for example `plugdev`, `audio`, or `dialout`), an administrator
+can grant access to that group *after reviewing the device scope*, then
+fully log out and log back in. The script prints an example when applicable.
+
+**Important limit:** readable/writable node permissions are a necessary
+preflight, not a guarantee that an SDR driver will claim the interface or
+that PortAudio selects the desired card. Desktop-session ACLs may be absent
+under a headless systemd service even when the interactive login works.
+Hardware and audio/PTT acceptance must be tested with the **actual service
+account**, not only on the developer workstation. No serial/PTT device path
+is available in the current YAML for a reliable automatic serial probe;
+those require a specific deployment check.
 
 ## Existing installations: no silent migration
 
