@@ -92,7 +92,7 @@ See [restart permissions and supported supervisors](web-config-restart.md).
 The gateway can enable a loopback metrics listener via its environment:
 
 ```sh
-SPARKY_OBSERVABILITY_ADDR=127.0.0.1:9091 ./bin/sparky
+(cd bin && SPARKY_OBSERVABILITY_ADDR=127.0.0.1:9091 ./sparky)
 ```
 
 Launch the UI with an additional flag:
