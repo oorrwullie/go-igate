@@ -3,6 +3,7 @@ package webconfig
 import (
  "bytes"
  "crypto/rand"
+ _ "embed"
  "crypto/subtle"
  "encoding/hex"
  "errors"
@@ -15,6 +16,9 @@ import (
  "github.com/oorrwullie/sparky/internal/configeditor"
  "gopkg.in/yaml.v3"
 )
+
+//go:embed editor.js
+var editorScript []byte
 
 var editTemplate=template.Must(template.New("edit").Parse(editHTML))
 type editValues struct{ Callsign string; IGate, Digipeater, SDR, Transmitter, MQTT, ADSB bool }
@@ -66,15 +70,17 @@ func (s *Server) saveEdit(w http.ResponseWriter,r *http.Request,token []byte) {
  _,err=s.Store.Save(candidate,revision)
  if errors.Is(err,configeditor.ErrConflict){http.Error(w,"Configuration changed; reload",409);return}
  if errors.Is(err,configeditor.ErrDurability){http.Error(w,"Configuration saved, but filesystem durability is unconfirmed; inspect before restarting",500);return}
- if err!=nil{http.Error(w,"Configuration rejected or save failed; check server logs",400);return}
+ if err!=nil{
+  http.Error(w,validationFeedback(err),http.StatusBadRequest)
+  return
+ }
  http.Redirect(w,r,"/edit?saved=1",http.StatusSeeOther)
 }
 func patchEditable(original []byte,v editValues)([]byte,error){
  var root yaml.Node
  decoder:=yaml.NewDecoder(bytes.NewReader(original))
  if err:=decoder.Decode(&root);err!=nil{return nil,err}
- // Unmarshal reads only the first document; reject any additional documents
- // instead of silently dropping unrelated operator configuration.
+ // Avoid dropping any later YAML documents while editing the first.
  var extra yaml.Node
  if err:=decoder.Decode(&extra);err!=io.EOF{
   if err!=nil{return nil,err}
@@ -109,12 +115,9 @@ func setEditable(node *yaml.Node,path []string,value,tag string)error{
   }
   if i==len(path)-1{
    if child.Kind!=0 && child.Kind!=yaml.ScalarNode{return errors.New("editable field must be scalar")}
-   // Alias consumers of an anchored ancestor mapping must not change.
    if anchoredAncestor && (child.Kind==0 || child.Value!=value || child.Tag!=tag) {
     return errors.New("cannot modify setting under anchored YAML mapping")
    }
-   // An anchor can be referenced by unrelated YAML fields. Changing its
-   // underlying node would silently edit every alias consumer as well.
    if child.Anchor!="" && (child.Value!=value || child.Tag!=tag) {
     return errors.New("cannot modify anchored setting through web editor")
    }
@@ -125,4 +128,36 @@ func setEditable(node *yaml.Node,path []string,value,tag string)error{
   }
  }
  return nil
+}
+
+// validationFeedback maps known, non-secret validation errors to actionable
+// public messages. Never send arbitrary parser/storage error strings to HTML:
+// they can include user-controlled YAML scalars or filesystem paths.
+func validationFeedback(err error) string {
+ if err==nil {return ""}
+ msg:=err.Error()
+ // Store.Save wraps parser errors with this prefix. Filesystem failures may
+ // include configuration-shaped text in paths; never interpret those as
+ // validation failures or leak their details.
+ constPrefix:="invalid configuration: "
+ if !strings.HasPrefix(msg,constPrefix) {
+  return "Configuration rejected or could not be saved. Inspect YAML and server logs; no successful save was reported."
+ }
+ msg=strings.TrimPrefix(msg,constPrefix)
+ switch {
+ case strings.Contains(msg,"transmitter audio-level"):
+  return "Audio level must be between 0 and 1. No changes were saved."
+ case strings.Contains(msg,"map-flights requires"):
+  return "map.flights requires OpenWebRX MQTT input. Enable MQTT or disable map.flights. No changes were saved."
+ case strings.Contains(msg,"map-flights.station and map-flights.key"):
+  return "map.flights requires station ID and API key in config.yml before it can be enabled. No changes were saved."
+ case strings.Contains(msg,"map-flights.topic"):
+  return "map.flights MQTT topic must be a specific topic, not a wildcard. No changes were saved."
+ case strings.Contains(msg,"map-flights.broker"):
+  return "map.flights requires an SSL broker URL. No changes were saved."
+ case strings.Contains(msg,"openwebrx-mqtt.embedded-broker.listen-address"):
+  return "The embedded MQTT broker must listen on a valid loopback address. No changes were saved."
+ default:
+  return "Configuration rejected or could not be saved. Inspect YAML and server logs; no successful save was reported."
+ }
 }

@@ -62,9 +62,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   return
  }
  if !s.authorized(w,r) {return}
+ if r.URL.Path == "/assets/editor.js" {
+  if r.Method!=http.MethodGet && r.Method!=http.MethodHead {
+   w.Header().Set("Allow","GET, HEAD")
+   http.Error(w,"Method not allowed",http.StatusMethodNotAllowed)
+   return
+  }
+  w.Header().Set("Content-Type","text/javascript; charset=utf-8")
+  if r.Method==http.MethodGet {_,_=w.Write(editorScript)}
+  return
+ }
  if r.URL.Path == "/edit" {
   w.Header().Set("Referrer-Policy", "same-origin")
-  w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+  w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
   if s == nil || s.Store == nil {http.Error(w,"Configuration unavailable",503);return}
   s.serveEdit(w,r)
   return

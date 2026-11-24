@@ -22,7 +22,7 @@ h1{font-size:25px;color:var(--green);margin:4px 0 0}h2{font-size:15px;color:var(
 <div class="actions"><a href="/edit" style="padding:9px 14px;border:1px solid var(--cyan);border-radius:5px">Edit settings</a><button disabled title="Saving is available on the Edit settings page">Save Changes</button><button disabled title="Service restart will be enabled in a later stage">Restart Service</button></div></header>
 <div class="layout">
 <nav aria-label="Sections"><a href="#overview" class="selected">~/ overview</a><a href="#aprs"># APRS / iGate</a><a href="#receive"># Receive</a><a href="#mqtt"># MQTT / ADS-B</a><a href="#system"># System</a></nav>
-<main><h1 id="overview">$ sparky config --inspect</h1><p>Live configuration snapshot. Editing and restart controls are intentionally unavailable in this first slice.</p>
+<main><h1 id="overview">$ sparky config --inspect</h1><p>Saved configuration snapshot. Use Edit settings to change supported values; restart remains a separate action.</p>
 <section class="card" id="aprs"><h2>01 // Station &amp; APRS</h2><div class="grid">
 <div class="field"><small>Callsign</small><div class="value">{{.Callsign}}</div></div>
 <div class="field"><small>iGate</small><div class="value">{{if .IGate}}ENABLED{{else}}DISABLED{{end}}</div></div>
@@ -39,5 +39,5 @@ h1{font-size:25px;color:var(--green);margin:4px 0 0}h2{font-size:15px;color:var(
 <div class="field"><small>MQTT APRS topic</small><div class="value">{{.MQTTTopic}}</div></div>
 <div class="field"><small>map.flights forwarding</small><div class="value">{{if .ADSB}}ENABLED{{else}}DISABLED{{end}}</div></div>
 </div></section></main>
-<aside id="system"><section class="card"><h2>// system status</h2><div class="status"><b>● READ-ONLY PREVIEW</b></div><p class="note">Values are read from config.yml on every request. No writes or service actions are exposed.</p><p class="note">Credentials, passcodes and API keys are intentionally omitted.</p></section><section class="card"><h2>// operations</h2><p class="note">Next: validated forms, safe save, and separately authorized service restart.</p></section></aside>
+<aside id="system"><section class="card"><h2>// system status</h2><div class="status"><b>● CONFIGURATION ON DISK</b></div><p class="note">Values are read from the YAML file on every request. Edit settings can save changes; this page never restarts Sparky.</p><p class="note">Credentials, passcodes and API keys are intentionally omitted.</p></section><section class="card"><h2>// operations</h2><p class="note">Settings can be edited on the protected editor page. Service restart is deliberately not available yet.</p></section></aside>
 </div></body></html>`
