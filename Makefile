@@ -49,6 +49,7 @@ install-service:
 	@test -f "$(GOBIN)/config.yml" && test ! -L "$(GOBIN)/config.yml" && test -r "$(GOBIN)/config.yml" || { echo "Missing, unreadable or symlinked bin/config.yml; initialize and review it first" >&2; exit 1; }
 	@test -w "$(GOBIN)" || { echo "Gateway account needs write access to the existing working directory for its cache" >&2; exit 1; }
 	@sudo test ! -e /etc/systemd/system/$(SERVICE_FILE) && sudo test ! -L /etc/systemd/system/$(SERVICE_FILE) || { echo "Existing gateway unit: review and migrate it manually; refusing to overwrite" >&2; exit 1; }
+	@! sudo systemctl cat $(SERVICE_FILE) >/dev/null 2>&1 || { echo "Existing gateway systemd unit found in unit search paths; review migration manually" >&2; exit 1; }
 	@echo "Installing new gateway service as $(GATEWAY_SERVICE_USER) (journal logs; no root runtime)"
 	@sed -e 's|{{WORKING_DIRECTORY}}|$(GOBIN)/|g' \
 	     -e 's|{{EXEC_START}}|$(GOBIN)/$(BINARY_NAME)|g' \
