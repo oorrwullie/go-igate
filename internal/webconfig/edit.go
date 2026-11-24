@@ -22,7 +22,7 @@ var editorScript []byte
 
 var editTemplate=template.Must(template.New("edit").Parse(editHTML))
 type editValues struct{ Callsign string; IGate, Digipeater, SDR, Transmitter, MQTT, ADSB bool }
-type editData struct{ Values editValues; Revision, Token string; Saved bool }
+type editData struct{ Values editValues; Revision, Token string; Saved, RestartEnabled bool }
 
 // A single random CSRF token belongs to each independently running editor.
 // Basic authentication is required for both reading and saving the edit form.
@@ -44,7 +44,7 @@ func (s *Server) serveEdit(w http.ResponseWriter,r *http.Request) {
  cfg,err:=config.ParseConfigBytes(bytes)
  if err!=nil{http.Error(w,"Configuration invalid",503);return}
  data:=editData{
-  Revision:revision,Token:hex.EncodeToString(token),Saved:r.URL.Query().Get("saved")=="1",
+  Revision:revision,Token:hex.EncodeToString(token),Saved:r.URL.Query().Get("saved")=="1",RestartEnabled:s.RestartService!=nil,
   Values:editValues{cfg.StationCallsign,cfg.IGate.Enabled,cfg.DigipeaterEnabled,cfg.Sdr.Enabled,cfg.Transmitter.Enabled,cfg.OpenWebRXMQTT.Enabled,cfg.MapFlights.Enabled},
  }
  w.Header().Set("Content-Type","text/html; charset=utf-8")

@@ -6,7 +6,7 @@ const editHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><me
 .status{font-size:12px;letter-spacing:.06em;color:#7ce6f4}
 :focus-visible{outline:2px solid #7ce6f4;outline-offset:3px}
 </style><script src="/assets/editor.js" defer></script></head><body><header><h1>&gt;_ SPARKY / CONFIG EDITOR</h1><a href="/">Overview</a></header><main>
-{{if .Saved}}<p class="success" role="status">[OK] Configuration saved to disk.</p><div class="restart" role="status">[!] RESTART REQUIRED — Changes will not take effect until Sparky is restarted. Restart Service is not yet available here.</div>{{end}}
+{{if .Saved}}<p class="success" role="status">[OK] Configuration saved to disk.</p><div class="restart" role="status">[!] RESTART REQUIRED — Changes will not take effect until Sparky is restarted. Use the separately confirmed restart operation below when enabled.</div>{{end}}
 <p class="status">CONFIGURATION // PERSISTENT YAML</p><p class="info">Only selected settings can be edited. Advanced fields, YAML comments, and credentials are retained. Saving never restarts the service.</p>
 <form method="post" action="/edit" data-dirty-check><input type="hidden" name="csrf" value="{{.Token}}"><input type="hidden" name="revision" value="{{.Revision}}">
 <section class="card"><h2>01 // Station identity</h2><label for="callsign">Callsign</label><input id="callsign" name="callsign" type="text" maxlength="32" value="{{.Values.Callsign}}"></section>
@@ -17,4 +17,11 @@ const editHTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><me
 <label><input type="checkbox" name="transmitter" {{if .Values.Transmitter}}checked{{end}}> Sound-card transmitter</label>
 <label><input type="checkbox" name="mqtt" {{if .Values.MQTT}}checked{{end}}> OpenWebRX+ MQTT input</label>
 <label><input type="checkbox" name="adsb" {{if .Values.ADSB}}checked{{end}}> map.flights ADS-B forwarding</label>
-</section><button type="submit">Save Changes</button><p class="info">Restart Service will be enabled in a separately reviewed change.</p></form></main></body></html>`
+</section><button type="submit">Save Changes</button></form>
+{{if .RestartEnabled}}
+<section class="card"><h2>03 // Service restart</h2><p class="info">Saving does not apply configuration. Restarting interrupts Sparky briefly and may disrupt active RF and network operations.</p>
+<form method="post" action="/restart"><input type="hidden" name="csrf" value="{{.Token}}">
+<label><input type="checkbox" name="confirm" value="restart" required> I understand this will restart the running Sparky service</label>
+<button type="submit">Restart Sparky</button></form></section>
+{{else}}<p class="info">Restart is disabled. The operator must explicitly enable the fixed-target service manager adapter.</p>{{end}}
+</main></body></html>`

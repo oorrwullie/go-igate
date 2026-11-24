@@ -2,6 +2,7 @@
 package webconfig
 
 import (
+ "context"
  "crypto/sha256"
  "crypto/subtle"
  "crypto/tls"
@@ -14,6 +15,7 @@ import (
  "os"
  "strings"
  "sync"
+ "sync/atomic"
  "time"
 
  "github.com/oorrwullie/sparky/internal/config"
@@ -25,6 +27,9 @@ type Server struct {
  // MetricsURL is a read-only loopback O11y endpoint fixed at startup.
  MetricsURL string
  MetricsClient *http.Client
+ // RestartService is an explicitly enabled fixed-target operation. Nil disables it.
+ RestartService func(context.Context) error
+ restartInFlight atomic.Bool
  // PublicOrigin is the browser-visible HTTPS origin (for example,
  // https://sparky.example.org). Forwarded-* headers are never trusted.
  PublicOrigin string
@@ -74,6 +79,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
   }
   w.Header().Set("Content-Type","text/javascript; charset=utf-8")
   if r.Method==http.MethodGet {_,_=w.Write(editorScript)}
+  return
+ }
+ if r.URL.Path == "/restart" {
+  w.Header().Set("Referrer-Policy","same-origin")
+  w.Header().Set("Content-Security-Policy","default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+  s.serveRestart(w,r)
   return
  }
  if r.URL.Path == "/edit" {
@@ -253,17 +264,26 @@ func (s *Server) listen(addr,certFile,keyFile string) error {
  }
  listener,err:=net.Listen("tcp",addr)
  if err!=nil {return err}
- httpServer:=&http.Server{
-  Handler:s,
-  ReadHeaderTimeout:5*time.Second,
-  ReadTimeout:10*time.Second,
-  WriteTimeout:10*time.Second,
-  IdleTimeout:30*time.Second,
-  MaxHeaderBytes:1<<16,
- }
+ httpServer:=newHTTPServer(s)
  if secure {
   httpServer.TLSConfig=&tls.Config{MinVersion:tls.VersionTLS12,Certificates:[]tls.Certificate{cert}}
   return httpServer.ServeTLS(listener,"","")
  }
  return httpServer.Serve(listener)
+}
+
+// newHTTPServer preserves the short default timeout for read-only/edit traffic.
+// An enabled restart adapter can take up to 15 seconds, so the socket write
+// deadline must include that operation plus request/response overhead.
+func newHTTPServer(s *Server)*http.Server{
+ writeTimeout:=10*time.Second
+ if s!=nil && s.RestartService!=nil {writeTimeout=25*time.Second}
+ return &http.Server{
+  Handler:s,
+  ReadHeaderTimeout:5*time.Second,
+  ReadTimeout:10*time.Second,
+  WriteTimeout:writeTimeout,
+  IdleTimeout:30*time.Second,
+  MaxHeaderBytes:1<<16,
+ }
 }
