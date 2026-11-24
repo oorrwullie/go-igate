@@ -3,12 +3,14 @@
 # Notes: This file is written in YAML format. For more information on YAML, see https://yaml.org/
 
 
-# call-sign of the Sparky iGate (including SSID) - e.g. "N0CALL-10"
+# REQUIRED before normal station operation: your licensed callsign and SSID, e.g. "N0CALL-10".
+# Sample intentionally leaves this blank. Do not transmit or gate as N0CALL.
 station-callsign: ""
 # size of in-memory cache for keeping track of received packets
 cache-size: 1000
-# set to true if you want to use the digipeater
-enable-digipeater: true
+# Transmits received frames when enabled. Off for first-run safety.
+# Enable only after configuring a radio, PTT and local operating policy.
+enable-digipeater: false
 # digipeater configuration mimics Direwolf defaults; adjust for local policy
 digipeater:
   alias-patterns:
@@ -76,8 +78,9 @@ multimon:
   # log sound-card capture levels and decoder input bytes every 15 seconds
   receive-diagnostics: false
 transmitter:
-  # enabled: set to true to enable tx functionality
-  enabled: true
+  # RF output is OFF by default. Configure and verify radio/PTT/audio
+  # hardware and legal operating requirements before enabling TX.
+  enabled: false
   # baud rate of serial connection to the radio
   baud-rate: 1200
   # time to wait for serial connection to the radio
