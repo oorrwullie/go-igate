@@ -39,5 +39,14 @@ h1{font-size:25px;color:var(--green);margin:4px 0 0}h2{font-size:15px;color:var(
 <div class="field"><small>MQTT APRS topic</small><div class="value">{{.MQTTTopic}}</div></div>
 <div class="field"><small>map.flights forwarding</small><div class="value">{{if .ADSB}}ENABLED{{else}}DISABLED{{end}}</div></div>
 </div></section></main>
-<aside id="system"><section class="card"><h2>// system status</h2><div class="status"><b>● CONFIGURATION ON DISK</b></div><p class="note">Values are read from the YAML file on every request. Edit settings can save changes; this page never restarts Sparky.</p><p class="note">Credentials, passcodes and API keys are intentionally omitted.</p></section><section class="card"><h2>// operations</h2><p class="note">Settings can be edited on the protected editor page. Service restart is deliberately not available yet.</p></section></aside>
+<aside id="system"><section class="card"><h2>// live gateway</h2>
+{{if not .Status.Enabled}}<p class="note">Runtime metrics not configured. Showing saved settings only.</p>
+{{else if not .Status.Available}}<p class="note">Gateway runtime status unavailable. Saved settings remain accessible.</p>
+{{else}}
+<div class="status"><b>{{if .Status.Ready}}● READY{{else}}○ NOT READY{{end}}</b></div>
+<div class="field"><small>Uptime</small><div class="value">{{.Status.Uptime}}</div></div>
+<div class="field"><small>Subscriber deliveries</small><div class="value">{{.Status.Delivered}}</div></div>
+<div class="field"><small>Dropped deliveries</small><div class="value">{{.Status.Dropped}}</div></div>
+<p class="note">Counts are queue deliveries, not unique RF frames. Snapshot on page load; no radio-path sampling.</p>
+{{end}}</section><section class="card"><h2>// system status</h2><div class="status"><b>● CONFIGURATION ON DISK</b></div><p class="note">Values are read from the YAML file on every request. Edit settings can save changes; this page never restarts Sparky.</p><p class="note">Credentials, passcodes and API keys are intentionally omitted.</p></section><section class="card"><h2>// operations</h2><p class="note">Settings can be edited on the protected editor page. Service restart is deliberately not available yet.</p></section></aside>
 </div></body></html>`

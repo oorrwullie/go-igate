@@ -22,6 +22,9 @@ import (
 
 type Server struct {
  Store *configeditor.Store
+ // MetricsURL is a read-only loopback O11y endpoint fixed at startup.
+ MetricsURL string
+ MetricsClient *http.Client
  // PublicOrigin is the browser-visible HTTPS origin (for example,
  // https://sparky.example.org). Forwarded-* headers are never trusted.
  PublicOrigin string
@@ -37,6 +40,7 @@ type Server struct {
 }
 
 type view struct {
+ Status runtimeStatus
  Callsign string
  SDR bool
  SDRFrequency string
@@ -105,6 +109,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  w.Header().Set("Content-Type","text/html; charset=utf-8")
  if r.Method == http.MethodHead {return}
  data:=view{
+  Status:s.runtimeStatus(r.Context()),
   Callsign:cfg.StationCallsign, SDR:cfg.Sdr.Enabled,
   SDRFrequency:cfg.Sdr.Frequency,IGate:cfg.IGate.Enabled,
   APRSIS:cfg.IGate.Aprsis.Enabled,Digipeater:cfg.DigipeaterEnabled,
