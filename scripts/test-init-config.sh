@@ -56,27 +56,3 @@ fi
 test ! -e "$tmp/no-source/bin/config.yml"
 
 echo "first-run config creation, permissions and no-clobber tests passed"
- "$dest/config.yml"
-awk '/^igate:/{flag=1;next} flag && /^  enabled:/{exit ($2=="false")?0:1}' "$dest/config.yml"
-awk '/^transmitter:/{flag=1;next} flag && /^  enabled:/{exit ($2=="false")?0:1}' "$dest/config.yml"
-
-# Refuse a second initialization and preserve the initial file byte-for-byte.
-printf '\n# operator configuration\n' >> "$dest/config.yml"
-cp "$dest/config.yml" "$tmp/preserved"
-if make -s -C "$repo_root" init-config GOBIN="$dest" > "$tmp/output" 2>&1; then
-  echo "init-config overwrote an existing config" >&2
-  exit 1
-fi
-cmp "$tmp/preserved" "$dest/config.yml"
-
-# Refuse an existing symlink, even if it points to a writable target.
-mkdir "$tmp/symlink-bin"
-printf 'SENTINEL\n' > "$tmp/target"
-ln -s "$tmp/target" "$tmp/symlink-bin/config.yml"
-if make -s -C "$repo_root" init-config GOBIN="$tmp/symlink-bin" > "$tmp/output" 2>&1; then
-  echo "init-config wrote through a symlink" >&2
-  exit 1
-fi
-test "$(cat "$tmp/target")" = SENTINEL
-
-echo "first-run config creation, permissions and no-clobber tests passed"
