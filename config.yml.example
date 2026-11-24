@@ -95,8 +95,9 @@ transmitter:
   # Set false to use the PortAudio stream for both input and output.
   use-aplay: true
 igate:
-  # enabled: set to true to enable Sparky to act as an iGate.
-  enabled: true
+  # Start receive-only: enabling parent iGate currently initializes APRS-IS
+  # even when aprsis.enabled is false; configure station passcode first.
+  enabled: false
   # enable APRS-IS message gating to stations recently heard directly on RF.
   # This requires a transmitter and uses third-party packet format.
   message-gating: false
