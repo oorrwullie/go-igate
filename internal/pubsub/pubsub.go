@@ -13,6 +13,7 @@ type PubSub struct {
 	mu          sync.Mutex
 	subscribers []chan string
 	dropped     atomic.Uint64
+	published   atomic.Uint64
 	closed      bool
 }
 
@@ -48,11 +49,16 @@ func (p *PubSub) Publish(msg string) {
 	for _, ch := range p.subscribers {
 		select {
 		case ch <- msg:
+			p.published.Add(1)
 		default:
 			p.dropped.Add(1)
 		}
 	}
 }
+
+// Published counts admitted subscriber deliveries, not unique RF packets.
+// This metric uses a single atomic increment without any observer I/O.
+func (p *PubSub) Published() uint64 { return p.published.Load() }
 
 // Drops counts individual failed deliveries to subscribers due to full queues.
 func (p *PubSub) Drops() uint64 {
