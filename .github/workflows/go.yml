@@ -55,5 +55,8 @@ jobs:
     - name: Test
       run: go test -v ./...
 
+    - name: Test offline WAV replay evaluator
+      run: python3 -m unittest discover -s scripts -p 'test_evaluate_aprs_wav.py' -v
+
     - name: Test with race detector
       run: go test -race -v ./...
