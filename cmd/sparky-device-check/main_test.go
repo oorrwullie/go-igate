@@ -115,3 +115,15 @@ func mustNum(t *testing.T,s string)int{
  if err!=nil{t.Fatal(err)}
  return n
 }
+
+func TestSelectedRTLNumericSerialFallback(t *testing.T) {
+ root := t.TempDir()
+ fakeRTLTuner(t, root, "1-1", "12345678", "1", "1", true)
+ fakeRTLTuner(t, root, "1-2", "99877885", "1", "2", false)
+ c := deviceConfig(t, "sdr:\n  enabled: true\n  device: \"99877885\"\n")
+ r := checkDevices(c, filepath.Join(root, "sys"), filepath.Join(root, "dev"))
+ if len(r.errors)!=1 || !strings.Contains(r.errors[0], "not a device node") { t.Fatalf("selected numeric serial not checked: %+v", r) }
+ c.Sdr.Device = "12345678"
+ r = checkDevices(c, filepath.Join(root, "sys"), filepath.Join(root, "dev"))
+ if len(r.errors)!=0 || len(r.warnings)!=0 { t.Fatalf("accessible numeric serial rejected: %+v", r) }
+}
