@@ -18,6 +18,7 @@ import (
 	"github.com/oorrwullie/sparky/internal/cache"
 	"github.com/oorrwullie/sparky/internal/config"
 	"github.com/oorrwullie/sparky/internal/log"
+	"github.com/oorrwullie/sparky/internal/observability"
 	"github.com/oorrwullie/sparky/internal/pubsub"
 )
 
@@ -37,6 +38,9 @@ type MQTT struct {
 	stopOnce         sync.Once
 	workers          sync.WaitGroup
 	adsbStats        adsbForwardStats
+	Reception observability.Reception
+	inputConnected atomic.Bool
+	externalInput bool
 }
 
 func (m *MQTT) setMapFlightsClient(client mapFlightsPublisher) {
@@ -83,6 +87,7 @@ func New(cfg config.OpenWebRXMQTT, mapFlights config.MapFlights, ps *pubsub.PubS
 		m.Stop()
 		return nil, fmt.Errorf("openwebrx-mqtt.broker is required when OpenWebRX+ MQTT input is enabled")
 	}
+	m.externalInput = true
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
 		SetClientID(fmt.Sprintf("sparky-%d", time.Now().UnixNano())).
@@ -90,6 +95,7 @@ func New(cfg config.OpenWebRXMQTT, mapFlights config.MapFlights, ps *pubsub.PubS
 		SetConnectRetry(true).
 		SetConnectRetryInterval(5 * time.Second).
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
+			m.inputConnected.Store(false)
 			logger.Warn("OpenWebRX+ MQTT connection lost: ", err)
 		}).
 		SetOnConnectHandler(m.subscriptionHandler())
@@ -145,6 +151,7 @@ func (m *MQTT) subscriptionHandler() mqtt.OnConnectHandler {
 		}
 	}()
 	return func(c mqtt.Client) {
+		m.inputConnected.Store(true)
 		select {
 		case connected <- c:
 		default:
@@ -207,6 +214,7 @@ func mqttTopicMatches(filter, topic string) bool {
 func (m *MQTT) Stop() {
 	if m != nil && m.client != nil {
 		m.client.Disconnect(250)
+		m.inputConnected.Store(false)
 	}
 	if m != nil && m.server != nil {
 		_ = m.server.Close()
@@ -278,4 +286,18 @@ func extractFrame(payload []byte) (string, error) {
 		return "", fmt.Errorf("invalid APRS source or destination")
 	}
 	return text, nil
+}
+
+func (m *MQTT) Operations() observability.Operations {
+	return observability.Operations{
+		RX: m.Reception.Snapshot(),
+		MQTTExternal: m.externalInput, MQTTConnected: m.inputConnected.Load(),
+		ADSBConfigured: m.mapFlights.Enabled,
+		ADSBReceived: m.adsbStats.received.Load(),
+		ADSBPublished: m.adsbStats.published.Load(),
+		ADSBFailed: m.adsbStats.publishFailed.Load(),
+		ADSBRejected: m.adsbStats.rejected.Load(),
+		ADSBOffline: m.adsbStats.offlineDropped.Load(),
+		ADSBDropped: m.adsbStats.dropped.Load(),
+	}
 }
