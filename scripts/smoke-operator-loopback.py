@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Live localhost admin-UI walkthrough: no SDR, TX, service writes, or network use.
+"""Live localhost admin-UI walkthrough: no SDR, TX, service writes, or external network use.
 
 This runs only against a throwaway config and a temporary loopback metrics
 server, exercising a *real* sparky-config binary in a subprocess.
@@ -105,10 +105,9 @@ def exercise(binary):
             encoding="utf-8",
         )
         path.chmod(0o600)
+        port = free_port()
         metrics = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MetricsHandler)
         thread = threading.Thread(target=metrics.serve_forever, daemon=True)
-        thread.start()
-        port = free_port()
         origin = "http://127.0.0.1:" + str(port)
         cmd = [
             str(Path(binary).resolve()), "--config", str(path),
@@ -116,17 +115,25 @@ def exercise(binary):
             "--metrics-url", "http://127.0.0.1:" + str(metrics.server_port) + "/metrics",
         ]
         env = dict(os.environ, SPARKY_CONFIG_PASSWORD=PASSWORD)
-        process = subprocess.Popen(
-            cmd, cwd=tmp, env=env,
-            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-        )
+        process = None
+        thread_started = False
         try:
-            # Readiness is an actual authenticated HTTP response, not a sleep.
+            thread.start()
+            thread_started = True
+            # A file avoids deadlocking on a full stderr pipe.
+            with open(Path(tmp) / "ui.stderr", "wb") as stderr:
+                process = subprocess.Popen(
+                    cmd, cwd=tmp, env=env,
+                    stdout=subprocess.DEVNULL, stderr=stderr,
+                )
+            # Require a response from a live child and verify authentication below.
             until = time.monotonic() + 12
             while True:
+                if process.poll() is not None:
+                    raise AssertionError("UI exited during startup")
                 try:
                     status, _, _ = request(port, "GET", "/", auth=False)
-                    if status == 401:
+                    if status == 401 and process.poll() is None:
                         break
                 except (ConnectionError, OSError):
                     pass
@@ -144,8 +151,13 @@ def exercise(binary):
                     "overview missing no-store")
             require("N0CALL" in body, "configured callsign not visible")
             require(SECRET not in body, "secret leaked into overview")
-            require("Subscriber deliveries" in body and "8" in body,
-                    "live metrics not shown")
+            for label, value in (("Subscriber deliveries", "8"), ("Dropped deliveries", "2")):
+                require(re.search(
+                    r'<small>\s*' + re.escape(label) +
+                    r'\s*</small>\s*<div class="value">\s*' +
+                    re.escape(value) + r'\s*</div>', body
+                ) is not None, "incorrect metric: " + label)
+            require("● READY" in body, "gateway readiness not shown")
             require("Restart service" not in body or "Restart disabled" in body,
                     "restart appears active without adapter")
 
@@ -182,16 +194,20 @@ def exercise(binary):
             print("PASS: live UI login, read-only status, edit, CSRF, origin, secrets,"
                   " conflict, and disabled restart")
         finally:
-            process.terminate()
             try:
-                process.communicate(timeout=4)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.communicate(timeout=4)
-            metrics.shutdown()
-            metrics.server_close()
-            thread.join(timeout=4)
-            require(process.returncode is not None, "UI subprocess was not reaped")
+                if process is not None:
+                    if process.poll() is None:
+                        process.terminate()
+                    try:
+                        process.wait(timeout=4)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=4)
+            finally:
+                if thread_started:
+                    metrics.shutdown()
+                    thread.join(timeout=4)
+                metrics.server_close()
 
 
 if __name__ == "__main__":
