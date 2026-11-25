@@ -1303,3 +1303,21 @@ func stopBeaconAndWait(ig *IGate) {
 	ig.rfBeaconMu.Lock()
 	ig.rfBeaconMu.Unlock()
 }
+
+func TestForwardOperationalMetrics(t *testing.T) {
+ logger, err := log.New()
+ if err != nil { t.Fatal(err) }
+ ch := make(chan *aprs.Packet, 2)
+ for _, frame := range []string{"N0CALL-7>APRS:>first", "N0CALL-7>APRS:>second"} {
+  p, err := aprs.ParsePacket(frame)
+  if err != nil { t.Fatal(err) }
+  ch <- p
+ }
+ close(ch)
+ calls := 0
+ i := &IGate{callSign:"N0CALL-10", logger:logger, forwardChan:ch, stop:make(chan struct{}),
+  aprsisUpload:func(string) error { calls++; if calls == 2 { return errors.New("test write failure") }; return nil }}
+ if err := i.forwardPackets(); err != nil { t.Fatal(err) }
+ writes, failures := i.ForwardStats()
+ if writes != 1 || failures != 1 || calls != 2 { t.Fatalf("writes=%d failures=%d calls=%d",writes,failures,calls) }
+}
