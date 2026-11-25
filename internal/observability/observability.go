@@ -17,6 +17,8 @@ type Registry struct {
  stopping atomic.Bool
  // Snapshot must perform only bounded, nonblocking atomic loads.
  Snapshot func() (published, dropped uint64)
+ // OperationalSnapshot is attached before serving and reads atomic counters.
+ OperationalSnapshot func() Operations
 }
 
 func New() *Registry { return &Registry{started:time.Now()} }
@@ -58,6 +60,7 @@ func (r *Registry) Handler() http.Handler {
   b.WriteString("\n# HELP sparky_pubsub_dropped_deliveries_total Packet deliveries dropped for full subscriber queues.\n# TYPE sparky_pubsub_dropped_deliveries_total counter\nsparky_pubsub_dropped_deliveries_total ")
   b.WriteString(strconv.FormatUint(dropped,10))
   b.WriteByte('\n')
+  if r.OperationalSnapshot != nil { r.OperationalSnapshot().writeMetrics(&b) }
   _,_=w.Write([]byte(b.String()))
  })
  return mux
