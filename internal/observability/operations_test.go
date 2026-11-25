@@ -30,3 +30,11 @@ func BenchmarkReceptionRecord(b *testing.B) {
 	b.ReportAllocs()
 	for i:=0; i<b.N; i++ { rx.Received(now) }
 }
+
+func TestReceptionRecordNoAllocations(t *testing.T) {
+ var rx Reception
+ now := time.Unix(123,0)
+ if allocs := testing.AllocsPerRun(1000, func(){ rx.Received(now); rx.Suppressed() }); allocs != 0 {
+  t.Fatalf("reception counters allocated %.2f objects per update", allocs)
+ }
+}
