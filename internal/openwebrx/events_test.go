@@ -7,6 +7,8 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/oorrwullie/sparky/internal/config"
+	"github.com/oorrwullie/sparky/internal/cache"
+	"github.com/oorrwullie/sparky/internal/pubsub"
 	"github.com/oorrwullie/sparky/internal/log"
 )
 
@@ -176,4 +178,49 @@ func TestADSBWorkersDuringSustainedOutage(t *testing.T) {
 	if got := m.adsbStats.offlineDropped.Load(); got != count {
 		t.Fatalf("offline drops = %d, want %d", got, count)
 	}
+}
+
+func TestOperationalAPRSInput(t *testing.T) {
+ m := newADSBTestProcessor()
+ m.packetCache = cache.NewCache(10, "", time.Minute)
+ m.ps = pubsub.New()
+ subscriber := m.ps.Subscribe()
+ frame := "N0CALL-7>APRS:>test"
+ m.handleAPRS([]byte(frame))
+ m.handleAPRS([]byte(frame))
+ m.handleAPRS([]byte("invalid"))
+ got := m.Operations().RX
+ if got.Received != 2 || got.Suppressed != 1 || got.Last <= 0 {
+  t.Fatalf("unexpected reception snapshot: %+v", got)
+ }
+ select {
+ case actual := <-subscriber:
+  if actual != frame { t.Fatalf("published %q", actual) }
+ default:
+  t.Fatal("missing first frame")
+ }
+ select {
+ case actual := <-subscriber:
+  t.Fatalf("unexpected duplicate delivery %q", actual)
+ default:
+ }
+}
+
+func TestOperationalADSBOutcomes(t *testing.T) {
+ m := newADSBTestProcessor()
+ payload := []byte(`{"mode":"ADSB"}`)
+ m.enqueue("openwebrx/ADSB", payload)
+ m.enqueue("openwebrx/ADSB", payload)
+ m.setMapFlightsClient(&fakeMapFlightsPublisher{connected:true})
+ m.forwardADSB(<-m.adsbEvents)
+ m.setMapFlightsClient(&fakeMapFlightsPublisher{connected:true,tokenErr:errors.New("failed")})
+ m.forwardADSB(payload)
+ m.forwardADSB([]byte(`{"mode":"APRS"}`))
+ m.setMapFlightsClient(&fakeMapFlightsPublisher{})
+ m.forwardADSB(payload)
+ o := m.Operations()
+ if !o.ADSBConfigured || o.ADSBReceived != 2 || o.ADSBPublished != 1 || o.ADSBFailed != 1 || o.ADSBRejected != 1 || o.ADSBOffline != 1 || o.ADSBDropped != 1 {
+  t.Fatalf("unexpected ADS-B snapshot: %+v", o)
+ }
+ if m.Operations() != o { t.Fatal("scrape reset counters") }
 }
