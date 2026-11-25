@@ -3,15 +3,14 @@
 This feature is intentionally small and performance-first. Sparky does not
 export packet contents or callsigns, allocate O11y events, block for a metrics
 consumer, make network calls, or write metrics on the packet-processing path.
-The only new fast-path operation is one atomic increment for each successful
-PubSub subscriber delivery. Scrapes read atomic snapshots independently.
+Packet-path instrumentation uses fixed atomic counters and the receive timestamp already obtained for deduplication. Scrapes read atomic snapshots independently. Counters have process-lifetime scope.
 
 ## Enable
 
 By default no listener is created. To opt in on the same host:
 
 ```sh
-SPARKY_OBSERVABILITY_ADDR=127.0.0.1:9091 ./bin/sparky
+(cd bin && SPARKY_OBSERVABILITY_ADDR=127.0.0.1:9091 ./sparky)
 curl http://127.0.0.1:9091/healthz
 curl http://127.0.0.1:9091/readyz
 curl http://127.0.0.1:9091/metrics
@@ -77,6 +76,13 @@ external scraper. V1 intentionally does **not** introduce an HTTP metrics
 client on RF paths, a polling goroutine, labels derived from packet content,
 runtime network dependency probes, an OTel collector, or unbounded retention.
 
-Additional staged counters (deduplicated APRS frames, successful RF-to-IS
-gates, TX, ADS-B totals, broker state) should be benchmarked separately and
-added only where an atomic update is cheap and semantics remain unambiguous.
+## Operational metrics
+
+- APRS input frames count extracted decoder/MQTT reports before deduplication. Duplicate suppression counts only frames actually suppressed, not self-beacons allowed through. Last input is a Unix timestamp in seconds (zero means none); these are not counts of all airframes.
+- APRS-IS RF forward writes and errors exclude beacons and do not prove remote receipt. Connection status reflects the verified local connection state, not a network probe.
+- TX dispatch counts calls handed to the backend, not successful RF emissions. The current void-returning backend cannot report completion/errors reliably.
+- ADS-B input, completed MQTT publishes, errors, rejected reports, offline drops and queue drops are cumulative. Existing diagnostic logs retain interval counts by taking differences.
+- External MQTT transport and local decoder reader states are separate from gateway readiness; embedded broker subscription health is not inferred.
+- Metrics for unconfigured optional components are absent. No payloads, callsigns or dynamic labels are exported.
+
+No new polling, network I/O or storage is introduced. Compare hot-path benchmarks before and after on representative hardware.
