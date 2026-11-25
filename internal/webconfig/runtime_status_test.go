@@ -99,3 +99,22 @@ func TestRuntimeStatusRepeatedScrapesDoNotRetainIdleConnections(t *testing.T){
   if !closed{t.Errorf("request %d retained keep-alive",i)}
  }
 }
+
+func TestOptionalOperationalMetrics(t *testing.T) {
+ body:=goodMetrics+"sparky_aprs_input_frames_total 19\nsparky_aprs_last_input_timestamp_seconds 0\nsparky_aprsis_connected 1\nsparky_tx_dispatched_frames_total 7\nsparky_adsb_input_reports_total invalid\nsparky_unknown_secret 123\n"
+ upstream:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){_,_=w.Write([]byte(body))}))
+ defer upstream.Close()
+ s:=testServer(t)
+ s.MetricsURL=upstream.URL+"/metrics"
+ status:=s.runtimeStatus(context.Background())
+ if !status.Available || len(status.Operations)!=4 {t.Fatalf("unexpected operational snapshot: %+v",status)}
+ for i,want:=range []string{"19","Never","Active","7"} {
+  if status.Operations[i].Value!=want {t.Errorf("field %d = %+v, want %s",i,status.Operations[i],want)}
+ }
+ req:=localTestRequest("GET","http://127.0.0.1:8080/",nil)
+ req.SetBasicAuth("admin","this-is-a-long-test-password")
+ w:=httptest.NewRecorder()
+ s.ServeHTTP(w,req)
+ if w.Code!=200 || !strings.Contains(w.Body.String(),"APRS input frames") || !strings.Contains(w.Body.String(),"TX frames dispatched (not confirmed RF)") {t.Fatal("operational metrics not rendered")}
+ if strings.Contains(w.Body.String(),"sparky_unknown_secret") || strings.Contains(w.Body.String(),"ADS-B input reports") {t.Fatal("unexpected metric rendered")}
+}
