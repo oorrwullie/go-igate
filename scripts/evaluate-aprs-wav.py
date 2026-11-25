@@ -49,9 +49,8 @@ def run_decoder(decoder: str, wav_path: Path, timeout: float) -> tuple[list[str]
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"decoder exited {proc.returncode}: {proc.stderr[-400:].decode("utf-8", errors="replace").strip()}"
-        )
+        stderr = proc.stderr[-400:].decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"decoder exited {proc.returncode}: {stderr}")
     return decoded_frames(proc.stdout.decode("utf-8")), elapsed_ms
 
 
