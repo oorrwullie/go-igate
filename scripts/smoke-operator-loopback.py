@@ -105,19 +105,21 @@ def exercise(binary):
             encoding="utf-8",
         )
         path.chmod(0o600)
-        port = free_port()
+        # Keep the metrics listener bound before selecting the UI port so
+        # our own fixture cannot claim the released UI port.
         metrics = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MetricsHandler)
         thread = threading.Thread(target=metrics.serve_forever, daemon=True)
-        origin = "http://127.0.0.1:" + str(port)
-        cmd = [
-            str(Path(binary).resolve()), "--config", str(path),
-            "--listen", "127.0.0.1:" + str(port),
-            "--metrics-url", "http://127.0.0.1:" + str(metrics.server_port) + "/metrics",
-        ]
-        env = dict(os.environ, SPARKY_CONFIG_PASSWORD=PASSWORD)
         process = None
         thread_started = False
         try:
+            port = free_port()
+            origin = "http://127.0.0.1:" + str(port)
+            cmd = [
+                str(Path(binary).resolve()), "--config", str(path),
+                "--listen", "127.0.0.1:" + str(port),
+                "--metrics-url", "http://127.0.0.1:" + str(metrics.server_port) + "/metrics",
+            ]
+            env = dict(os.environ, SPARKY_CONFIG_PASSWORD=PASSWORD)
             thread.start()
             thread_started = True
             # A file avoids deadlocking on a full stderr pipe.
