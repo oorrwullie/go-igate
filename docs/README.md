@@ -26,6 +26,7 @@ Start with the [learning library](learn/README.md). It's for curious people, inc
 - [Release acceptance checklist](acceptance-testing.md): actual hardware and installation validation.
 
 - [Performance baseline](performance-baseline.md): how to measure performance without making unsupported comparisons.
-- [Repository contribution instructions](../README.md#contributing).
+- [Contributing to Sparky](../CONTRIBUTING.md): everyone is welcome, from first-time contributors to experienced radio and software engineers.
+- [Issue templates](https://github.com/oorrwullie/sparky/issues/new/choose) and [security reporting](../SECURITY.md).
 
 This index describes the current repository. Don't assume features in an open pull request are already installed on your station.
