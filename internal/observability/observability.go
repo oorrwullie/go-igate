@@ -17,7 +17,7 @@ type Registry struct {
  stopping atomic.Bool
  // Snapshot must perform only bounded, nonblocking atomic loads.
  Snapshot func() (published, dropped uint64)
- // OperationalSnapshot is attached before serving and reads atomic counters.
+ // OperationalSnapshot is attached before serving and reads atomic counters and local connection state; no network I/O.
  OperationalSnapshot func() Operations
 }
 
