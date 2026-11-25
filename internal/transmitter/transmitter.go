@@ -5,6 +5,7 @@ import (
 	"io"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oorrwullie/sparky/internal/capture"
@@ -33,6 +34,7 @@ type Transmitter struct {
 	mu         sync.Mutex
 	started    bool
 	workerDone chan struct{}
+	dispatched atomic.Uint64
 	logger     *log.Logger
 	backend    Backend
 	soundcard  *capture.SoundcardCapture // Legacy AFSK helpers; not the dispatch path.
@@ -133,6 +135,7 @@ func (t *Transmitter) Stop() {
 }
 
 func (t *Transmitter) Transmit(msg string) {
+	t.dispatched.Add(1)
 	t.backend.Play(msg)
 }
 
@@ -241,3 +244,5 @@ func (w *waveReader) Read(p []byte) (int, error) {
 
 	return n, nil
 }
+
+func (t *Transmitter) Dispatched() uint64 { return t.dispatched.Load() }
