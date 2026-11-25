@@ -5,6 +5,7 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 import wave
 import os
 import stat
@@ -31,6 +32,32 @@ class ReplayTests(unittest.TestCase):
             "N0CALL>APRS:>status",
             "W7ABC>APRS:!position",
         ])
+
+    def test_payload_whitespace_is_significant(self):
+        plain = "N0CALL>APRS:>test"
+        spaced = plain + " "
+        self.assertEqual(evaluator.decoded_frames(
+            "APRS: " + plain + "\r\nAPRS: " + spaced + "\n"
+        ), [plain, spaced])
+        self.assertEqual(evaluator.compare([spaced], [plain])["correct"], 0)
+        self.expected.write_bytes((spaced + "\r\n").encode("utf-8"))
+        args = ["--wav", str(self.wav), "--expected", str(self.expected),
+                "--decoder", str(self.decoder), "--repeat", "1",
+                "--output", str(self.root / "result.json")]
+        self.assertEqual(evaluator.main(args), 1)
+
+    def test_repeatability_compares_actual_multisets(self):
+        with patch.object(evaluator, "run_decoder", side_effect=[
+            (["A", "B"], 1.0), (["A", "C"], 1.0),
+        ]):
+            result = evaluator.evaluate(self.wav, ["A"], str(self.decoder), 2, 5)
+        self.assertFalse(result["consistent_frames_across_runs"])
+        self.assertEqual(result["runs"][0], result["runs"][1])
+        with patch.object(evaluator, "run_decoder", side_effect=[
+            (["A", "B", "A"], 1.0), (["B", "A", "A"], 1.0),
+        ]):
+            result = evaluator.evaluate(self.wav, ["A"], str(self.decoder), 2, 5)
+        self.assertTrue(result["consistent_frames_across_runs"])
 
     def test_compare_repeated_and_unexpected_packets(self):
         stats = evaluator.compare(["A", "A", "B"], ["A", "B", "B"])
