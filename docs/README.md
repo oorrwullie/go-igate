@@ -15,6 +15,10 @@ Welcome! You don't need to know everything about radios or Linux to get started.
 
 Start with the [learning library](learn/README.md). It's for curious people, including those who haven't earned their callsign yet. The learning guides explain the ideas behind Sparky and how to experiment safely. They aren't a replacement for the version-matched configuration and deployment instructions above.
 
+## Maintainers
+
+[Wiki publishing guide](wiki-publishing.md): create a learning hub without maintaining duplicate documentation.
+
 ## I want to work on Sparky itself
 
 - [Performance baseline](performance-baseline.md): how to measure performance without making unsupported comparisons.
