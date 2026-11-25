@@ -33,16 +33,17 @@ as a real weak-signal/airwave recording.
 
 The JSON report contains audio metadata, each run's decoded/correct/missed/
 extra counts, recall and precision, whole-process elapsed time, and whether
-the per-run counts agree. Exit code 0 means every expected occurrence matched
+the actual decoded frame multisets agree (regardless of order). Exit code 0 means every expected occurrence matched
 without extras in every run; 1 means an accuracy mismatch; 2 means a tool,
 fixture or input error.
 
 No packet is truncated, filtered by callsign, or treated as correct by
 prefix. Packet comparison is **exact UTF-8 text using a multiset**. Repeated
 identical frames in a recording must appear repeatedly in the ground truth.
-Order is ignored deliberately. If decoder output includes a prefix,
-trailing CR/LF, or text normalization variance, document it and fix the
-fixture normalization explicitly before comparing different decoders.
+Order is ignored deliberately. The evaluator removes only LF/CRLF record
+terminators and the APRS: prefix with its single optional separator space.
+Payload whitespace is significant; do not trim expected or decoded frames.
+Invalid UTF-8 decoder output is a tool error, not a replacement-character match.
 
 ## Scientific limitations
 
