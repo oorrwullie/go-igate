@@ -3,7 +3,7 @@
 This feature is intentionally small and performance-first. Sparky does not
 export packet contents or callsigns, allocate O11y events, block for a metrics
 consumer, make network calls, or write metrics on the packet-processing path.
-Packet-path instrumentation uses fixed atomic counters and the receive timestamp already obtained for deduplication. Scrapes read atomic snapshots independently. Counters have process-lifetime scope.
+Packet-path instrumentation uses fixed atomic counters and the receive timestamp already obtained for deduplication. Scrapes read atomic counters and local MQTT client connection state independently (the client may use a short internal lock). Counters have process-lifetime scope.
 
 ## Enable
 
@@ -82,7 +82,7 @@ runtime network dependency probes, an OTel collector, or unbounded retention.
 - APRS-IS RF forward writes and errors exclude beacons and do not prove remote receipt. Connection status reflects the verified local connection state, not a network probe.
 - TX dispatch counts calls handed to the backend, not successful RF emissions. The current void-returning backend cannot report completion/errors reliably.
 - ADS-B input, completed MQTT publishes, errors, rejected reports, offline drops and queue drops are cumulative. Existing diagnostic logs retain interval counts by taking differences.
-- External MQTT transport and local decoder reader states are separate from gateway readiness; embedded broker subscription health is not inferred.
+- External MQTT transport (client connection state at scrape time, not subscription acknowledgement) and local decoder reader states are separate from gateway readiness; embedded broker subscription health is not inferred.
 - Metrics for unconfigured optional components are absent. No payloads, callsigns or dynamic labels are exported.
 
 No new polling, network I/O or storage is introduced. Compare hot-path benchmarks before and after on representative hardware.
