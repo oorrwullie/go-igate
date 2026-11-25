@@ -86,6 +86,6 @@ Before sharing a config, log, screenshot, packet capture or benchmark fixture, r
 
 ## Be good to each other
 
-Ask questions freely, explain your reasoning, and treat people with respect regardless of experience, background or skill level. Critique the idea or code, not the person. We don't need to agree on everything to learn from each other.
+Ask questions freely, explain your reasoning, and treat people with respect regardless of experience, background or skill level. See our [code of conduct](CODE_OF_CONDUCT.md). Critique the idea or code, not the person. We don't need to agree on everything to learn from each other.
 
 Thanks for taking the time to help. Even a small correction can make Sparky better for the next person who comes along.
