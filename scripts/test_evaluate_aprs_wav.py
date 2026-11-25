@@ -112,6 +112,17 @@ class ReplayTests(unittest.TestCase):
             evaluator.main(good + ["--timeout", "-1"])
         self.assertEqual(raised.exception.code, 2)
 
+    def test_decoder_failure_reports_stderr_on_supported_python(self):
+        self.decoder.write_text(
+            "#!" + sys.executable + "\n"
+            "import sys\n"
+            "sys.stderr.buffer.write(b'decoder failure: \\xff\\n')\n"
+            "sys.exit(7)\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(RuntimeError, "decoder exited 7: decoder failure:"):
+            evaluator.run_decoder(str(self.decoder), self.wav, 5)
+
     def test_missing_audio_or_empty_ground_truth(self):
         self.expected.write_text("", encoding="utf-8")
         self.assertEqual(evaluator.main(["--wav", str(self.wav),
