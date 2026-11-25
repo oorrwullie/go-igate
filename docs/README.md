@@ -21,6 +21,10 @@ Start with the [learning library](learn/README.md). It's for curious people, inc
 
 ## I want to work on Sparky itself
 
+- [Architecture](architecture.md): system diagram, packet flow, lifecycle and trust boundaries.
+- [Engineering decisions](engineering-decisions.md): design rationale and trade-offs.
+- [Release acceptance checklist](acceptance-testing.md): actual hardware and installation validation.
+
 - [Performance baseline](performance-baseline.md): how to measure performance without making unsupported comparisons.
 - [Repository contribution instructions](../README.md#contributing).
 
