@@ -56,6 +56,10 @@ Install prerequisites for your chosen backend, then build and configure Sparky. 
 
 ## Documentation and learning resources
 
+- [Architecture and data flow](docs/architecture.md) — system, packet routing and administration diagrams.
+- [Engineering decisions](docs/engineering-decisions.md) — design choices, trade-offs and implementation evidence.
+- [Performance baseline](docs/performance-baseline.md) and [release acceptance checklist](docs/acceptance-testing.md) — reproducible measurement and validation.
+
 - [Documentation index](docs/README.md) — installation, configuration, administration, and troubleshooting.
 - [Welcome to the workbench](docs/learn/README.md) — friendly introductions to radio, licensing, and hands-on projects, including building your own gateway without Sparky. You don't need a callsign to start learning.
 
