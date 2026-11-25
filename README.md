@@ -2,6 +2,8 @@
   <img src="assets/sparky-readme-banner.png" alt="Sparky, the Go gopher, operating a vintage field radio" width="100%">
 </p>
 
+[![Go CI](https://github.com/oorrwullie/sparky/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/oorrwullie/sparky/actions/workflows/go.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Sparky is an open-source radio data gateway written in Go. It receives, processes, and routes radio data between receivers, transmitters, and network services. Today it focuses on **APRS** and **ADS-B**, with room for additional protocols and hardware backends as the project evolves.
 
 Sparky began as an RTL-SDR APRS iGate, inspired by [Ionosphere](https://github.com/cceremuga/ionosphere). Its current capabilities extend beyond an iGate.
@@ -60,6 +62,8 @@ Install prerequisites for your chosen backend, then build and configure Sparky. 
 - [Engineering decisions](docs/engineering-decisions.md) — design choices, trade-offs and implementation evidence.
 - [Performance baseline](docs/performance-baseline.md) and [release acceptance checklist](docs/acceptance-testing.md) — reproducible measurement and validation.
 
+- [Configuration reference](docs/configuration.md) · [Hardware compatibility](docs/hardware.md) · [Troubleshooting](docs/troubleshooting.md)
+- [Upgrading](docs/upgrade.md) · [Known limitations](docs/limitations.md) · [Changelog](CHANGELOG.md)
 - [Documentation index](docs/README.md) — installation, configuration, administration, and troubleshooting.
 - [Welcome to the workbench](docs/learn/README.md) — friendly introductions to radio, licensing, and hands-on projects, including building your own gateway without Sparky. You don't need a callsign to start learning.
 
@@ -148,7 +152,7 @@ When message gating is disabled, RF packets sent back to APRS-IS use `qAO`. When
 ### Beacon configuration tips
 
 - A home fill-in digipeater should advertise itself with the WIDE1-1 overlay. Use the alternate table digipeater symbol paired with the overlay character `S` (e.g. `=latNSlonW#...`) to match [APRS Protocol Reference v1.0.1, Chapter 2](http://www.aprs.org/doc/APRS101.PDF).
-- Use a conservative beacon interval and path consistent with local APRS practice. Sparky currently supports the primary RF schedule; additional RF beacon entries are ignored. An empty RF path means direct transmission; `DIRECT` would be a literal path component.
+- Use a conservative beacon interval and path consistent with local APRS practice. Sparky currently supports the primary RF schedule; additional RF beacon entries are ignored. The current YAML parser defaults an empty primary beacon RF path to `WIDE1-1`; do not use `DIRECT` as a placeholder.
 - `igate.beacon.disable-is-beacon: true` suppresses the station's own Internet beacons without disabling RF-to-IS gating. RF-only beacons are visible on aprs.fi only if an appropriate gateway receives and forwards them.
 - Configuration changes are read at startup, so **restart the installed systemd unit** after editing `config.yml`; no rebuild is needed for configuration-only changes. Use `sudo systemctl restart sparky.service` for a new Sparky installation or `sudo systemctl restart aprs.service` for an existing installation that retains the original unit name.
 - If aprs.fi occasionally drops your IGate, enable `igate.beacon.aprsfi-verification` with your aprs.fi API key and set `watchdog-interval` (for example `30m`). The watchdog polls aprs.fi and, when your call hasn't been heard for longer than `watchdog-max-age` (defaults to twice the interval), it automatically schedules an RF beacon to refresh the map.
@@ -170,6 +174,7 @@ You don't have to be an expert in Go or radio to help build Sparky. Bug reports,
 - [Come help build Sparky!](CONTRIBUTING.md) — getting started, project principles and how to submit changes.
 - [Open an issue](https://github.com/oorrwullie/sparky/issues/new/choose) — report a problem, suggest an idea, share a station report or ask a question.
 - [Report security concerns privately](SECURITY.md).
+- [Community conduct](CODE_OF_CONDUCT.md) · [Contributor acknowledgments](CONTRIBUTORS.md).
 
 Even a small contribution can make Sparky better for the next person who comes along.
 
