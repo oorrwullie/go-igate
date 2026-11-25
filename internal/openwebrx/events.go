@@ -77,6 +77,7 @@ func (m *MQTT) enqueue(topic string, payload []byte) {
 
 func (m *MQTT) runADSBHealthLogger() {
 	defer m.workers.Done()
+	var previous [6]uint64
 	ticker := time.NewTicker(adsbDiagnosticPeriod)
 	defer ticker.Stop()
 	for {
@@ -88,13 +89,17 @@ func (m *MQTT) runADSBHealthLogger() {
 			}
 			client := m.getMapFlightsClient()
 			connected := client != nil && client.IsConnectionOpen()
+			current := [6]uint64{m.adsbStats.received.Load(), m.adsbStats.published.Load(), m.adsbStats.publishFailed.Load(), m.adsbStats.rejected.Load(), m.adsbStats.offlineDropped.Load(), m.adsbStats.dropped.Load()}
+			var delta [6]uint64
+			for i := range current { delta[i] = current[i] - previous[i] }
+			previous = current
 			m.logger.Info(
-				"ADS-B forwarding health (last 60s): received=", m.adsbStats.received.Swap(0),
-				" mqtt-publish-complete=", m.adsbStats.published.Swap(0),
-				" publish-errors=", m.adsbStats.publishFailed.Swap(0),
-				" rejected=", m.adsbStats.rejected.Swap(0),
-				" offline-dropped=", m.adsbStats.offlineDropped.Swap(0),
-				" queue-dropped=", m.adsbStats.dropped.Swap(0),
+				"ADS-B forwarding health (last 60s): received=", delta[0],
+				" mqtt-publish-complete=", delta[1],
+				" publish-errors=", delta[2],
+				" rejected=", delta[3],
+				" offline-dropped=", delta[4],
+				" queue-dropped=", delta[5],
 				" queue=", len(m.adsbEvents), "/", cap(m.adsbEvents),
 				" map-connected=", connected,
 				" last-report-age=", lastReceived,
@@ -131,7 +136,10 @@ func (m *MQTT) handleAPRS(payload []byte) {
 		m.logger.Debug("Ignoring non-APRS OpenWebRX+ MQTT report: ", err)
 		return
 	}
-	if m.packetCache.Set(frame, time.Now()) {
+	now := time.Now()
+	m.Reception.Received(now)
+	if m.packetCache.Set(frame, now) {
+		m.Reception.Suppressed()
 		m.logger.Debug("Suppressing duplicate OpenWebRX+ APRS frame: ", frame)
 		return
 	}
