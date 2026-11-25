@@ -15,10 +15,10 @@ import wave
 def decoded_frames(output: str) -> list[str]:
     """multimon-ng prints decoded TNC2 frames on lines prefixed with APRS:."""
     frames = []
-    for line in output.splitlines():
-        line = line.strip()
+    for line in output.split("\n"):
+        line = line.removesuffix("\r")
         if line.startswith("APRS:"):
-            frame = line.removeprefix("APRS:").strip()
+            frame = line.removeprefix("APRS:").removeprefix(" ")
             if frame:
                 frames.append(frame)
     return frames
@@ -45,14 +45,14 @@ def run_decoder(decoder: str, wav_path: Path, timeout: float) -> tuple[list[str]
     args = [decoder, "-a", "AFSK1200", "-A", "-t", "wav", str(wav_path)]
     started = time.perf_counter()
     proc = subprocess.run(
-        args, capture_output=True, text=True, errors="replace", timeout=timeout, check=False
+        args, capture_output=True, timeout=timeout, check=False
     )
     elapsed_ms = (time.perf_counter() - started) * 1000
     if proc.returncode != 0:
         raise RuntimeError(
-            f"decoder exited {proc.returncode}: {proc.stderr[-400:].strip()}"
+            f"decoder exited {proc.returncode}: {proc.stderr[-400:].decode("utf-8", errors="replace").strip()}"
         )
-    return decoded_frames(proc.stdout), elapsed_ms
+    return decoded_frames(proc.stdout.decode("utf-8")), elapsed_ms
 
 
 def evaluate(wav_path: Path, expected: list[str], decoder: str, repeats: int,
@@ -67,8 +67,15 @@ def evaluate(wav_path: Path, expected: list[str], decoder: str, repeats: int,
             "duration_seconds": audio.getnframes() / audio.getframerate(),
         }
     runs = []
+    first_frames = None
+    consistent = True
     for _ in range(repeats):
         frames, elapsed_ms = run_decoder(decoder, wav_path, timeout)
+        counts = Counter(frames)
+        if first_frames is None:
+            first_frames = counts
+        elif counts != first_frames:
+            consistent = False
         runs.append({"elapsed_ms": round(elapsed_ms, 3), **compare(expected, frames)})
     return {
         "format_version": 1,
@@ -80,11 +87,7 @@ def evaluate(wav_path: Path, expected: list[str], decoder: str, repeats: int,
         "median_process_elapsed_ms": round(
             statistics.median(run["elapsed_ms"] for run in runs), 3
         ),
-        "consistent_frames_across_runs": all(
-            (r["correct"], r["missed"], r["extra"], r["decoded"])
-            == (runs[0]["correct"], runs[0]["missed"], runs[0]["extra"], runs[0]["decoded"])
-            for r in runs
-        ),
+        "consistent_frames_across_runs": consistent,
     }
 
 
@@ -106,8 +109,10 @@ def main(argv: list[str] | None = None) -> int:
     if not 0 < args.timeout <= 3600:
         parser.error("--timeout must be in (0, 3600]")
     try:
-        expected = [line.strip() for line in args.expected.read_text(encoding="utf-8").splitlines()
-                    if line.strip()]
+        with args.expected.open(encoding="utf-8", newline="") as source:
+            expected = [line.removesuffix("\n").removesuffix("\r")
+                        for line in source.read().split("\n")]
+        expected = [line for line in expected if line]
         if not expected:
             raise ValueError("expected packet file must contain at least one frame")
         result = evaluate(args.wav, expected, args.decoder, args.repeat, args.timeout)
