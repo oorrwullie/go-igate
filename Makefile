@@ -22,20 +22,9 @@ build:
 	@go build -o $(GOBIN)/$(BINARY_NAME) .
 	@go build -o $(GOBIN)/$(CONFIG_BINARY_NAME) ./cmd/sparky-config
 
-# Create a complete private config in the destination filesystem, then publish
-# it with a hard link. ln fails when *anything* occupies config.yml (including
-# regular files, symlinks, FIFOs and directories), without opening that target.
-# The temporary file is never treated as an initialized station config.
+# Publish a complete private file to the exact destination, without replacement.
 init-config:
-	@mkdir -p "$(GOBIN)"
-	@set -eu; umask 077; \
-	  tmp=$$(mktemp "$(GOBIN)/.sparky-config-init.XXXXXXXX") || exit 1; \
-	  trap 'rm -f "$$tmp"' EXIT HUP INT TERM; \
-	  cat config.yml.example > "$$tmp"; \
-	  chmod 600 "$$tmp"; \
-	  if ! ln "$$tmp" "$(GOBIN)/config.yml"; then \
-	    echo "Configuration not created: $(GOBIN)/config.yml exists or cannot be created" >&2; exit 1; \
-	  fi
+	@go run "$(dir $(abspath $(lastword $(MAKEFILE_LIST))))cmd/sparky-init-config/main.go" config.yml.example "$(GOBIN)/config.yml"
 	@echo "Created $(GOBIN)/config.yml with iGate/transmit/digipeat disabled."
 	@echo "Edit station-callsign and receive settings before starting Sparky."
 
