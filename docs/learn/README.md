@@ -16,8 +16,19 @@ Those are the sorts of questions we're going to explore here. You don't need to 
 - [Understanding ADS-B](adsb.md) — listening to aircraft position reports.
 - [MQTT and radio data](mqtt.md) — how computers hand messages to one another.
 
+## Projects and experiments
+
+- [Build your first receive-only APRS station](first-aprs-station.md)
+- [Build an inexpensive ADS-B receiver](first-adsb-receiver.md)
+- [Antennas, gain and feedline](antennas-and-feedline.md)
+- [RF power and receiver protection](rf-power-and-protection.md)
+- [Raspberry Pi radio projects](raspberry-pi-radio.md)
+- [Troubleshooting your first station](station-troubleshooting.md)
+- [Packet collisions and shared airtime](packet-collisions.md)
+- [Build your own gateway](build-a-gateway.md)
+
 Start with receive-only experiments. There is a surprising amount you can do without transmitting anything. When you're ready to transmit, make sure you're licensed and understand your local rules and operating practices.
 
-For actual installation commands, go to the [Sparky documentation](../README.md). As new projects are built and tested, we'll add practical tutorials here rather than pretend that every future Sparky feature already exists.
+For actual installation commands, go to the [Sparky documentation](../README.md). These are introductory workbench guides, not claims that every example has been tested on every device. As new projects are built and tested, we'll add hardware-specific instructions.
 
 Questions and corrections are welcome. Nobody knows everything about this hobby, and that's okay.
