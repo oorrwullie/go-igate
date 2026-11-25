@@ -129,7 +129,7 @@ func checkSelectedRTL(r *result,selector string,devices []rtlDevice){
  // tuner is unambiguous for index zero; multiple tuners are advisory.
  index,err:=strconv.Atoi(selector)
  if selector=="" {index=0;err=nil}
- if err==nil {
+ if err==nil && index>=0 && index<len(devices) {
   if index==0 && len(devices)==1 {
    checkedNode(r,devices[0].path,"selected RTL-SDR")
    return
