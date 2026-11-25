@@ -12,6 +12,7 @@ import (
 	"github.com/oorrwullie/sparky/internal/cache"
 	"github.com/oorrwullie/sparky/internal/config"
 	"github.com/oorrwullie/sparky/internal/log"
+	"github.com/oorrwullie/sparky/internal/observability"
 	"github.com/oorrwullie/sparky/internal/pubsub"
 	"github.com/oorrwullie/sparky/internal/transmitter"
 )
@@ -26,6 +27,8 @@ type Multimon struct {
 	tx              *transmitter.Tx
 	stationCallsign string
 	inputBytes      atomic.Uint64
+	Reception observability.Reception
+	decoderRunning atomic.Bool
 	stopHealth      chan struct{}
 	stopHealthOnce  sync.Once
 	lifecycleMu     sync.Mutex
@@ -104,6 +107,7 @@ func (m *Multimon) Start() error {
 	if m.cfg.ReceiveDiagnostics {
 		go m.logInputHealth()
 	}
+	m.decoderRunning.Store(true)
 	readerDone := make(chan struct{})
 	writerDone := make(chan struct{})
 	go func() {
@@ -132,6 +136,7 @@ func (m *Multimon) Start() error {
 	}()
 	go func() {
 		defer close(readerDone)
+		defer m.decoderRunning.Store(false)
 		defer m.stopInputHealth()
 		scanner := bufio.NewScanner(outPipe)
 		for scanner.Scan() {
@@ -141,8 +146,11 @@ func (m *Multimon) Start() error {
 				continue
 			}
 			m.logger.Debug("Got message: ", msg)
-			duplicate := m.cache.Set(normalized, time.Now())
+			now := time.Now()
+			m.Reception.Received(now)
+			duplicate := m.cache.Set(normalized, now)
 			if duplicate && !m.isSelfMessage(normalized) {
+				m.Reception.Suppressed()
 				m.logger.Info("Duplicate packet received: ", msg)
 				continue
 			}
@@ -238,3 +246,5 @@ func (m *Multimon) isSelfMessage(msg string) bool {
 
 	return strings.EqualFold(strings.TrimSpace(parts[0]), m.stationCallsign)
 }
+
+func (m *Multimon) DecoderRunning() bool { return m.decoderRunning.Load() }
