@@ -46,6 +46,11 @@ Install the prerequisites for your chosen receive/transmit backend, then build a
 
 **Go toolchain:** Go 1.22.4 or later (see `go.mod`).
 
+## Documentation and learning resources
+
+- [Documentation index](docs/README.md) — installation, configuration, administration, and troubleshooting.
+- [Welcome to the workbench](docs/learn/README.md) — friendly introductions to APRS, iGates, digipeaters, SDR, ADS-B, MQTT, and getting your amateur radio license. You don't need a callsign to start learning.
+
 ## Operator quick start
 
 **New to Sparky?** Start with the [operator quick start](docs/operator-quickstart.md).
