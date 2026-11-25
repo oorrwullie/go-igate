@@ -40,11 +40,22 @@ test "$(cat "$tmp/target")" = SENTINEL
 # An existing FIFO must not be opened, written to, or mistaken for success.
 mkdir "$tmp/fifo-bin"
 mkfifo "$tmp/fifo-bin/config.yml"
-if timeout 5 make -s -C "$repo_root" init-config GOBIN="$tmp/fifo-bin" > "$tmp/output" 2>&1; then
+if timeout 60 make -s -C "$repo_root" init-config GOBIN="$tmp/fifo-bin" > "$tmp/output" 2>&1; then
   echo "init-config accepted an existing FIFO" >&2
   exit 1
 fi
 test -p "$tmp/fifo-bin/config.yml"
+
+# Directories and symlinks to directories must not be treated as containers.
+mkdir -p "$tmp/directory-bin/config.yml" "$tmp/directory-target" "$tmp/directory-link-bin"
+ln -s "$tmp/directory-target" "$tmp/directory-link-bin/config.yml"
+for target in "$tmp/directory-bin" "$tmp/directory-link-bin"; do
+  if make -s -C "$repo_root" init-config GOBIN="$target" > "$tmp/output" 2>&1; then
+    echo "init-config accepted a directory destination" >&2
+    exit 1
+  fi
+  test -z "$(ls -A "$target/config.yml/")"
+done
 
 # A failed copy must never publish a partially copied config. The temp file
 # is cleaned up even if the source cannot be read.
