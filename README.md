@@ -6,6 +6,10 @@ Sparky is an open-source radio data gateway written in Go. It receives, processe
 
 Sparky began as an RTL-SDR APRS iGate, inspired by [Ionosphere](https://github.com/cceremuga/ionosphere). Its current capabilities extend beyond an iGate.
 
+**Simple. Powerful. Fast.**
+
+New to radio? Visit [Welcome to the workbench](docs/learn/README.md). You can start with receive-only experiments and learn the radio fundamentals without installing Sparky or earning a license first.
+
 ## Why Sparky?
 
 <img src="assets/sparky-gopher-mascot.png" alt="Sparky, the Go gopher wearing a radio headset" width="185" align="right">
@@ -31,8 +35,12 @@ The name is a nod to **Sparky**, the radio operator Radar frequently talks to in
 
 **Scope:** ADS-B forwarding relies on OpenWebRX+ to decode aircraft reports; Sparky does not currently decode raw ADS-B samples itself. The embedded MQTT broker is provided for the local OpenWebRX+ integration, not as a general-purpose public broker. RF transmission currently uses a sound-card audio output and an external radio; native RF transmitter-module control is not yet implemented.
 
-## Getting Started
-Install the prerequisites for your chosen receive/transmit backend, then build and configure Sparky.
+### Administration and observability
+- Separate authenticated web configuration UI, with safe editing and optional fixed-target service restart.
+- Optional process health, readiness and Prometheus metrics, plus a read-only runtime snapshot in the UI. These are not proof of RF reception or remote delivery.
+
+## Getting started
+Install prerequisites for your chosen backend, then build and configure Sparky. Start receive-only: review the example YAML and explicitly disable transmitter, digipeater and parent iGate before running a local listening experiment.
 
 ### Dependencies
 **Build dependencies (all configurations):** `pkg-config` and the PortAudio development headers are required because the capture package currently imports PortAudio unconditionally, including for MQTT-only use. On Debian/Ubuntu, install `pkg-config` and `portaudio19-dev` before building.
@@ -49,7 +57,7 @@ Install the prerequisites for your chosen receive/transmit backend, then build a
 ## Documentation and learning resources
 
 - [Documentation index](docs/README.md) — installation, configuration, administration, and troubleshooting.
-- [Welcome to the workbench](docs/learn/README.md) — friendly introductions to APRS, iGates, digipeaters, SDR, ADS-B, MQTT, and getting your amateur radio license. You don't need a callsign to start learning.
+- [Welcome to the workbench](docs/learn/README.md) — friendly introductions to radio, licensing, and hands-on projects, including building your own gateway without Sparky. You don't need a callsign to start learning.
 
 ## Operator quick start
 
@@ -102,11 +110,12 @@ When map.flights forwarding is enabled, Sparky logs a once-per-minute ADS-B forw
 ### Build and run
 
 ```bash
-make build       # Build Sparky
-make run         # Run it locally
+make build       # Build both binaries
+# Prepare bin/config.yml using the operator quick start before running.
+(cd bin && ./sparky)
 ```
 
-To install the provided systemd gateway service, run `make install-service`. For a quick development run, use `go run .`.
+For service installation, follow the [operator quick start](docs/operator-quickstart.md) and review paths, permissions and config before running `make install-service`.
 
 `make build` also produces `bin/sparky-config`, the separate authenticated
 configuration interface. On Linux with systemd, opt into starting the UI
@@ -135,9 +144,8 @@ When message gating is disabled, RF packets sent back to APRS-IS use `qAO`. When
 ### Beacon configuration tips
 
 - A home fill-in digipeater should advertise itself with the WIDE1-1 overlay. Use the alternate table digipeater symbol paired with the overlay character `S` (e.g. `=latNSlonW#...`) to match [APRS Protocol Reference v1.0.1, Chapter 2](http://www.aprs.org/doc/APRS101.PDF).
-- APRS expects fixed stations to be visible within a 10–30 minute “net cycle.” Configure the primary RF beacon (your wide path) around 30 minutes and add a secondary direct beacon near 10 minutes to refresh local maps without flooding the network.
-- In `config.yml` the `additional-rf-beacons` list lets you schedule those direct packets. Leave the `path` empty to transmit truly direct; adding text like `DIRECT` creates a literal hop and is not recommended.
-- Disable APRS-IS (`disable-tcp: true`) if you only want RF packets on aprs.fi. Re-enable it with a conservative `is-interval` when Internet visibility is important.
+- Use a conservative beacon interval and path consistent with local APRS practice. Sparky currently supports the primary RF schedule; additional RF beacon entries are ignored. An empty RF path means direct transmission; `DIRECT` would be a literal path component.
+- `igate.beacon.disable-is-beacon: true` suppresses the station's own Internet beacons without disabling RF-to-IS gating. RF-only beacons are visible on aprs.fi only if an appropriate gateway receives and forwards them.
 - Configuration changes are read at startup, so **restart the installed systemd unit** after editing `config.yml`; no rebuild is needed for configuration-only changes. Use `sudo systemctl restart sparky.service` for a new Sparky installation or `sudo systemctl restart aprs.service` for an existing installation that retains the original unit name.
 - If aprs.fi occasionally drops your IGate, enable `igate.beacon.aprsfi-verification` with your aprs.fi API key and set `watchdog-interval` (for example `30m`). The watchdog polls aprs.fi and, when your call hasn't been heard for longer than `watchdog-max-age` (defaults to twice the interval), it automatically schedules an RF beacon to refresh the map.
 
