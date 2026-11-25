@@ -55,6 +55,9 @@ jobs:
     - name: Test
       run: go test -v ./...
 
+    - name: Smoke-test performance fixtures
+      run: go test ./internal/aprs ./internal/pubsub ./internal/observability -run '^$' -bench 'Benchmark(ParsePacket|ParseAndClassify|PositionDecode|Fanout|PublishOneSubscriber|MetricsScrape)' -benchtime=1x -count=1 -timeout=2m
+
     - name: Test offline WAV replay evaluator
       run: python3 -m unittest discover -s scripts -p 'test_evaluate_aprs_wav.py' -v
 

@@ -45,6 +45,7 @@ type Server struct {
 }
 
 type view struct {
+ RestartEnabled bool
  Status runtimeStatus
  Callsign string
  SDR bool
@@ -120,6 +121,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
  w.Header().Set("Content-Type","text/html; charset=utf-8")
  if r.Method == http.MethodHead {return}
  data:=view{
+  RestartEnabled:s.RestartService!=nil,
   Status:s.runtimeStatus(r.Context()),
   Callsign:cfg.StationCallsign, SDR:cfg.Sdr.Enabled,
   SDRFrequency:cfg.Sdr.Frequency,IGate:cfg.IGate.Enabled,

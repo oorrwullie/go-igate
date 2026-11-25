@@ -46,6 +46,14 @@ Install the prerequisites for your chosen receive/transmit backend, then build a
 
 **Go toolchain:** Go 1.22.4 or later (see `go.mod`).
 
+## Operator quick start
+
+**New to Sparky?** Start with the [operator quick start](docs/operator-quickstart.md).
+It covers building the gateway, launching the separate authenticated
+configuration UI, saving and applying settings, enabling optional restart
+controls, and displaying live gateway status. The UI is local-only by default
+and no administrative restart permission is enabled automatically.
+
 ## Usage
 
 ### Receiving APRS from OpenWebRX+
