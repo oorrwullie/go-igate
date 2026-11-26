@@ -58,6 +58,9 @@ jobs:
     - name: Verify non-root gateway systemd installer
       run: bash scripts/test-gateway-service.sh
 
+    - name: Smoke-test real configuration UI on localhost
+      run: python3 scripts/smoke-operator-loopback.py bin/sparky-config
+
     - name: Test
       run: go test -v ./...
 
