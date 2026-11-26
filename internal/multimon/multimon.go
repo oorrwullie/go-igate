@@ -223,7 +223,23 @@ func (m *Multimon) stopInputHealth() {
 func normalizeMultimonMessage(msg string) string {
 	msg = strings.TrimSpace(msg)
 	msg = strings.TrimPrefix(msg, "APRS: ")
-	if !strings.Contains(msg, ">") {
+	// Validate the TNC2 envelope before touching the receive counters or cache.
+	// Cut returns string slices, avoiding a second allocating packet parse on
+	// the receive path. Payload semantics remain the downstream parser's job.
+	src, rest, ok := strings.Cut(msg, ">")
+	if !ok {
+		return ""
+	}
+	header, _, ok := strings.Cut(rest, ":")
+	if !ok {
+		return ""
+	}
+	dst, _, _ := strings.Cut(header, ",")
+	src = strings.TrimSpace(src)
+	dst = strings.TrimSpace(dst)
+	if src == "" || dst == "" ||
+		strings.ContainsAny(src, " \t\r\n:") ||
+		strings.ContainsAny(dst, " \t\r\n>") {
 		return ""
 	}
 	return msg
