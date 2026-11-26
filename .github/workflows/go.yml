@@ -64,5 +64,15 @@ jobs:
     - name: Smoke-test performance fixtures
       run: go test ./internal/aprs ./internal/pubsub ./internal/observability -run '^$' -bench 'Benchmark(ParsePacket|ParseAndClassify|PositionDecode|Fanout|PublishOneSubscriber|MetricsScrape)' -benchtime=1x -count=1 -timeout=2m
 
+    - name: Set up minimum supported Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+
+    - name: Test offline WAV replay evaluator (Python 3.10)
+      run: |
+        python -m py_compile scripts/evaluate-aprs-wav.py
+        python -m unittest discover -s scripts -p 'test_evaluate_aprs_wav.py' -v
+
     - name: Test with race detector
       run: go test -race -v ./...
