@@ -80,10 +80,10 @@ and the UI unit's `--config` path and `ReadWritePaths` accordingly. The
 bundled template does not provide the strongest possible isolation when
 executables and configuration share a writable directory.
 
-Restart authority remains **disabled** in this companion unit. PR #49 adds a
-separately authorized `--enable-restart` operation. After it lands, configure
-its manager and least-privilege permissions separately; do not enable it by
-default or make this service run as root.
+Restart authority remains **disabled** in the bundled companion unit.
+The available `--enable-restart` option can be configured separately using a
+fixed-target supervisor and least-privilege permissions. Do not enable it by
+default or make this service run as root. See [restart configuration](web-config-restart.md).
 
 ## Other environments
 
@@ -93,12 +93,13 @@ default or make this service run as root.
   this Linux-systemd slice.
 - **Kubernetes:** put gateway and UI in independently managed containers or
   processes, with a shared persistent configuration volume and independent
-  credentials. The restart adapter in #49 targets a Deployment using
+  credentials. The optional Kubernetes restart adapter targets a Deployment using
   narrowly scoped Kubernetes RBAC. Do not make a UI container depend on
   the gateway container remaining alive during its rollout.
 - **Other Linux init systems:** supervise both binaries independently. The
-  restart adapter selected in #49 is not a replacement for an installation
+  restart adapter is not a replacement for an installation
   or process supervisor.
 
-This PR changes packaging/deployment only. It does not change YAML storage,
-authentication, radio behavior, the admin listener, or restart permissions.
+This document describes the shipped companion deployment; the bundled
+unit does not automatically enable restart or runtime metrics integration.
+For a current end-to-end walkthrough, start with [operator quick start](operator-quickstart.md).

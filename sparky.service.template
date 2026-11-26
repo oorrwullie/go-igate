@@ -1,12 +1,24 @@
 [Unit]
 Description=Sparky APRS and ADS-B Gateway
+Documentation=https://github.com/oorrwullie/sparky
+After=network.target
 
 [Service]
-StandardOutput=append:/var/log/aprs.log
-WorkingDirectory={{WORKING_DIRECTORY}}
-Group=www-data
-ExecStart={{EXEC_START}}
 Type=simple
+User={{SERVICE_USER}}
+WorkingDirectory={{WORKING_DIRECTORY}}
+ExecStart={{EXEC_START}}
+# Journal replaces the old root-owned /var/log/aprs.log append target.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sparky
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# Sparky's existing cache persists alongside config.yml. This is a
+# compatibility compromise until a dedicated state directory is supported.
+ReadWritePaths={{WORKING_DIRECTORY}}
 TimeoutStopSec=10
 Restart=on-failure
 RestartSec=5

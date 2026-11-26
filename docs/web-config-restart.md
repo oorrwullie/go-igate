@@ -172,6 +172,8 @@ This stage does not integrate the web UI into the main gateway binary. Kubernete
 supported specifically for Deployment-managed workloads; standalone Pods,
 StatefulSets and DaemonSets require a separately designed/reviewed adapter.
 It has no automatic health checks or rollback. The existing
-`/edit?saved=1` banner is confirmation of the save URL only, not a reliable
-running-vs-saved configuration comparison. A future status panel can report
-restart-needed state based on actual runtime configuration.
+`/edit?saved=1` banner confirms the save flow, not a reliable
+running-vs-saved configuration comparison. The optional live status panel
+shows health and delivery counts, **not** the active config revision. A true
+running-versus-saved comparison would require separately designed runtime
+configuration reporting.
