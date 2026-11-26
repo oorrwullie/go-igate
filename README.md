@@ -2,9 +2,15 @@
   <img src="assets/sparky-readme-banner.png" alt="Sparky, the Go gopher, operating a vintage field radio" width="100%">
 </p>
 
+[![Go CI](https://github.com/oorrwullie/sparky/actions/workflows/go.yml/badge.svg?branch=main)](https://github.com/oorrwullie/sparky/actions/workflows/go.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Sparky is an open-source radio data gateway written in Go. It receives, processes, and routes radio data between receivers, transmitters, and network services. Today it focuses on **APRS** and **ADS-B**, with room for additional protocols and hardware backends as the project evolves.
 
 Sparky began as an RTL-SDR APRS iGate, inspired by [Ionosphere](https://github.com/cceremuga/ionosphere). Its current capabilities extend beyond an iGate.
+
+**Simple. Powerful. Fast.**
+
+New to radio? Visit [Welcome to the workbench](docs/learn/README.md). You can start with receive-only experiments and learn the radio fundamentals without installing Sparky or earning a license first.
 
 ## Why Sparky?
 
@@ -31,8 +37,12 @@ The name is a nod to **Sparky**, the radio operator Radar frequently talks to in
 
 **Scope:** ADS-B forwarding relies on OpenWebRX+ to decode aircraft reports; Sparky does not currently decode raw ADS-B samples itself. The embedded MQTT broker is provided for the local OpenWebRX+ integration, not as a general-purpose public broker. RF transmission currently uses a sound-card audio output and an external radio; native RF transmitter-module control is not yet implemented.
 
-## Getting Started
-Install the prerequisites for your chosen receive/transmit backend, then build and configure Sparky.
+### Administration and observability
+- Separate authenticated web configuration UI, with safe editing and optional fixed-target service restart.
+- Optional process health, readiness and Prometheus metrics, plus a read-only runtime snapshot in the UI. These are not proof of RF reception or remote delivery.
+
+## Getting started
+Install prerequisites for your chosen backend, then build and configure Sparky. Start receive-only: review the example YAML and explicitly disable transmitter, digipeater and parent iGate before running a local listening experiment.
 
 ### Dependencies
 **Build dependencies (all configurations):** `pkg-config` and the PortAudio development headers are required because the capture package currently imports PortAudio unconditionally, including for MQTT-only use. On Debian/Ubuntu, install `pkg-config` and `portaudio19-dev` before building.
@@ -45,6 +55,25 @@ Install the prerequisites for your chosen receive/transmit backend, then build a
 * [alsa-utils](https://alsa-project.org/wiki/Main_Page) (`aplay`) when using the sound-card transmitter
 
 **Go toolchain:** Go 1.22.4 or later (see `go.mod`).
+
+## Documentation and learning resources
+
+- [Architecture and data flow](docs/architecture.md) — system, packet routing and administration diagrams.
+- [Engineering decisions](docs/engineering-decisions.md) — design choices, trade-offs and implementation evidence.
+- [Performance baseline](docs/performance-baseline.md) and [release acceptance checklist](docs/acceptance-testing.md) — reproducible measurement and validation.
+
+- [Configuration reference](docs/configuration.md) · [Hardware compatibility](docs/hardware.md) · [Troubleshooting](docs/troubleshooting.md)
+- [Upgrading](docs/upgrade.md) · [Known limitations](docs/limitations.md) · [Changelog](CHANGELOG.md)
+- [Documentation index](docs/README.md) — installation, configuration, administration, and troubleshooting.
+- [Welcome to the workbench](docs/learn/README.md) — friendly introductions to radio, licensing, and hands-on projects, including building your own gateway without Sparky. You don't need a callsign to start learning.
+
+## Operator quick start
+
+**New to Sparky?** Start with the [operator quick start](docs/operator-quickstart.md).
+It covers building the gateway, launching the separate authenticated
+configuration UI, saving and applying settings, enabling optional restart
+controls, and displaying live gateway status. The UI is local-only by default
+and no administrative restart permission is enabled automatically.
 
 ## Usage
 
@@ -89,11 +118,12 @@ When map.flights forwarding is enabled, Sparky logs a once-per-minute ADS-B forw
 ### Build and run
 
 ```bash
-make build       # Build Sparky
-make run         # Run it locally
+make build       # Build both binaries
+# Prepare bin/config.yml using the operator quick start before running.
+(cd bin && ./sparky)
 ```
 
-To install the provided systemd gateway service, run `make install-service`. For a quick development run, use `go run .`.
+For service installation, follow the [operator quick start](docs/operator-quickstart.md) and review paths, permissions and config before running `make install-service`.
 
 `make build` also produces `bin/sparky-config`, the separate authenticated
 configuration interface. On Linux with systemd, opt into starting the UI
@@ -128,9 +158,8 @@ When message gating is disabled, RF packets sent back to APRS-IS use `qAO`. When
 ### Beacon configuration tips
 
 - A home fill-in digipeater should advertise itself with the WIDE1-1 overlay. Use the alternate table digipeater symbol paired with the overlay character `S` (e.g. `=latNSlonW#...`) to match [APRS Protocol Reference v1.0.1, Chapter 2](http://www.aprs.org/doc/APRS101.PDF).
-- APRS expects fixed stations to be visible within a 10–30 minute “net cycle.” Configure the primary RF beacon (your wide path) around 30 minutes and add a secondary direct beacon near 10 minutes to refresh local maps without flooding the network.
-- In `config.yml` the `additional-rf-beacons` list lets you schedule those direct packets. Leave the `path` empty to transmit truly direct; adding text like `DIRECT` creates a literal hop and is not recommended.
-- Disable APRS-IS (`disable-tcp: true`) if you only want RF packets on aprs.fi. Re-enable it with a conservative `is-interval` when Internet visibility is important.
+- Use a conservative beacon interval and path consistent with local APRS practice. Sparky currently supports the primary RF schedule; additional RF beacon entries are ignored. The current YAML parser defaults an empty primary beacon RF path to `WIDE1-1`; do not use `DIRECT` as a placeholder.
+- `igate.beacon.disable-is-beacon: true` suppresses the station's own Internet beacons without disabling RF-to-IS gating. RF-only beacons are visible on aprs.fi only if an appropriate gateway receives and forwards them.
 - Configuration changes are read at startup, so **restart the installed systemd unit** after editing `config.yml`; no rebuild is needed for configuration-only changes. Use `sudo systemctl restart sparky.service` for a new Sparky installation or `sudo systemctl restart aprs.service` for an existing installation that retains the original unit name.
 - If aprs.fi occasionally drops your IGate, enable `igate.beacon.aprsfi-verification` with your aprs.fi API key and set `watchdog-interval` (for example `30m`). The watchdog polls aprs.fi and, when your call hasn't been heard for longer than `watchdog-max-age` (defaults to twice the interval), it automatically schedules an RF beacon to refresh the map.
 
@@ -146,13 +175,14 @@ Update any Go imports or automation that use the old module path, and review sys
 
 ## Contributing
 
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
+You don't have to be an expert in Go or radio to help build Sparky. Bug reports, questions, documentation corrections, hardware experiments and code contributions are all welcome.
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+- [Come help build Sparky!](CONTRIBUTING.md) — getting started, project principles and how to submit changes.
+- [Open an issue](https://github.com/oorrwullie/sparky/issues/new/choose) — report a problem, suggest an idea, share a station report or ask a question.
+- [Report security concerns privately](SECURITY.md).
+- [Community conduct](CODE_OF_CONDUCT.md) · [Contributor acknowledgments](CONTRIBUTORS.md).
+
+Even a small contribution can make Sparky better for the next person who comes along.
 
 ## License
 

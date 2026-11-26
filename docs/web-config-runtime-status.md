@@ -5,7 +5,8 @@ gateway's readiness, uptime, and admitted/dropped PubSub subscriber deliveries.
 This functionality is deliberately **read-only**. It never creates a metrics
 exporter or adds work to the RF or MQTT hot path.
 
-This PR depends on the gateway observability endpoint introduced by #51.
+The gateway's observability endpoint is available in the same repository;
+both processes need their opt-in configuration. See [operator quick start](operator-quickstart.md).
 
 ## Enable
 

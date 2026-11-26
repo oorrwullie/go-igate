@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: "Learn about Sparky and radio"
+    url: https://github.com/oorrwullie/sparky/blob/main/docs/README.md
+    about: Find operator guides, architecture, and beginner-friendly learning resources.
+  - name: "Report a security vulnerability"
+    url: https://github.com/oorrwullie/sparky/blob/main/SECURITY.md
+    about: Please keep sensitive vulnerability details out of public issues.

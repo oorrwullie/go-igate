@@ -1,0 +1,46 @@
+name: "Something isn't working"
+description: Report a bug, crash, unexpected result, or regression.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us figure this out! You don't have to know what caused the problem.
+        Please remove passwords, passcodes, API keys and private station details from anything you share.
+        For security vulnerabilities, see [SECURITY.md](https://github.com/oorrwullie/sparky/blob/main/SECURITY.md) instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Tell us what you were trying to do, what actually happened, and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How can we reproduce it?
+      description: Steps, relevant sanitized settings, or a local test fixture. If you're not sure, tell us what you've tried.
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Sparky version or commit
+      description: A release tag or the output of git rev-parse --short HEAD, if known.
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: What are you running it on?
+      description: OS, architecture, computer, receiver, decoder or radio, if relevant.
+      placeholder: "Example: Raspberry Pi OS, Pi Zero 2 W, RTL-SDR, multimon-ng"
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Include only relevant, sanitized output. Please don't paste secrets or an entire private configuration.
+    validations:
+      required: false

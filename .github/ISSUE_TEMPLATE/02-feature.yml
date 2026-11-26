@@ -1,0 +1,29 @@
+name: "I have an idea"
+description: Suggest an improvement, new capability, or simpler way to do something.
+title: "[Idea]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We'd love to hear what you're thinking. You don't need to design the whole solution before starting a conversation.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to be able to do?
+      description: Tell us about the problem or opportunity, and who it would help.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Any ideas for how it might work?
+      description: Optional sketches, examples, alternatives or similar projects.
+    validations:
+      required: false
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Anything we should keep in mind?
+      description: Hardware, simplicity, performance, compatibility or operating constraints, if relevant.
+    validations:
+      required: false

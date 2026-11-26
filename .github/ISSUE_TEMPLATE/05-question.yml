@@ -1,0 +1,21 @@
+name: "I'm trying to figure something out"
+description: Ask for help using Sparky or understanding one of its features.
+title: "[Question]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We all started somewhere. Have a look at the [documentation](https://github.com/oorrwullie/sparky/tree/main/docs) if you haven't already, but don't let that stop you from asking.
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do or understand?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: What have you tried so far?
+      description: Hardware, version, instructions you followed, or relevant sanitized output, if applicable.
+    validations:
+      required: false

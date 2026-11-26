@@ -1,0 +1,29 @@
+name: "The docs could be better"
+description: Report confusing instructions, incorrect information, broken links, or suggest a learning guide.
+title: "[Docs]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If something didn't make sense to you, there's a good chance someone else is wondering about it too. Thank you for pointing it out.
+  - type: textarea
+    id: location
+    attributes:
+      label: Which document or topic?
+      description: Link the page or describe what you were trying to learn.
+    validations:
+      required: true
+  - type: textarea
+    id: feedback
+    attributes:
+      label: What could be clearer or more useful?
+      description: Tell us what was missing, confusing, incorrect, or worth adding.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested improvement
+      description: Optional wording, references, diagrams or examples.
+    validations:
+      required: false

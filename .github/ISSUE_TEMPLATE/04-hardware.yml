@@ -1,0 +1,29 @@
+name: "Hardware or station report"
+description: Share what works, what doesn't, or what you've measured on a real setup.
+title: "[Hardware]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Real-world reports are incredibly useful, including successful ones! Please keep credentials and private station locations out of your report. Only test transmission within your privileges and using suitable equipment.
+  - type: textarea
+    id: setup
+    attributes:
+      label: Tell us about your setup
+      description: Board or computer, OS, receiver, decoder, transmitter (if used), and Sparky version, if known.
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: What did you observe?
+      description: What worked, what failed, or what you measured. Include duration, workload, and limitations for measurements.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Anything else that would help?
+      description: Sanitized configuration excerpts, logs, photos, benchmark commands or reproducible steps.
+    validations:
+      required: false

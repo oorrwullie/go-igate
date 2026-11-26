@@ -52,11 +52,17 @@ jobs:
           exit 1
         fi
 
+    - name: Test safe first-run setup
+      run: bash scripts/test-init-config.sh
+
     - name: Verify non-root gateway systemd installer
       run: bash scripts/test-gateway-service.sh
 
     - name: Test
       run: go test -v ./...
+
+    - name: Smoke-test performance fixtures
+      run: go test ./internal/aprs ./internal/pubsub ./internal/observability -run '^$' -bench 'Benchmark(ParsePacket|ParseAndClassify|PositionDecode|Fanout|PublishOneSubscriber|MetricsScrape)' -benchtime=1x -count=1 -timeout=2m
 
     - name: Test with race detector
       run: go test -race -v ./...
