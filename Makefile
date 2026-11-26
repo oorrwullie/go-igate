@@ -12,7 +12,7 @@ GOBASE=$(shell pwd)
 GOBIN=$(GOBASE)/$(BUILD_DIR)
 GOPATH=$(shell go env GOPATH)
 
-.PHONY: all build clean run test install-service install-config-service reference-audio
+.PHONY: all build clean run test init-config install-service install-config-service reference-audio
 
 all: build
 
@@ -21,6 +21,12 @@ build:
 	@mkdir -p $(GOBIN)
 	@go build -o $(GOBIN)/$(BINARY_NAME) .
 	@go build -o $(GOBIN)/$(CONFIG_BINARY_NAME) ./cmd/sparky-config
+
+# Publish a complete private file to the exact destination, without replacement.
+init-config:
+	@go run "$(dir $(abspath $(lastword $(MAKEFILE_LIST))))cmd/sparky-init-config/main.go" config.yml.example "$(GOBIN)/config.yml"
+	@echo "Created $(GOBIN)/config.yml with iGate/transmit/digipeat disabled."
+	@echo "Edit station-callsign and receive settings before starting Sparky."
 
 clean:
 	@echo "Cleaning"
