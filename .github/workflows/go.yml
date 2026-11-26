@@ -55,6 +55,9 @@ jobs:
     - name: Test safe first-run setup
       run: bash scripts/test-init-config.sh
 
+    - name: Verify non-root gateway systemd installer
+      run: bash scripts/test-gateway-service.sh
+
     - name: Test
       run: go test -v ./...
 

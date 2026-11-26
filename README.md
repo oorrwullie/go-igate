@@ -133,15 +133,21 @@ The UI runs independently so gateway restarts do not kill the admin connection.
 See [configuration UI deployment](docs/web-config-deployment.md) for setup,
 least-privilege requirements, and non-systemd deployment notes.
 
-### Log rotation
+### Gateway systemd service and logs
 
-Systemd writes APRS logs to `/var/log/aprs.log` by default. Install the logrotate policy to keep the file from growing unbounded:
+For a **new** Linux systemd installation, the `make install-service` target
+requires a non-root invoking account and will refuse to replace an existing
+gateway unit. New installations write logs to the system journal:
 
-1. Copy `scripts/aprs.logrotate` to `/etc/logrotate.d/aprs` (requires sudo).
-2. Adjust thresholds (e.g. `size`, `rotate`) if your environment needs different retention.
-3. Run `sudo logrotate -f /etc/logrotate.d/aprs` once to verify the policy.
+```sh
+sudo journalctl -u sparky.service -f
+```
 
-The provided config rotates whenever the log hits 50 MB, keeps 10 compressed archives, skips missing/empty logs, and uses `copytruncate` so the running service keeps logging.
+Read [gateway service security and migration](docs/gateway-systemd-security.md)
+before installation, especially if you have an existing service, USB/audio
+device permissions, or an older setup using `/var/log/aprs.log`.
+The legacy `scripts/aprs.logrotate` file applies only to installations that
+still use that file; it is **not** needed for new journald-based services.
 
 ### APRS-IS message gating
 
