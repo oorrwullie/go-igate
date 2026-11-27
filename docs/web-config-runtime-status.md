@@ -13,14 +13,14 @@ both processes need their opt-in configuration. See [operator quick start](opera
 On the gateway process:
 
 ```sh
-SPARKY_OBSERVABILITY_ADDR=127.0.0.1:9091 ./bin/sparky
+(cd bin && SPARKY_OBSERVABILITY_ADDR=127.0.0.1:9091 ./sparky)
 ```
 
 On the separately managed configuration UI:
 
 ```sh
 SPARKY_CONFIG_PASSWORD='your-long-secret-password' \
-  ./bin/sparky-config --config ./config.yml \
+  ./bin/sparky-config --config ./bin/config.yml \
   --metrics-url http://127.0.0.1:9091/metrics
 ```
 
@@ -45,3 +45,5 @@ Pod URLs.
 The counters represent **admitted and dropped PubSub subscriber deliveries**,
 not unique RF packets or received airframes. The dashboard may eventually show
 historical rates with a bounded sampling policy or an external metrics store.
+
+The radio activity section shows optional operational counters when supplied by the gateway. Older gateways still show the original four metrics. Unavailable or invalid optional values are omitted; a zero last-input timestamp displays Never. Connection and dispatch indicators are local observations, not proof of RF or remote delivery.

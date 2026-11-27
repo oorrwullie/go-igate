@@ -20,6 +20,7 @@ type AprsIs struct {
 	id             string
 	Conn           *textproto.Conn
 	connected      bool
+	connectionMetric atomic.Bool
 	cfg            config.AprsIs
 	logger         *log.Logger
 	inboundEnabled atomic.Bool
@@ -202,6 +203,7 @@ func (a *AprsIs) Connect() error {
 	a.pending = nil
 	a.Conn = conn
 	a.connected = true
+	a.connectionMetric.Store(true)
 	a.connMu.Unlock()
 	return nil
 }
@@ -244,6 +246,7 @@ func (a *AprsIs) Disconnect() {
 	conn := a.Conn
 	a.Conn = nil
 	a.connected = false
+	a.connectionMetric.Store(false)
 	a.connMu.Unlock()
 	if conn != nil {
 		_ = conn.Close()
@@ -267,6 +270,7 @@ func (a *AprsIs) Stop() {
 	a.pending = nil
 	a.Conn = nil
 	a.connected = false
+	a.connectionMetric.Store(false)
 	a.connMu.Unlock()
 	if pending != nil {
 		_ = pending.Close()
@@ -309,3 +313,5 @@ func isReadReceipt(message string) bool {
 
 	return false
 }
+
+func (a *AprsIs) ConnectedForMetrics() bool { return a.connectionMetric.Load() }

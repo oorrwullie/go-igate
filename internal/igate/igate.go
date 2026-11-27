@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/oorrwullie/sparky/internal/aprs"
@@ -28,6 +29,8 @@ type (
 		logger                 *log.Logger
 		Aprsis                 *aprs.AprsIs
 		aprsisUpload           func(string) error
+		forwardWrites atomic.Uint64
+		forwardErrors atomic.Uint64
 		httpClient             *http.Client
 		verifyAprsFi           bool
 		aprsFiKey              string
@@ -1025,7 +1028,10 @@ func (i *IGate) forwardPackets() error {
 			fmt.Printf("uploading APRS-IS packet: %v\n", uploadFrame)
 			if i.aprsisUpload != nil {
 				if err := i.aprsisUpload(uploadFrame); err != nil {
+					i.forwardErrors.Add(1)
 					i.logger.Error("Error uploading APRS packet: ", err)
+				} else {
+					i.forwardWrites.Add(1)
 				}
 			} else {
 				i.logger.Debug("Skipping APRS-IS upload; APRS client not configured")
@@ -1588,3 +1594,5 @@ func (i *IGate) cancelPendingBeacon() {
 		delete(i.beaconWaits, key)
 	}
 }
+
+func (i *IGate) ForwardStats() (uint64, uint64) { return i.forwardWrites.Load(), i.forwardErrors.Load() }

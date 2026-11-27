@@ -188,6 +188,7 @@ func NewSparky(logger *log.Logger) (*Sparky, error) {
 // SetObservability attaches a read-only registry before Run starts.
 func (d *Sparky) SetObservability(o *observability.Registry) {
  d.observability=o
+ o.OperationalSnapshot = d.operationalSnapshot
  o.Snapshot=func()(uint64,uint64){
   if d.pubsub==nil{return 0,0}
   return d.pubsub.Published(),d.pubsub.Drops()
@@ -317,4 +318,24 @@ func isNilCapture(c capture.Capture) bool {
 	default:
 		return false
 	}
+}
+
+func (d *Sparky) operationalSnapshot() observability.Operations {
+	var o observability.Operations
+	if d.mqttInput != nil { o = d.mqttInput.Operations() }
+	if d.multimon != nil {
+		o.RX = d.multimon.Reception.Snapshot()
+		o.DecoderConfigured = true
+		o.DecoderRunning = d.multimon.DecoderRunning()
+	}
+	if d.igate != nil && d.igate.Aprsis != nil {
+		o.APRSISConfigured = true
+		o.APRSISConnected = d.igate.Aprsis.ConnectedForMetrics()
+		o.APRSISForwarded, o.APRSISFailed = d.igate.ForwardStats()
+	}
+	if d.transmitter != nil {
+		o.TXConfigured = true
+		o.TXDispatched = d.transmitter.Dispatched()
+	}
+	return o
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/oorrwullie/sparky/internal/cache"
 	"github.com/oorrwullie/sparky/internal/config"
 	"github.com/oorrwullie/sparky/internal/log"
+	"github.com/oorrwullie/sparky/internal/observability"
 	"github.com/oorrwullie/sparky/internal/pubsub"
 )
 
@@ -37,6 +38,8 @@ type MQTT struct {
 	stopOnce         sync.Once
 	workers          sync.WaitGroup
 	adsbStats        adsbForwardStats
+	Reception observability.Reception
+	externalInput bool
 }
 
 func (m *MQTT) setMapFlightsClient(client mapFlightsPublisher) {
@@ -83,6 +86,7 @@ func New(cfg config.OpenWebRXMQTT, mapFlights config.MapFlights, ps *pubsub.PubS
 		m.Stop()
 		return nil, fmt.Errorf("openwebrx-mqtt.broker is required when OpenWebRX+ MQTT input is enabled")
 	}
+	m.externalInput = true
 	opts := mqtt.NewClientOptions().
 		AddBroker(cfg.Broker).
 		SetClientID(fmt.Sprintf("sparky-%d", time.Now().UnixNano())).
@@ -278,4 +282,18 @@ func extractFrame(payload []byte) (string, error) {
 		return "", fmt.Errorf("invalid APRS source or destination")
 	}
 	return text, nil
+}
+
+func (m *MQTT) Operations() observability.Operations {
+	return observability.Operations{
+		RX: m.Reception.Snapshot(),
+		MQTTExternal: m.externalInput, MQTTConnected: m.client != nil && m.client.IsConnectionOpen(),
+		ADSBConfigured: m.mapFlights.Enabled,
+		ADSBReceived: m.adsbStats.received.Load(),
+		ADSBPublished: m.adsbStats.published.Load(),
+		ADSBFailed: m.adsbStats.publishFailed.Load(),
+		ADSBRejected: m.adsbStats.rejected.Load(),
+		ADSBOffline: m.adsbStats.offlineDropped.Load(),
+		ADSBDropped: m.adsbStats.dropped.Load(),
+	}
 }

@@ -65,7 +65,7 @@ jobs:
       run: go test -v ./...
 
     - name: Smoke-test performance fixtures
-      run: go test ./internal/aprs ./internal/pubsub ./internal/observability -run '^$' -bench 'Benchmark(ParsePacket|ParseAndClassify|PositionDecode|Fanout|PublishOneSubscriber|MetricsScrape)' -benchtime=1x -count=1 -timeout=2m
+      run: go test ./internal/aprs ./internal/pubsub ./internal/observability -run '^$' -bench 'Benchmark(ParsePacket|ParseAndClassify|PositionDecode|Fanout|PublishOneSubscriber|MetricsScrape|ReceptionRecord)' -benchtime=1x -count=1 -timeout=2m
 
     - name: Set up minimum supported Python
       uses: actions/setup-python@v5
